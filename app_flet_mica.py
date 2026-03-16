@@ -342,10 +342,20 @@ def main(page: ft.Page):
 
         def criar_card_robo(titulo, icone, descricao, cor_icone, func_robo, config_datas):
             elementos_data = []
+            modo_selecionado = "padrao" # Estado interno do card
+
+            def extrair_dia_mes(d):
+                try: 
+                    partes = d.split("/")
+                    return f"{partes[0]}/{partes[1]}"
+                except: return d
+
+            # --- INPUTS CUSTOMIZADOS ---
             coluna_datas_custom = ft.Column(
                 visible=False, 
-                spacing=5, 
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER
+                spacing=8, 
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                animate_opacity=400
             )
 
             for config in config_datas:
@@ -355,23 +365,15 @@ def main(page: ft.Page):
 
                 c_ini = ft.TextField(
                     label=f"Ini {label}", 
-                    width=135, 
-                    height=45, 
-                    text_size=12, 
-                    read_only=True, 
-                    prefix_icon=ft.Icons.CALENDAR_MONTH, 
-                    focused_border_color=cor_icone, 
-                    value=p_ini
+                    width=135, height=45, text_size=12, 
+                    read_only=True, prefix_icon=ft.Icons.CALENDAR_MONTH, 
+                    focused_border_color=cor_icone, value=p_ini
                 )
                 c_fim = ft.TextField(
                     label=f"Fim {label}", 
-                    width=135, 
-                    height=45, 
-                    text_size=12, 
-                    read_only=True, 
-                    prefix_icon=ft.Icons.CALENDAR_MONTH, 
-                    focused_border_color=cor_icone, 
-                    value=p_fim
+                    width=135, height=45, text_size=12, 
+                    read_only=True, prefix_icon=ft.Icons.CALENDAR_MONTH, 
+                    focused_border_color=cor_icone, value=p_fim
                 )
 
                 dp_i = ft.DatePicker(on_change=lambda e, campo=c_ini: atualizar_campo_data(e, campo))
@@ -394,54 +396,137 @@ def main(page: ft.Page):
                 dp.open = True
                 page.update()
 
-            area_config_inputs = ft.Column(
-                spacing=15, 
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER
+            # --- COMPONENTE SEGMENTED CONTROL ---
+            pill = ft.Container(
+                bgcolor=ft.Colors.WHITE,
+                border_radius=25,
+                width=122,
+                height=34,
+                left=4,
+                top=4,
+                animate_position=ft.Animation(400, ft.AnimationCurve.DECELERATE)
             )
 
+            txt_padrao_btn = ft.Text("Data Padrão", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK)
+            txt_custom_btn = ft.Text("Personalizada", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70)
+
+            def set_modo(modo):
+                nonlocal modo_selecionado
+                modo_selecionado = modo
+                is_custom = (modo == "custom")
+                
+                pill.left = 4 if modo == "padrao" else 130
+                txt_padrao_btn.color = ft.Colors.BLACK if modo == "padrao" else ft.Colors.WHITE70
+                txt_custom_btn.color = ft.Colors.BLACK if modo == "custom" else ft.Colors.WHITE70
+                
+                display_padrao.visible = not is_custom
+                coluna_datas_custom.visible = is_custom
+                card.update()
+
+            segmented_control = ft.Container(
+                bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
+                border_radius=30,
+                width=260,
+                height=42,
+                content=ft.Stack([
+                    pill,
+                    ft.Row([
+                        ft.Container(
+                            content=txt_padrao_btn, expand=True, alignment=ft.Alignment.CENTER, 
+                            on_click=lambda _: set_modo("padrao"), border_radius=30
+                        ),
+                        ft.Container(
+                            content=txt_custom_btn, expand=True, alignment=ft.Alignment.CENTER, 
+                            on_click=lambda _: set_modo("custom"), border_radius=30
+                        ),
+                    ], spacing=0)
+                ])
+            )
+
+            # --- DISPLAY DATA PADRÃO ---
+            badges_preview = ft.Column(spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            for c in config_datas:
+                prefix_label = f"{c['label']}: " if c['label'] else ""
+                display_txt = f"{prefix_label}{extrair_dia_mes(c['ini'])} a {extrair_dia_mes(c['fim'])}" if c['ini'] != c['fim'] else f"{prefix_label}{extrair_dia_mes(c['ini'])}"
+                
+                badges_preview.controls.append(
+                    ft.Container(
+                        content=ft.Text(display_txt, size=11, weight=ft.FontWeight.BOLD, color=cor_icone),
+                        bgcolor=ft.Colors.with_opacity(0.12, cor_icone),
+                        padding=ft.Padding(15, 3, 15, 3),
+                        border_radius=10,
+                        border=ft.Border.all(1, ft.Colors.with_opacity(0.2, cor_icone))
+                    )
+                )
+
+            display_padrao = ft.Column([
+                ft.Text("Utiliza o cronograma oficial da operação:", size=11, color=ft.Colors.WHITE38),
+                badges_preview
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10, animate_opacity=400)
+
+            area_config_inputs = ft.Column([
+                segmented_control,
+                display_padrao,
+                coluna_datas_custom,
+            ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
             badges_datas = ft.Column(
-                spacing=10, 
+                spacing=8, 
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 visible=False
             )
 
-            def mudar_modo(e):
-                is_custom = radio_datas.value == "custom"
-                coluna_datas_custom.visible = is_custom
-                cabecalho_custom.visible = is_custom
-                radio_datas.visible = not is_custom
-                card.update()
-
-            # --- CONFIGURAÇÃO BOTÃO INFINITE FLOW ---
-            btn_text = ft.Text(
-                "RODAR ROBÔ", 
-                weight=ft.FontWeight.BOLD, 
-                color=ft.Colors.WHITE
-            )
+            # --- BOTÃO RODAR E PROGRESSO ---
+            btn_text = ft.Text("RODAR ROBÔ", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
             bg_progress = ft.ProgressBar(
-                value=None, 
-                visible=False, 
+                value=None, visible=False, 
                 color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE), 
-                bgcolor="transparent", 
-                height=50, 
-                border_radius=18
+                bgcolor="transparent", height=50, border_radius=18
             )
             
             controle_robo = {"cancelar": False, "rodando": False}
             
-            def on_hover_infinite(e):
-                if controle_robo["rodando"]:
-                    btn_text.color = ft.Colors.RED_300 if e.data == "true" else ft.Colors.WHITE
-                    btn_text.update()
-                else:
-                    btn_infinite.scale = 1.05 if e.data == "true" else 1.0
-                    btn_infinite.update()
+            def disparar_cancelamento(e):
+                controle_robo["cancelar"] = True
+                btn_text.value = "PARANDO..."
+                btn_infinite.disabled = True
+                card.update()
 
-            def disparar_acao(e):
-                if not controle_robo["rodando"]:
-                    disparar_automacao(None)
-                else:
-                    disparar_cancelamento(None)
+            def disparar_automacao(e):
+                argumentos_finais = []
+                badges_datas.controls.clear()
+                
+                for el in elementos_data:
+                    v_ini = el['p_ini'] if modo_selecionado == "padrao" else el['ini'].value
+                    v_fim = el['p_fim'] if modo_selecionado == "padrao" else el['fim'].value
+                    argumentos_finais.extend([v_ini, v_fim])
+                    
+                    lbl = el['ini'].label.replace("Ini ", "")
+                    lbl_txt = f"{lbl}: " if lbl else ""
+                    display_txt = f"{lbl_txt}{extrair_dia_mes(v_ini)} a {extrair_dia_mes(v_fim)}" if v_ini != v_fim else f"{lbl_txt}{extrair_dia_mes(v_ini)}"
+                    
+                    badges_datas.controls.append(
+                        ft.Container(
+                            content=ft.Text(display_txt, size=13, weight=ft.FontWeight.BOLD, color=cor_icone),
+                            bgcolor=ft.Colors.with_opacity(0.1, cor_icone),
+                            padding=ft.Padding(15, 5, 15, 5),
+                            border_radius=12,
+                            border=ft.Border.all(1, ft.Colors.with_opacity(0.3, cor_icone))
+                        )
+                    )
+
+                controle_robo["rodando"] = True
+                controle_robo["cancelar"] = False
+                btn_text.value = "CANCELAR"
+                btn_infinite.bgcolor = ft.Colors.with_opacity(0.4, ft.Colors.BLACK)
+                btn_infinite.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, ft.Colors.WHITE))
+                bg_progress.visible = True
+                texto_progresso.visible = True
+                area_config_inputs.visible = False
+                badges_datas.visible = True
+                card.update()
+                
+                threading.Thread(target=executar_em_background, args=(argumentos_finais,), daemon=True).start()
 
             btn_infinite = ft.Container(
                 content=ft.Stack([
@@ -450,26 +535,13 @@ def main(page: ft.Page):
                 ]),
                 bgcolor=cor_icone,
                 width=280, height=50, border_radius=18,
-                on_click=disparar_acao,
-                on_hover=on_hover_infinite,
+                on_click=lambda e: disparar_automacao(e) if not controle_robo["rodando"] else disparar_cancelamento(e),
+                on_hover=lambda e: setattr(btn_infinite, 'scale', 1.05 if e.data == "true" and not controle_robo["rodando"] else 1.0) or (setattr(btn_text, 'color', ft.Colors.RED_300 if e.data == "true" and controle_robo["rodando"] else ft.Colors.WHITE) or btn_infinite.update()),
                 animate=ft.Animation(300, "decelerate"),
                 clip_behavior=ft.ClipBehavior.HARD_EDGE
             )
 
-            texto_progresso = ft.Text(
-                "Preparando robô...", 
-                size=12, 
-                color=ft.Colors.WHITE54, 
-                visible=False
-            )
-
-            def hook_cancelamento(): return controle_robo["cancelar"]
-
-            def disparar_cancelamento(e):
-                controle_robo["cancelar"] = True
-                btn_text.value = "CHAMANDO RÔBO..."
-                btn_infinite.disabled = True
-                card.update()
+            texto_progresso = ft.Text("Preparando robô...", size=12, color=ft.Colors.WHITE54, visible=False)
 
             def on_progress(valor, mensagem):
                 texto_progresso.value = mensagem
@@ -478,11 +550,7 @@ def main(page: ft.Page):
 
             def executar_em_background(args_datas):
                 try:
-                    func_robo(
-                        id_logado, *args_datas, 
-                        callback_progresso=on_progress, 
-                        hook_cancelamento=hook_cancelamento
-                    )
+                    func_robo(id_logado, *args_datas, callback_progresso=on_progress, hook_cancelamento=lambda: controle_robo["cancelar"])
                     on_progress(1.0, "Sucesso! 🎉")
                     mostrar_aviso(f"{titulo} finalizado!", "green800")
                 except Exception as ex:
@@ -508,109 +576,18 @@ def main(page: ft.Page):
                         try: card.update()
                         except: pass
 
-            def extrair_dia_mes(d):
-                try: 
-                    partes = d.split("/")
-                    return f"{partes[0]}/{partes[1]}"
-                except: return d
-
-            txt_padrao = "Período Padrão (" + " | ".join([f"{extrair_dia_mes(c['ini'])} a {extrair_dia_mes(c['fim'])}" for c in config_datas]) + ")"
-
-            def voltar_padrao(e):
-                radio_datas.value = "padrao"
-                mudar_modo(None)
-
-            btn_voltar_config = ft.IconButton(
-                ft.Icons.ARROW_BACK_ROUNDED, 
-                on_click=voltar_padrao, 
-                icon_size=16, 
-                icon_color=cor_icone,
-                tooltip="Voltar para Padrão"
-            )
-
-            cabecalho_custom = ft.Row([
-                btn_voltar_config,
-                ft.Text("Datas Personalizadas", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
-            ], alignment=ft.MainAxisAlignment.CENTER, visible=False, spacing=0)
-
-            radio_datas = ft.RadioGroup(
-                content=ft.Column([
-                    ft.Radio(value="padrao", label=txt_padrao, label_style=ft.TextStyle(size=14, weight=ft.FontWeight.W_500)), 
-                    ft.Radio(value="custom", label="Selecionar Datas Manuais", label_style=ft.TextStyle(size=14, weight=ft.FontWeight.W_500))
-                ], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.START),
-                value="padrao", on_change=mudar_modo
-            )
-            
-            area_config_inputs.controls = [radio_datas, cabecalho_custom, coluna_datas_custom]
-
-            def disparar_automacao(e):
-                argumentos_finais = []
-                for el in elementos_data:
-                    if radio_datas.value == "padrao": argumentos_finais.extend([el['p_ini'], el['p_fim']])
-                    else: argumentos_finais.extend([el['ini'].value, el['fim'].value])
-
-                # Gerar visual das das selecionadas (badges compactos)
-                badges_datas.controls.clear()
-                for el in elementos_data:
-                    v_ini = el['p_ini'] if radio_datas.value == "padrao" else el['ini'].value
-                    v_fim = el['p_fim'] if radio_datas.value == "padrao" else el['fim'].value
-                    
-                    # Se for a mesma data, mostra só uma
-                    display_txt = f"{extrair_dia_mes(v_ini)} - {extrair_dia_mes(v_fim)}" if v_ini != v_fim else extrair_dia_mes(v_ini)
-                    
-                    badges_datas.controls.append(
-                        ft.Container(
-                            content=ft.Text(display_txt, size=13, weight=ft.FontWeight.BOLD, color=cor_icone),
-                            bgcolor=ft.Colors.with_opacity(0.1, cor_icone),
-                            padding=ft.Padding(15, 5, 15, 5),
-                            border_radius=12,
-                            border=ft.Border.all(1, ft.Colors.with_opacity(0.3, cor_icone))
-                        )
-                    )
-
-                controle_robo["rodando"] = True
-                controle_robo["cancelar"] = False
-                btn_text.value = "CANCELAR"
-                btn_infinite.bgcolor = ft.Colors.with_opacity(0.4, ft.Colors.BLACK)
-                btn_infinite.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, ft.Colors.WHITE))
-                bg_progress.visible = True
-                texto_progresso.visible = True
-                
-                # Esconde área de config e mostra badges
-                area_config_inputs.visible = False
-                badges_datas.visible = True
-                
-                card.update()
-                threading.Thread(
-                    target=executar_em_background, 
-                    args=(argumentos_finais,), 
-                    daemon=True
-                ).start()
-
             header_config = ft.Row([
                 ft.IconButton(
-                    ft.Icons.ARROW_BACK_IOS_NEW_ROUNDED, 
-                    on_click=lambda e: alternar_tamanho(e), 
-                    icon_size=18, 
-                    icon_color=cor_icone
+                    ft.Icons.ARROW_BACK_IOS_NEW_ROUNDED, on_click=lambda e: alternar_tamanho(e), 
+                    icon_size=18, icon_color=cor_icone
                 ),
-                ft.Container(
-                    content=ft.Text("Configurações", weight=ft.FontWeight.BOLD, size=16), 
-                    expand=True, 
-                    padding=ft.Padding(0, 0, 35, 0)
-                ),
+                ft.Container(content=ft.Text("Configurações", weight=ft.FontWeight.BOLD, size=16), expand=True, padding=ft.Padding(0, 0, 35, 0)),
             ], alignment=ft.MainAxisAlignment.CENTER)
 
             conteudo_extra = ft.Container(
                 content=ft.Column([
                     header_config,
-                    # Área de Scroll Interna
-                    ft.Column([
-                        area_config_inputs,
-                        badges_datas,
-                    ], expand=True, scroll=ft.ScrollMode.HIDDEN, spacing=10),
-                    
-                    # Rodapé Fixo
+                    ft.Column([area_config_inputs, badges_datas], expand=True, scroll=ft.ScrollMode.HIDDEN, spacing=10),
                     ft.Column([
                         ft.Container(content=texto_progresso, alignment=ft.Alignment.CENTER),
                         btn_infinite,
@@ -630,18 +607,10 @@ def main(page: ft.Page):
                     ft.Container(height=10), 
                     ft.Text(descricao, size=15, color=ft.Colors.WHITE54)
                 ]), 
-                on_click=lambda e: alternar_tamanho(e), 
-                ink=True, 
-                border_radius=10, 
-                padding=10, 
-                key="front"
+                on_click=lambda e: alternar_tamanho(e), ink=True, border_radius=10, padding=10, key="front"
             )
 
-            animador = ft.AnimatedSwitcher(
-                content=cabecalho, 
-                transition=ft.AnimatedSwitcherTransition.FADE, 
-                duration=400
-            )
+            animador = ft.AnimatedSwitcher(content=cabecalho, transition=ft.AnimatedSwitcherTransition.FADE, duration=400)
 
             def alternar_tamanho(e):
                 animador.content = conteudo_extra if animador.content.key == "front" else cabecalho
@@ -650,8 +619,7 @@ def main(page: ft.Page):
             card = ft.Container(
                 content=animador, padding=15, **glass_card_style, 
                 on_hover=lambda e: setattr(card, 'scale', 1.05 if e.data == "true" else 1.0) or card.update(),
-                col={"xs": 12, "md": 6, "xl": 4},
-                height=320 
+                col={"xs": 12, "md": 6, "xl": 4}, height=320 
             )
             return card
 
