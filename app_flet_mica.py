@@ -82,7 +82,9 @@ def main(page: ft.Page):
         left=0, 
         right=0, 
         top=0, 
-        bottom=0
+        bottom=0,
+        animate_opacity=400,
+        animate_scale=ft.Animation(400, ft.AnimationCurve.DECELERATE)
     )
 
     # Pilha principal que une as camadas
@@ -283,21 +285,33 @@ def main(page: ft.Page):
             ir_para_login()
 
     def ir_para_cadastro(e):
+        camada_conteudo.opacity = 0
+        camada_conteudo.scale = 0.95
+        camada_conteudo.update()
+        
         camada_conteudo.content = ft.Column(
             [caixa_cadastro], 
             alignment=ft.MainAxisAlignment.CENTER, 
             horizontal_alignment=ft.CrossAxisAlignment.CENTER, 
             expand=True
         )
+        camada_conteudo.opacity = 1
+        camada_conteudo.scale = 1.0
         camada_conteudo.update()
 
     def ir_para_login(e=None):
+        camada_conteudo.opacity = 0
+        camada_conteudo.scale = 0.95
+        camada_conteudo.update()
+
         camada_conteudo.content = ft.Column(
             [caixa_login], 
             alignment=ft.MainAxisAlignment.CENTER, 
             horizontal_alignment=ft.CrossAxisAlignment.CENTER, 
             expand=True
         )
+        camada_conteudo.opacity = 1
+        camada_conteudo.scale = 1.0
         camada_conteudo.update()
 
     btn_entrar.on_click = tentar_login
@@ -626,7 +640,7 @@ def main(page: ft.Page):
             animador = ft.AnimatedSwitcher(
                 content=cabecalho, 
                 transition=ft.AnimatedSwitcherTransition.FADE, 
-                duration=300
+                duration=400
             )
 
             def alternar_tamanho(e):
@@ -913,10 +927,11 @@ def main(page: ft.Page):
             dialog_cofre = ft.AlertDialog(
                 content=ft.Container(
                     padding=25, 
-                    width=520, 
-                    height=450,
+                    width=500, 
+                    height=200,
                     alignment=ft.Alignment.CENTER, 
-                    key="dialog_cont"
+                    key="dialog_cont",
+                    animate=ft.Animation(450, ft.AnimationCurve.DECELERATE)
                 ), 
                 bgcolor=ft.Colors.with_opacity(0.9, "#1a1a2e")
             )
@@ -937,13 +952,13 @@ def main(page: ft.Page):
 
             def mudar_view(qual, force_update=True):
                 if qual == "home": 
-                    dialog_cofre.content.height = 250 
+                    dialog_cofre.content.height = 200 
                     dialog_cofre.content.content = view_home
                 elif qual == "cadastro": 
-                    dialog_cofre.content.height = 450 
+                    dialog_cofre.content.height = 400 
                     dialog_cofre.content.content = view_cadastro
                 elif qual == "consulta":
-                    dialog_cofre.content.height = 500 
+                    dialog_cofre.content.height = 450 
                     msg_erro_cons.visible = False
                     cont_resultado_cons.visible = False
                     campo_mestra.value = ""
@@ -1229,11 +1244,11 @@ def main(page: ft.Page):
 
             dialog_pax = ft.AlertDialog(
                 content=ft.Container(
-                    width=980, height=880, padding=15,
+                    width=980, height=550, padding=15,
                     content=ft.Column([
                         ft.Row([
                             ft.IconButton(ft.Icons.CLOSE_ROUNDED, on_click=lambda _: setattr(dialog_pax, 'open', False) or page.update(), icon_color=ft.Colors.WHITE54),
-                            ft.Text("Simulador", size=20, weight=ft.FontWeight.BOLD),
+                            ft.Text("Simulador de Elasticidade", size=20, weight=ft.FontWeight.BOLD),
                             ft.Container(expand=True),
                             btn_metrica,
                             btn_recalc
@@ -1241,7 +1256,8 @@ def main(page: ft.Page):
                         ft.Divider(height=1, color=ft.Colors.WHITE10),
                         ft.Container(height=15),
                         ft.Column([view_inputs, view_results], scroll=ft.ScrollMode.HIDDEN, expand=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-                    ])
+                    ]),
+                    animate=ft.Animation(500, ft.AnimationCurve.DECELERATE)
                 ), bgcolor=ft.Colors.with_opacity(0.98, "#0a0a12")
             )
 
@@ -1250,7 +1266,7 @@ def main(page: ft.Page):
                 view_results.visible = (qual == "results")
                 btn_recalc.visible = (qual == "results")
                 btn_metrica.visible = (qual == "results")
-                dialog_pax.content.height = 550 if qual == "inputs" else 880
+                dialog_pax.content.height = 550 if qual == "inputs" else 850
                 page.update()
 
             def abrir_calculadora(e):
