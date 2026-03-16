@@ -57,32 +57,38 @@ def main(page: ft.Page):
     except:
         pass
 
-    page.window.frameless = False 
-    
-    # Camada 1: O Fundo Animado
-    camada_fundo = ft.Container(
-        gradient=ft.LinearGradient(
-            begin=ft.Alignment.TOP_LEFT,
-            end=ft.Alignment.BOTTOM_RIGHT,
-            colors=["#1a1a2e", "#16213e", "#0f3460"],
+    luz_azul = ft.Container(
+        gradient=ft.RadialGradient(
+            center=ft.Alignment(-0.7, -0.7),
+            radius=1.5,
+            colors=[ft.Colors.with_opacity(0.4, ft.Colors.BLUE_700), ft.Colors.TRANSPARENT],
+            stops=[0.2, 1.0]
         ),
-        animate=ft.Animation(
-            3000, 
-            ft.AnimationCurve.EASE_IN_OUT
-        ),
-        left=0, 
-        right=0, 
-        top=0, 
-        bottom=0
+        left=0, top=0, right=0, bottom=0,
+        animate=ft.Animation(4000, ft.AnimationCurve.EASE_IN_OUT)
     )
+    luz_verde = ft.Container(
+        gradient=ft.RadialGradient(
+            center=ft.Alignment(0.7, 0.7),
+            radius=1.5,
+            colors=[ft.Colors.with_opacity(0.3, ft.Colors.GREEN_700), ft.Colors.TRANSPARENT],
+            stops=[0.2, 1.0]
+        ),
+        left=0, top=0, right=0, bottom=0,
+        animate=ft.Animation(4000, ft.AnimationCurve.EASE_IN_OUT)
+    )
+
+    # Camada 1: O Fundo Animado (Stack de Luzes)
+    camada_fundo = ft.Stack([
+        ft.Container(bgcolor="#020202", expand=True),
+        luz_azul,
+        luz_verde
+    ], left=0, right=0, top=0, bottom=0)
 
     # Camada 2: Aqui vai o login ou o dashboard
     camada_conteudo = ft.Container(
         alignment=ft.Alignment.CENTER, 
-        left=0, 
-        right=0, 
-        top=0, 
-        bottom=0,
+        expand=True,
         animate_opacity=400,
         animate_scale=ft.Animation(400, ft.AnimationCurve.DECELERATE)
     )
@@ -94,16 +100,22 @@ def main(page: ft.Page):
     )
     
     def animar_fundo():
-        cores_1 = ["#1a1a2e", "#16213e", "#0f3460"]
-        cores_2 = ["#0f3460", "#1a1a2e", "#16213e"]
-        atual = cores_1
+        posicoes = [
+            ((-0.7, -0.7), (0.7, 0.7)),
+            ((-0.5, -0.8), (0.5, 0.8)),
+            ((-0.8, -0.5), (0.8, 0.5)),
+        ]
+        idx = 0
         while True:
             try:
-                if camada_fundo.gradient:
-                    camada_fundo.gradient.colors = atual
-                    camada_fundo.update()
-                time.sleep(3)
-                atual = cores_2 if atual == cores_1 else cores_1
+                p1, p2 = posicoes[idx]
+                luz_azul.gradient.center = ft.Alignment(p1[0], p1[1])
+                luz_verde.gradient.center = ft.Alignment(p2[0], p2[1])
+                luz_azul.update()
+                luz_verde.update()
+                
+                time.sleep(4)
+                idx = (idx + 1) % len(posicoes)
             except:
                 break
 
