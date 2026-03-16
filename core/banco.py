@@ -7,13 +7,17 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
-# Detecta se o aplicativo está rodando como um executável compilado (.exe)
+# Configuração de Caminhos para Executável (.exe) e Desenvolvimento
 if getattr(sys, 'frozen', False):
     # Se estiver no modo compilado, o BASE_DIR é a pasta onde o .exe está localizado
+    # Usado para arquivos que o usuário pode ver ou que persistam (DB, .env, Logs)
     BASE_DIR = Path(sys.executable).resolve().parent
+    # ASSETS_DIR aponta para a pasta temporária interna do PyInstaller (onde embutimos arquivos)
+    ASSETS_DIR = Path(getattr(sys, '_MEIPASS', BASE_DIR))
 else:
-    # Se estiver em desenvolvimento, o BASE_DIR é a raiz do projeto (duas pastas acima deste arquivo)
+    # Se estiver em desenvolvimento, o BASE_DIR é a raiz do projeto
     BASE_DIR = Path(__file__).resolve().parent.parent
+    ASSETS_DIR = BASE_DIR
 
 DB_PATH = BASE_DIR / "Userbank.db"
 ENV_PATH = BASE_DIR / ".env"

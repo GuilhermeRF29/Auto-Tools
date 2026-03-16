@@ -185,9 +185,7 @@ def executar_adm(id_usuario_logado, data_inicio, data_final, callback_progresso=
     user, passwd = buscar_credencial_site(id_usuario_logado, "ADM de Vendas")
     
     if not user:
-        if callback_progresso: callback_progresso(0.0, "Erro: Senha do ADM não encontrada no cofre!")
-        print("Erro: Você não tem a senha do 'ADM de Vendas' cadastrada no cofre.")
-        print("Vá no menu principal e escolha a opção 3 para cadastrar.")
+        if callback_progresso: callback_progresso(0.0, "ERRO: Credenciais do ADM não encontradas no Cofre!")
         return
 
     resultado = gerar_intervalos_mensais(data_inicio, data_final)

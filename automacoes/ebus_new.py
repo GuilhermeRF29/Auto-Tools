@@ -367,7 +367,9 @@ def executar_ebus(id_usuario_logado, data_inicio, data_final, callback_progresso
             raise CanceladoPeloUsuario("Processo cancelado pelo usuário.")
 
     username, senha_user = buscar_credencial_site(id_usuario_logado, "EBUS")
-    if not username or not senha_user: return
+    if not username or not senha_user:
+        if callback_progresso: callback_progresso(0.0, "ERRO: Credenciais do EBUS não encontradas no Cofre!")
+        return
     
     if callback_progresso: callback_progresso(0.1, "Abrindo Navegador Invisível...")
     resultado = gerar_intervalos_mensais_ebus(data_inicio, data_final)

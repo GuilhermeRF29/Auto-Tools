@@ -322,7 +322,8 @@ def main(page: ft.Page):
                 spread_radius=1, 
                 blur_radius=20, 
                 color=ft.Colors.with_opacity(0.4, ft.Colors.BLACK)
-            )
+            ),
+            "animate": ft.Animation(400, ft.AnimationCurve.DECELERATE),
         }
 
         def criar_card_robo(titulo, icone, descricao, cor_icone, func_robo, config_datas):
@@ -340,9 +341,9 @@ def main(page: ft.Page):
 
                 c_ini = ft.TextField(
                     label=f"Ini {label}", 
-                    width=130, 
-                    height=40, 
-                    text_size=11, 
+                    width=135, 
+                    height=45, 
+                    text_size=12, 
                     read_only=True, 
                     prefix_icon=ft.Icons.CALENDAR_MONTH, 
                     focused_border_color=cor_icone, 
@@ -350,9 +351,9 @@ def main(page: ft.Page):
                 )
                 c_fim = ft.TextField(
                     label=f"Fim {label}", 
-                    width=130, 
-                    height=40, 
-                    text_size=11, 
+                    width=135, 
+                    height=45, 
+                    text_size=12, 
                     read_only=True, 
                     prefix_icon=ft.Icons.CALENDAR_MONTH, 
                     focused_border_color=cor_icone, 
@@ -379,20 +380,23 @@ def main(page: ft.Page):
                 dp.open = True
                 page.update()
 
+            area_config_inputs = ft.Column(
+                spacing=15, 
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER
+            )
+
+            badges_datas = ft.Column(
+                spacing=10, 
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                visible=False
+            )
+
             def mudar_modo(e):
                 is_custom = radio_datas.value == "custom"
                 coluna_datas_custom.visible = is_custom
+                cabecalho_custom.visible = is_custom
+                radio_datas.visible = not is_custom
                 card.update()
-
-            txt_padrao = "Padrão (" + "|".join([c['ini'][:5] for c in config_datas]) + ")"
-
-            radio_datas = ft.RadioGroup(
-                content=ft.Row([
-                    ft.Radio(value="padrao", label=txt_padrao), 
-                    ft.Radio(value="custom", label="Personalizado")
-                ], alignment=ft.MainAxisAlignment.CENTER),
-                value="padrao", on_change=mudar_modo
-            )
 
             # --- CONFIGURAÇÃO BOTÃO INFINITE FLOW ---
             btn_text = ft.Text(
@@ -485,15 +489,71 @@ def main(page: ft.Page):
                     time.sleep(8)
                     if not controle_robo["rodando"]:
                         texto_progresso.visible = False
+                        area_config_inputs.visible = True
+                        badges_datas.visible = False
                         try: card.update()
                         except: pass
+
+            def extrair_dia_mes(d):
+                try: 
+                    partes = d.split("/")
+                    return f"{partes[0]}/{partes[1]}"
+                except: return d
+
+            txt_padrao = "Período Padrão (" + " | ".join([f"{extrair_dia_mes(c['ini'])} a {extrair_dia_mes(c['fim'])}" for c in config_datas]) + ")"
+
+            def voltar_padrao(e):
+                radio_datas.value = "padrao"
+                mudar_modo(None)
+
+            btn_voltar_config = ft.IconButton(
+                ft.Icons.ARROW_BACK_ROUNDED, 
+                on_click=voltar_padrao, 
+                icon_size=16, 
+                icon_color=cor_icone,
+                tooltip="Voltar para Padrão"
+            )
+
+            cabecalho_custom = ft.Row([
+                btn_voltar_config,
+                ft.Text("Datas Personalizadas", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+            ], alignment=ft.MainAxisAlignment.CENTER, visible=False, spacing=0)
+
+            radio_datas = ft.RadioGroup(
+                content=ft.Column([
+                    ft.Radio(value="padrao", label=txt_padrao, label_style=ft.TextStyle(size=14, weight=ft.FontWeight.W_500)), 
+                    ft.Radio(value="custom", label="Selecionar Datas Manuais", label_style=ft.TextStyle(size=14, weight=ft.FontWeight.W_500))
+                ], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.START),
+                value="padrao", on_change=mudar_modo
+            )
+            
+            area_config_inputs.controls = [radio_datas, cabecalho_custom, coluna_datas_custom]
 
             def disparar_automacao(e):
                 argumentos_finais = []
                 for el in elementos_data:
                     if radio_datas.value == "padrao": argumentos_finais.extend([el['p_ini'], el['p_fim']])
                     else: argumentos_finais.extend([el['ini'].value, el['fim'].value])
-                
+
+                # Gerar visual das das selecionadas (badges compactos)
+                badges_datas.controls.clear()
+                for el in elementos_data:
+                    v_ini = el['p_ini'] if radio_datas.value == "padrao" else el['ini'].value
+                    v_fim = el['p_fim'] if radio_datas.value == "padrao" else el['fim'].value
+                    
+                    # Se for a mesma data, mostra só uma
+                    display_txt = f"{extrair_dia_mes(v_ini)} - {extrair_dia_mes(v_fim)}" if v_ini != v_fim else extrair_dia_mes(v_ini)
+                    
+                    badges_datas.controls.append(
+                        ft.Container(
+                            content=ft.Text(display_txt, size=13, weight=ft.FontWeight.BOLD, color=cor_icone),
+                            bgcolor=ft.Colors.with_opacity(0.1, cor_icone),
+                            padding=ft.Padding(15, 5, 15, 5),
+                            border_radius=12,
+                            border=ft.Border.all(1, ft.Colors.with_opacity(0.3, cor_icone))
+                        )
+                    )
+
                 controle_robo["rodando"] = True
                 controle_robo["cancelar"] = False
                 btn_text.value = "CANCELAR"
@@ -501,6 +561,11 @@ def main(page: ft.Page):
                 btn_infinite.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, ft.Colors.WHITE))
                 bg_progress.visible = True
                 texto_progresso.visible = True
+                
+                # Esconde área de config e mostra badges
+                area_config_inputs.visible = False
+                badges_datas.visible = True
+                
                 card.update()
                 threading.Thread(
                     target=executar_em_background, 
@@ -527,8 +592,8 @@ def main(page: ft.Page):
                     header_config,
                     # Área de Scroll Interna
                     ft.Column([
-                        radio_datas, 
-                        coluna_datas_custom,
+                        area_config_inputs,
+                        badges_datas,
                     ], expand=True, scroll=ft.ScrollMode.HIDDEN, spacing=10),
                     
                     # Rodapé Fixo
@@ -547,7 +612,7 @@ def main(page: ft.Page):
                         ft.Text(titulo, size=20, weight=ft.FontWeight.BOLD), 
                         ft.Container(expand=True), 
                         ft.Icon(ft.Icons.KEYBOARD_ARROW_RIGHT, color=ft.Colors.WHITE54)
-                    ]), 
+                    ], vertical_alignment=ft.CrossAxisAlignment.CENTER), 
                     ft.Container(height=10), 
                     ft.Text(descricao, size=15, color=ft.Colors.WHITE54)
                 ]), 
@@ -611,24 +676,34 @@ def main(page: ft.Page):
                 expand=True
             )
 
-            view_home = ft.Column([
-                ft.Text(
-                    "O que deseja fazer?", 
-                    size=16, 
-                    weight=ft.FontWeight.W_500
-                ), 
-                ft.Row([
-                    btn_ir_cadastrar, 
-                    btn_ir_consultar
-                ], 
-                alignment=ft.MainAxisAlignment.CENTER, 
-                spacing=10
-            )], 
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER, 
-                spacing=20, 
-                visible=True, 
-                key="home"
-            )
+            view_home = ft.Stack([
+                ft.Column([
+                    ft.Text(
+                        "O que deseja fazer?", 
+                        size=16, 
+                        weight=ft.FontWeight.W_500
+                    ), 
+                    ft.Row([
+                        btn_ir_cadastrar, 
+                        btn_ir_consultar
+                    ], 
+                    alignment=ft.MainAxisAlignment.CENTER, 
+                    spacing=10
+                )], 
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER, 
+                    spacing=20, 
+                    visible=True,
+                ),
+                ft.IconButton(
+                    ft.Icons.CLOSE_ROUNDED,
+                    on_click=lambda _: setattr(dialog_cofre, 'open', False) or page.update(),
+                    top=-10,
+                    right=-10,
+                    icon_color=ft.Colors.WHITE24,
+                    icon_size=20,
+                    tooltip="Fechar"
+                )
+            ], key="home")
 
             dropdown_cad = ft.Dropdown(
                 label="Site", 
@@ -885,7 +960,7 @@ def main(page: ft.Page):
                         ft.Text("Cofre", size=20, weight=ft.FontWeight.BOLD), 
                         ft.Container(expand=True), 
                         ft.Icon(ft.Icons.OPEN_IN_NEW, color=ft.Colors.WHITE54)
-                    ]), 
+                    ], vertical_alignment=ft.CrossAxisAlignment.CENTER), 
                     ft.Container(height=10), 
                     ft.Text("Gerencie acessos.", size=15, color=ft.Colors.WHITE54)
                 ]), 
@@ -894,13 +969,15 @@ def main(page: ft.Page):
                 border_radius=10, 
                 padding=10
             )
-            return ft.Container(
+            card = ft.Container(
                 content=cabecalho, 
                 padding=15, 
                 **glass_card_style, 
+                on_hover=lambda e: setattr(card, 'scale', 1.05 if e.data == "true" else 1.0) or card.update(),
                 col={"xs": 12, "md": 6, "xl": 4}, 
                 height=320
             )
+            return card
 
         def criar_card_pax_calc():
             estilo_input = {
@@ -1183,12 +1260,27 @@ def main(page: ft.Page):
                 page.update()
 
             card = ft.Container(
-                content=ft.Column([
-                    ft.Row([ft.Icon(ft.Icons.CALCULATE_ROUNDED, color=ft.Colors.CYAN_300, size=40), ft.Text("Pax Calc", size=20, weight=ft.FontWeight.BOLD), ft.Container(expand=True), ft.Icon(ft.Icons.KEYBOARD_ARROW_RIGHT, color=ft.Colors.WHITE54)]),
-                    ft.Container(height=10), ft.Text("Análise de elasticidade e KM.", size=15, color=ft.Colors.WHITE54)
-                ]), on_click=abrir_calculadora, padding=15, **glass_card_style, 
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Icon(ft.Icons.CALCULATE_ROUNDED, color=ft.Colors.CYAN_300, size=40), 
+                            ft.Text("Pax Calc", size=20, weight=ft.FontWeight.BOLD), 
+                            ft.Container(expand=True), 
+                            ft.Icon(ft.Icons.KEYBOARD_ARROW_RIGHT, color=ft.Colors.WHITE54)
+                        ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Container(height=10), 
+                        ft.Text("Análise de elasticidade e KM.", size=15, color=ft.Colors.WHITE54)
+                    ]),
+                    padding=10,
+                    on_click=abrir_calculadora,
+                    ink=True,
+                    border_radius=10
+                ), 
+                padding=15, 
+                **glass_card_style, 
                 on_hover=lambda e: setattr(card, 'scale', 1.05 if e.data == "true" else 1.0) or card.update(),
-                col={"xs": 12, "md": 6, "xl": 4}, height=320 
+                col={"xs": 12, "md": 6, "xl": 4}, 
+                height=320 
             )
             return card
 
