@@ -14,6 +14,8 @@ from automacoes.adm_new import executar_adm
 from automacoes.ebus_new import executar_ebus # type: ignore
 from automacoes.sr_new import executar_sr
 from automacoes.paxcalc import calculadora_elasticidade_pax, get_capacidade
+import json
+import os
 
 ADM_INICIO = "01/01/2026"
 ADM_FIM = "31/12/2026"
@@ -41,7 +43,20 @@ def main(page: ft.Page):
     page.window.height = 800
     page.window.min_width = 450
     page.window.min_height = 600
-    page.theme_mode = ft.ThemeMode.DARK
+    # Persistência de tema (Fallback para arquivos se client_storage não existir)
+    prefs_file = "app_prefs.json"
+    def load_prefs():
+        if os.path.exists(prefs_file):
+            with open(prefs_file, "r") as f: return json.load(f)
+        return {"theme_mode": "dark"}
+
+    def save_pref(key, value):
+        prefs = load_prefs()
+        prefs[key] = value
+        with open(prefs_file, "w") as f: json.dump(prefs, f)
+
+    saved_theme = load_prefs().get("theme_mode", "dark")
+    page.theme_mode = ft.ThemeMode.DARK if saved_theme == "dark" else ft.ThemeMode.LIGHT
     page.padding = 0
 
     # Carregando fonte moderna
@@ -57,35 +72,49 @@ def main(page: ft.Page):
     except:
         pass
 
+    def get_light_colors():
+        if page.theme_mode == ft.ThemeMode.DARK:
+            return {
+                "luz1": ft.Colors.BLUE_700, "luz2": ft.Colors.GREEN_700, 
+                "op1": 0.3, "op2": 0.22, "bg": "#020202"
+            }
+        else:
+            return {
+                "luz1": ft.Colors.RED_500, "luz2": ft.Colors.INDIGO_400, 
+                "op1": 0.25, "op2": 0.2, "bg": "#F9FAFF"
+            }
+
+    conf_luz = get_light_colors()
+
     luz_azul = ft.Container(
         gradient=ft.RadialGradient(
             center=ft.Alignment(-0.7, -0.7),
             radius=1.5,
-            colors=[ft.Colors.with_opacity(0.4, ft.Colors.BLUE_700), ft.Colors.TRANSPARENT],
+            colors=[ft.Colors.with_opacity(conf_luz["op1"], conf_luz["luz1"]), ft.Colors.TRANSPARENT],
             stops=[0.2, 1.0]
         ),
         left=0, top=0, right=0, bottom=0,
-        animate=ft.Animation(4000, ft.AnimationCurve.EASE_IN_OUT)
+        animate=ft.Animation(5000, ft.AnimationCurve.EASE_IN_OUT)
     )
     luz_verde = ft.Container(
         gradient=ft.RadialGradient(
             center=ft.Alignment(0.7, 0.7),
             radius=1.5,
-            colors=[ft.Colors.with_opacity(0.3, ft.Colors.GREEN_700), ft.Colors.TRANSPARENT],
+            colors=[ft.Colors.with_opacity(conf_luz["op2"], conf_luz["luz2"]), ft.Colors.TRANSPARENT],
             stops=[0.2, 1.0]
         ),
         left=0, top=0, right=0, bottom=0,
-        animate=ft.Animation(4000, ft.AnimationCurve.EASE_IN_OUT)
+        animate=ft.Animation(5000, ft.AnimationCurve.EASE_IN_OUT)
     )
 
-    # Camada 1: O Fundo Animado (Stack de Luzes)
+    bg_sólido = ft.Container(bgcolor=conf_luz["bg"], expand=True, animate=ft.Animation(600, "decelerate"))
+
     camada_fundo = ft.Stack([
-        ft.Container(bgcolor="#020202", expand=True),
+        bg_sólido,
         luz_azul,
         luz_verde
     ], left=0, right=0, top=0, bottom=0)
 
-    # Camada 2: Aqui vai o login ou o dashboard
     camada_conteudo = ft.Container(
         alignment=ft.Alignment.CENTER, 
         expand=True,
@@ -101,32 +130,239 @@ def main(page: ft.Page):
     
     def animar_fundo():
         posicoes = [
-            ((-0.7, -0.7), (0.7, 0.7)),
-            ((-0.5, -0.8), (0.5, 0.8)),
-            ((-0.8, -0.5), (0.8, 0.5)),
+            ((-0.7, -0.7), (0.7, 0.7), 1.6),
+            ((-0.4, -0.8), (0.4, 0.8), 1.4),
+            ((-0.8, -0.4), (0.8, 0.4), 1.7),
+            ((-0.6, -0.6), (0.6, 0.6), 1.5),
+            ((-0.5, -0.9), (0.5, 0.9), 1.7),
+            ((-0.9, -0.5), (0.9, 0.5), 1.4),
         ]
         idx = 0
         while True:
             try:
-                p1, p2 = posicoes[idx]
+                p1, p2, rad = posicoes[idx]
                 luz_azul.gradient.center = ft.Alignment(p1[0], p1[1])
                 luz_verde.gradient.center = ft.Alignment(p2[0], p2[1])
+                luz_azul.gradient.radius = rad
+                luz_verde.gradient.radius = rad
                 luz_azul.update()
                 luz_verde.update()
                 
-                time.sleep(4)
+                time.sleep(5)
                 idx = (idx + 1) % len(posicoes)
             except:
                 break
 
-    page.theme = ft.Theme(
-        scrollbar_theme=ft.ScrollbarTheme(
-            track_color={ft.ControlState.DEFAULT: ft.Colors.TRANSPARENT},
-            thumb_color={ft.ControlState.DEFAULT: ft.Colors.WHITE24},
-            thickness={ft.ControlState.DEFAULT: 8},
-            radius=10, interactive=True,
-        )
-    )
+    def toggle_theme(e):
+        page.theme_mode = ft.ThemeMode.LIGHT if page.theme_mode == ft.ThemeMode.DARK else ft.ThemeMode.DARK
+        save_pref("theme_mode", "dark" if page.theme_mode == ft.ThemeMode.DARK else "light")
+        
+        conf = get_light_colors()
+        bg_sólido.bgcolor = conf["bg"]
+        luz_azul.gradient.colors = [ft.Colors.with_opacity(conf["op1"], conf["luz1"]), ft.Colors.TRANSPARENT]
+        luz_verde.gradient.colors = [ft.Colors.with_opacity(conf["op2"], conf["luz2"]), ft.Colors.TRANSPARENT]
+        
+        # Refresh UI Principal
+        if camada_conteudo.content:
+            reaplicar_estilos_recursivo(camada_conteudo.content, page.theme_mode)
+        
+        # Refresh Overlays (Diálogos do Cofre, Pax Calc, etc)
+        for ctrl in page.overlay:
+            reaplicar_estilos_recursivo(ctrl, page.theme_mode)
+        
+        # Atualizar icon_color dos botões de tema
+        nova_icon_color = ft.Colors.AMBER_400 if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.INDIGO_400
+        try:
+            btn_tema.icon_color = nova_icon_color
+        except: pass
+            
+        page.update()
+
+    def reaplicar_estilos_recursivo(control, mode):
+        is_dark = mode == ft.ThemeMode.DARK
+        txt_p = ft.Colors.WHITE if is_dark else "#1A1A1A"
+        txt_s = ft.Colors.WHITE54 if is_dark else "#555555"
+        txt_t = ft.Colors.WHITE38 if is_dark else "#888888"  # Terciário
+        card_bg = ft.Colors.with_opacity(0.45 if is_dark else 0.75, ft.Colors.BLACK if is_dark else ft.Colors.WHITE)
+        input_bg = ft.Colors.with_opacity(0.25 if is_dark else 0.1, ft.Colors.BLACK if is_dark else ft.Colors.BLACK)
+        border_c = ft.Colors.with_opacity(0.2 if is_dark else 0.12, ft.Colors.WHITE if is_dark else ft.Colors.BLACK)
+
+        # Mapa bidirecional de cores de sotaque: dark → light
+        accents_dark_to_light = {
+            ft.Colors.BLUE_300: ft.Colors.BLUE_700,
+            ft.Colors.GREEN_300: ft.Colors.GREEN_700,
+            ft.Colors.ORANGE_300: ft.Colors.ORANGE_700,
+            ft.Colors.CYAN_300: ft.Colors.CYAN_700,
+            ft.Colors.CYAN_200: ft.Colors.CYAN_800,
+            ft.Colors.AMBER_400: ft.Colors.AMBER_800,
+            ft.Colors.RED_400: ft.Colors.RED_700,
+            ft.Colors.GREEN_400: ft.Colors.GREEN_700,
+            ft.Colors.CYAN_100: ft.Colors.CYAN_800,
+            ft.Colors.ORANGE_400: ft.Colors.ORANGE_700,
+            ft.Colors.BLUE_200: ft.Colors.BLUE_700,
+            ft.Colors.INDIGO_400: ft.Colors.INDIGO_700,
+            # Labels de texto do relatório (PISO/TETO) - escuros no dark, vibrantes no light
+            ft.Colors.GREEN_900: ft.Colors.GREEN_700,
+            ft.Colors.CYAN_900: ft.Colors.CYAN_700,
+        }
+        # Mapa reverso: light → dark
+        accents_light_to_dark = {v: k for k, v in accents_dark_to_light.items()}
+
+        def get_accent(c):
+            """Mapeia cores de sotaque para o tema correto, usando data tag se disponível."""
+            if is_dark:
+                return accents_light_to_dark.get(c, c)
+            else:
+                return accents_dark_to_light.get(c, c)
+
+        # --- Sistema de data tags para evitar degeneração ---
+        # Na primeira passagem, salvamos a 'intenção original' no atributo data
+        # Nas passagens seguintes, usamos essa intenção em vez do valor atual
+        
+        def _tag(ctrl, prop, valor_original):
+            """Salva o valor original como tag se ainda não existir."""
+            tag_key = f"_theme_{prop}"
+            if not hasattr(ctrl, '_theme_tags'):
+                ctrl._theme_tags = {}
+            if tag_key not in ctrl._theme_tags:
+                ctrl._theme_tags[tag_key] = valor_original
+            return ctrl._theme_tags[tag_key]
+
+        def _get_tag(ctrl, prop):
+            """Recupera o valor original tagueado, ou None."""
+            if hasattr(ctrl, '_theme_tags'):
+                return ctrl._theme_tags.get(f"_theme_{prop}")
+            return None
+
+        # Diálogos (Cofre / Pax Calc)
+        if isinstance(control, ft.AlertDialog):
+            control.bgcolor = ft.Colors.with_opacity(0.98, "#0A0A12" if is_dark else "#F0F0F5")
+
+        # Containers
+        if isinstance(control, ft.Container):
+            # Se for container de vidro (tem blur)
+            if hasattr(control, "blur") and control.blur:
+                control.bgcolor = card_bg
+                control.border = ft.Border.all(1, border_c)
+                if control.shadow and isinstance(control.shadow, ft.BoxShadow):
+                    control.shadow.color = ft.Colors.with_opacity(0.6 if is_dark else 0.08, ft.Colors.BLACK)
+            
+            elif control.bgcolor:
+                # Salvar o valor original na primeira vez
+                orig_bg = _tag(control, 'bgcolor', control.bgcolor)
+                orig_str = str(orig_bg).lower()
+                
+                # Categoria 1: Fundos sólidos escuros (dialogs internos, inputs do cofre)
+                if any(x in orig_str for x in ["#1a1a2e", "#0a0a12", "#10101a"]):
+                    control.bgcolor = "#1a1a2e" if is_dark else "#EDEDF2"
+                
+                # Categoria 2: Fundos com alta opacidade (0.9, 0.95, 0.98)
+                elif any(x in orig_str for x in ["0.9,", "0.95", "0.98"]):
+                    control.bgcolor = ft.Colors.with_opacity(0.95, "#10101A" if is_dark else "#FAFAFF")
+                
+                # Categoria 3: Banners de sotaque com cor (cyan_900, green_900, etc.)
+                elif any(x in orig_str for x in ["cyan_900", "cyan_800", "green_900"]):
+                    if is_dark:
+                        control.bgcolor = orig_bg  # Restaurar original no dark
+                    else:
+                        if "cyan" in orig_str:
+                            control.bgcolor = ft.Colors.with_opacity(0.12, ft.Colors.CYAN_600)
+                        elif "green" in orig_str:
+                            control.bgcolor = ft.Colors.with_opacity(0.12, ft.Colors.GREEN_600)
+                
+                # Categoria 4: Overlays semitransparentes (0.04 a 0.2 opacidade)
+                elif any(f"0.{x}" in orig_str for x in ["04", "05", "1,", "10", "12", "15", "2,", "20"]):
+                    # Extrair a opacidade original
+                    op_val = 0.1
+                    for op in ["0.04", "0.05", "0.12", "0.15", "0.1", "0.2"]:
+                        if op in orig_str:
+                            op_val = float(op)
+                            break
+                    base_c = ft.Colors.WHITE if is_dark else ft.Colors.BLACK
+                    control.bgcolor = ft.Colors.with_opacity(op_val, base_c)
+                
+                # Categoria 5: Cores de sotaque sólidas (botões coloridos)
+                else:
+                    control.bgcolor = get_accent(orig_bg)
+
+            # Borders (exceto glass containers)
+            if control.border and not (hasattr(control, "blur") and control.blur):
+                orig_border = _tag(control, 'border', 'themed')
+                # Borders com cor de sotaque (ex: badges de data)
+                border_str = str(control.border).lower() if orig_border == 'themed' else ""
+                if any(x in str(_get_tag(control, 'border') or '').lower() for x in ['cyan', 'green', 'blue', 'orange', 'amber', 'red']):
+                    pass  # Manter borders de sotaque
+                else:
+                    control.border = ft.Border.all(1, border_c)
+
+        # TextFields e Dropdowns
+        if isinstance(control, (ft.TextField, ft.Dropdown)):
+            control.bgcolor = input_bg
+            control.border_color = border_c
+            control.label_style = ft.TextStyle(color=txt_s)
+            control.color = txt_p
+            if hasattr(control, "prefix_icon_color"): control.prefix_icon_color = txt_s
+
+        # Ícones
+        if isinstance(control, ft.Icon):
+            orig_color = _tag(control, 'color', control.color)
+            neutral_cols = [ft.Colors.WHITE, ft.Colors.WHITE54, ft.Colors.WHITE38, 
+                          ft.Colors.WHITE24, ft.Colors.BLACK, ft.Colors.BLACK54, 
+                          "#1A1A1A", "#0B0B0B", "#666666", "#555555", "#888888", None]
+            if orig_color in neutral_cols:
+                control.color = txt_p if (control.size and control.size > 30) else txt_s
+            else:
+                control.color = get_accent(orig_color)
+
+        # Textos
+        if isinstance(control, ft.Text):
+            orig_color = _tag(control, 'color', control.color)
+            # Cores neutras que devem seguir o tema
+            primary_neutrals = [ft.Colors.WHITE, ft.Colors.BLACK, None]
+            secondary_neutrals = [ft.Colors.WHITE54, ft.Colors.WHITE70, ft.Colors.BLACK54, 
+                                  "#1A1A1A", "#0B0B0B", "#666666", "#555555"]
+            tertiary_neutrals = [ft.Colors.WHITE38, ft.Colors.WHITE30, ft.Colors.WHITE24, 
+                                ft.Colors.WHITE12, ft.Colors.WHITE10, "#888888", "black87"]
+            
+            if orig_color in primary_neutrals:
+                control.color = txt_p if (control.weight == ft.FontWeight.BOLD or (control.size and control.size >= 16)) else txt_s
+            elif orig_color in secondary_neutrals:
+                control.color = txt_s
+            elif orig_color in tertiary_neutrals:
+                control.color = txt_t
+            else:
+                # Cores de sotaque
+                control.color = get_accent(orig_color)
+        
+        # Divisores
+        if isinstance(control, (ft.Divider, ft.VerticalDivider)):
+            control.color = ft.Colors.with_opacity(0.1, ft.Colors.WHITE if is_dark else ft.Colors.BLACK)
+
+        # Radio / Checkbox
+        if isinstance(control, (ft.Radio, ft.Checkbox)):
+            if control.label_style: control.label_style.color = txt_p
+            else: control.label_style = ft.TextStyle(color=txt_p)
+        
+        # IconButton - atualizar icon_color de botões neutros
+        if isinstance(control, ft.IconButton):
+            orig_color = _tag(control, 'icon_color', control.icon_color)
+            neutral_cols = [ft.Colors.WHITE, ft.Colors.WHITE54, ft.Colors.WHITE38,
+                          ft.Colors.WHITE24, ft.Colors.BLACK, ft.Colors.BLACK54,
+                          "#1A1A1A", "#666666", "#555555", "#888888", None]
+            if orig_color in neutral_cols:
+                control.icon_color = txt_s
+            elif orig_color not in [ft.Colors.AMBER_400, ft.Colors.INDIGO_400]:  # Não tocar nos botões de tema
+                control.icon_color = get_accent(orig_color)
+
+        # Navegação recursiva
+        if hasattr(control, "controls"):
+            for c in control.controls: reaplicar_estilos_recursivo(c, mode)
+        if hasattr(control, "content") and control.content:
+            reaplicar_estilos_recursivo(control.content, mode)
+        # AnimatedSwitcher tem .content mas pode ter controles internos
+        if isinstance(control, ft.AnimatedSwitcher):
+            if control.content:
+                reaplicar_estilos_recursivo(control.content, mode)
 
     def mostrar_aviso(mensagem, cor="red900"):
         snack = ft.SnackBar(
@@ -141,16 +377,17 @@ def main(page: ft.Page):
         snack.open = True
         page.update()
 
+    is_dark = page.theme_mode == ft.ThemeMode.DARK
     glass_style = {
-        "bgcolor": ft.Colors.with_opacity(0.4, ft.Colors.BLACK),
+        "bgcolor": ft.Colors.with_opacity(0.4 if is_dark else 0.7, ft.Colors.BLACK if is_dark else ft.Colors.WHITE),
         "blur": ft.Blur(20, 20),
-        "border": ft.Border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.WHITE)),
+        "border": ft.Border.all(1, ft.Colors.with_opacity(0.15, ft.Colors.WHITE if is_dark else ft.Colors.BLACK)),
         "border_radius": 30,
         "padding": 40,
         "shadow": ft.BoxShadow(
             spread_radius=2, 
             blur_radius=25, 
-            color=ft.Colors.with_opacity(0.5, ft.Colors.BLACK)
+            color=ft.Colors.with_opacity(0.5 if is_dark else 0.15, ft.Colors.BLACK)
         )
     }
 
@@ -160,9 +397,10 @@ def main(page: ft.Page):
         prefix_icon=ft.Icons.PERSON, 
         border_radius=15, 
         width=320, 
-        bgcolor=ft.Colors.with_opacity(0.2, ft.Colors.BLACK),
-        border_color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE), 
-        focused_border_color=ft.Colors.BLUE_300
+        bgcolor=ft.Colors.with_opacity(0.2 if is_dark else 0.1, ft.Colors.BLACK),
+        border_color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE if is_dark else ft.Colors.BLACK), 
+        focused_border_color=ft.Colors.BLUE_300,
+        color=ft.Colors.WHITE if is_dark else "#1A1A1A"
     )
     campo_senha_login = ft.TextField(
         label="Senha", 
@@ -171,9 +409,10 @@ def main(page: ft.Page):
         can_reveal_password=True, 
         border_radius=15,
         width=320, 
-        bgcolor=ft.Colors.with_opacity(0.2, ft.Colors.BLACK),
-        border_color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE), 
-        focused_border_color=ft.Colors.BLUE_300
+        bgcolor=ft.Colors.with_opacity(0.2 if is_dark else 0.1, ft.Colors.BLACK),
+        border_color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE if is_dark else ft.Colors.BLACK), 
+        focused_border_color=ft.Colors.BLUE_300,
+        color=ft.Colors.WHITE if is_dark else "#1A1A1A"
     )
     btn_entrar = ft.FilledButton(
         content=ft.Text("ENTRAR", weight=ft.FontWeight.BOLD), 
@@ -187,31 +426,33 @@ def main(page: ft.Page):
         ), 
     )
     
+    def _on_login_theme_click(e):
+        toggle_theme(e)
+        btn_tema.icon = ft.Icons.WB_SUNNY_ROUNDED if page.theme_mode == ft.ThemeMode.DARK else ft.Icons.DARK_MODE_ROUNDED
+        btn_tema.icon_color = ft.Colors.AMBER_400 if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.INDIGO_400
+        btn_tema.update()
+    
+    btn_tema = ft.IconButton(
+        icon=ft.Icons.WB_SUNNY_ROUNDED if page.theme_mode == ft.ThemeMode.DARK else ft.Icons.DARK_MODE_ROUNDED,
+        on_click=_on_login_theme_click,
+        icon_color=ft.Colors.AMBER_400 if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.INDIGO_400,
+        tooltip="Trocar tema"
+    )
+
     caixa_login = ft.Container(
-        content=ft.Column([
-            ft.Icon(
-                ft.Icons.ROCKET_LAUNCH_ROUNDED, 
-                size=70, 
-                color=ft.Colors.BLUE_300
-            ), 
-            ft.Text(
-                "JCA Automações", 
-                size=26, 
-                weight=ft.FontWeight.BOLD, 
-                color=ft.Colors.WHITE,
-                text_align=ft.TextAlign.CENTER
-            ), 
-            ft.Container(height=20), 
-            campo_usuario_login, 
-            campo_senha_login, 
-            ft.Container(height=10), 
-            btn_entrar, 
-            ft.TextButton(
-                content=ft.Text("Criar conta", color=ft.Colors.BLUE_200)
-            )
-        ], 
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER
-        ), 
+        content=ft.Stack([
+            ft.Column([
+                ft.Icon(ft.Icons.ROCKET_LAUNCH_ROUNDED, size=70, color=ft.Colors.BLUE_300), 
+                ft.Text("JCA Automações", size=26, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER), 
+                ft.Container(height=20), 
+                campo_usuario_login, 
+                campo_senha_login, 
+                ft.Container(height=10), 
+                btn_entrar, 
+                ft.TextButton(content=ft.Text("Criar conta", color=ft.Colors.BLUE_200))
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Container(content=btn_tema, right=0, top=0)
+        ]), 
         **glass_style,
         margin=20,
         width=450,
@@ -281,11 +522,15 @@ def main(page: ft.Page):
     )
 
     def tentar_login(e):
-        caixa_login.scale = 0.95
+        # Animação de pulse sem bloquear a main thread
+        caixa_login.scale = 0.97
         caixa_login.update()
-        time.sleep(0.1)
-        caixa_login.scale = 1.0
-        caixa_login.update()
+        # Usar timer para retornar à escala normal sem bloquear
+        def _restaurar_scale():
+            caixa_login.scale = 1.0
+            try: caixa_login.update()
+            except: pass
+        threading.Timer(0.1, _restaurar_scale).start()
         
         id_logado, nome = login_principal(campo_usuario_login.value, campo_senha_login.value)
         if id_logado: mostrar_dashboard(id_logado, nome)
@@ -312,6 +557,10 @@ def main(page: ft.Page):
         camada_conteudo.update()
 
     def ir_para_login(e=None):
+        # Atualizar os estilos das caixas de login/cadastro para o tema atual ante de mostrar
+        reaplicar_estilos_recursivo(caixa_login, page.theme_mode)
+        reaplicar_estilos_recursivo(caixa_cadastro, page.theme_mode)
+        
         camada_conteudo.opacity = 0
         camada_conteudo.scale = 0.95
         camada_conteudo.update()
@@ -332,22 +581,41 @@ def main(page: ft.Page):
     caixa_login.content.controls[-1].on_click = ir_para_cadastro
     btn_salvar_cad.on_click = tentar_cadastro
     caixa_cadastro.content.controls[-1].on_click = ir_para_login
+    
+    # Refresh inicial se carregar em modo claro
+    if page.theme_mode == ft.ThemeMode.LIGHT:
+        reaplicar_estilos_recursivo(caixa_login, page.theme_mode)
+        reaplicar_estilos_recursivo(caixa_cadastro, page.theme_mode)
 
     # =======================================================
     # DASHBOARD
     # =======================================================
     def mostrar_dashboard(id_logado, nome_usuario):
-        camada_conteudo.content = None
+        # Limpar overlays antigos para evitar leak de DatePickers e Dialogs duplicados
+        page.overlay.clear()
         
+        def _on_theme_click(e):
+            toggle_theme(e)
+            btn_tema_dash.icon = ft.Icons.WB_SUNNY_ROUNDED if page.theme_mode == ft.ThemeMode.DARK else ft.Icons.DARK_MODE_ROUNDED
+            btn_tema_dash.icon_color = ft.Colors.AMBER_400 if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.INDIGO_400
+            btn_tema_dash.update()
+        
+        btn_tema_dash = ft.IconButton(
+            icon=ft.Icons.WB_SUNNY_ROUNDED if page.theme_mode == ft.ThemeMode.DARK else ft.Icons.DARK_MODE_ROUNDED,
+            on_click=_on_theme_click,
+            icon_color=ft.Colors.AMBER_400 if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.INDIGO_400,
+        )
+
+        is_dark_dash = page.theme_mode == ft.ThemeMode.DARK
         glass_card_style = {
-            "bgcolor": ft.Colors.with_opacity(0.35, ft.Colors.BLACK),
+            "bgcolor": ft.Colors.with_opacity(0.35 if is_dark_dash else 0.7, ft.Colors.BLACK if is_dark_dash else ft.Colors.WHITE),
             "blur": ft.Blur(15, 15),
-            "border": ft.Border.all(1, ft.Colors.with_opacity(0.15, ft.Colors.WHITE)),
+            "border": ft.Border.all(1, ft.Colors.with_opacity(0.15, ft.Colors.WHITE if is_dark_dash else ft.Colors.BLACK)),
             "border_radius": 28,
             "shadow": ft.BoxShadow(
                 spread_radius=1, 
                 blur_radius=20, 
-                color=ft.Colors.with_opacity(0.4, ft.Colors.BLACK)
+                color=ft.Colors.with_opacity(0.4 if is_dark_dash else 0.15, ft.Colors.BLACK)
             ),
             "animate": ft.Animation(400, ft.AnimationCurve.DECELERATE),
         }
@@ -428,8 +696,13 @@ def main(page: ft.Page):
                 is_custom = (modo == "custom")
                 
                 pill.left = 4 if modo == "padrao" else 130
-                txt_padrao_btn.color = ft.Colors.BLACK if modo == "padrao" else ft.Colors.WHITE70
-                txt_custom_btn.color = ft.Colors.BLACK if modo == "custom" else ft.Colors.WHITE70
+                
+                # Cores dinâmicas para o Segmented Control baseadas no tema NO MOMENTO do clique
+                is_dark_now = page.theme_mode == ft.ThemeMode.DARK
+                inactive_c = ft.Colors.WHITE70 if is_dark_now else ft.Colors.BLACK54
+                
+                txt_padrao_btn.color = ft.Colors.BLACK if modo == "padrao" else inactive_c
+                txt_custom_btn.color = ft.Colors.BLACK if modo == "custom" else inactive_c
                 
                 display_padrao.visible = not is_custom
                 coluna_datas_custom.visible = is_custom
@@ -641,7 +914,6 @@ def main(page: ft.Page):
                 "border_radius": 15, 
                 "expand": True,
                 "height": 55, 
-                "bgcolor": "#1a1a2e", 
                 "focused_border_color": ft.Colors.ORANGE_400,
                 "text_size": 15
             }
@@ -691,9 +963,8 @@ def main(page: ft.Page):
                 ft.IconButton(
                     ft.Icons.CLOSE_ROUNDED,
                     on_click=lambda _: setattr(dialog_cofre, 'open', False) or page.update(),
-                    top=-10,
-                    right=-10,
-                    icon_color=ft.Colors.WHITE24,
+                    top=0,
+                    right=0,
                     icon_size=20,
                     tooltip="Fechar"
                 )
@@ -915,12 +1186,10 @@ def main(page: ft.Page):
                 ), 
                 bgcolor=ft.Colors.with_opacity(0.9, "#1a1a2e")
             )
+            # Registrar imediatamente no overlay p/ controle de tema
+            page.overlay.append(dialog_cofre)
             
             def abrir_dialog_cofre(e):
-                # Primeiro garantimos que o diálogo está no overlay
-                if dialog_cofre not in page.overlay:
-                    page.overlay.append(dialog_cofre)
-                
                 # Configuramos o estado inicial sem forçar update individual
                 mudar_view("home", force_update=False)
                 
@@ -975,11 +1244,11 @@ def main(page: ft.Page):
             return card
 
         def criar_card_pax_calc():
+            is_dark_calc = page.theme_mode == ft.ThemeMode.DARK
             estilo_input = {
                 "border_radius": 15, 
                 "expand": True,
                 "height": 55, 
-                "bgcolor": "#1a1a2e", 
                 "text_size": 15,
                 "focused_border_color": ft.Colors.CYAN_400
             }
@@ -1018,11 +1287,18 @@ def main(page: ft.Page):
             campo_pedagio = ft.TextField(label="Pedágio (Vlr)", **estilo_input)
             campo_taxa = ft.TextField(label="Taxa Emb. (Vlr)", **estilo_input)
             
+            def atualizar_capacidade(e):
+                cap = get_capacidade(tipo_onibus.value or "CONVENCIONAL")
+                tipo_onibus.helper_text = f"Capacidade estimada: {cap} pax"
+                tipo_onibus.update()
+
             tipo_onibus = ft.Dropdown(
                 label="Tipo de Ônibus", expand=True, height=55, border_radius=15,
-                bgcolor="#1a1a2e",
-                options=[ft.dropdown.Option(x) for x in ["CONV", "CAMA EXECUTIVO", "EXECUTIVO", "EXECUTIVO CONVENCIONAL", "CAMA CONVENCIONAL", "CAMA SEMILEITO", "SEMILEITO EXECUTIVO", "CONVENCIONAL DD"]],
-                value="CONV"
+                on_select=atualizar_capacidade,
+                options=[ft.dropdown.Option(x) for x in ["CONVENCIONAL", "CAMA EXECUTIVO", "EXECUTIVO", "EXECUTIVO CONVENCIONAL", "CAMA CONVENCIONAL", "CAMA SEMILEITO", "SEMILEITO EXECUTIVO", "CONVENCIONAL DD"]],
+                value="CONVENCIONAL",
+                focused_border_color=ft.Colors.CYAN_400,
+                # Removido bgcolor fixo para herdar do tema
             )
 
             col_resultado = ft.Column(spacing=20, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
@@ -1044,6 +1320,18 @@ def main(page: ft.Page):
                         ft.Text(valor, size=18, weight=ft.FontWeight.BOLD, color=cor),
                         ft.Text(sub, size=10, color=ft.Colors.CYAN_300 if "Diferença" in sub else ft.Colors.WHITE24) if sub else ft.Container()
                     ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
+                def badge_param(label, valor, icone):
+                    return ft.Container(
+                        content=ft.Row([
+                            ft.Icon(icone, size=14, color=ft.Colors.WHITE38),
+                            ft.Text(f"{label}: {valor}", size=11, color=ft.Colors.WHITE54, weight=ft.FontWeight.W_400)
+                        ], tight=True, spacing=5),
+                        bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
+                        padding=ft.Padding(12, 6, 12, 6),
+                        border_radius=12,
+                        border=ft.Border.all(1, ft.Colors.with_opacity(0.08, ft.Colors.WHITE))
+                    )
 
                 def card_triplo(titulo, v_atual, v_floor, v_ceil, is_currency=True, label_piso="PISO", label_teto="TETO", is_int=False, font_size_val=16):
                     def get_metric(val, is_curr):
@@ -1152,7 +1440,20 @@ def main(page: ft.Page):
                     ], spacing=10, run_spacing=20)
                 )
 
+                area_params = ft.Container(
+                    margin=ft.Padding(10, 0, 10, 0),
+                    content=ft.Row([
+                        badge_param("P_at (Net)", fmt_br(res['tarifa_liq_atual']), ft.Icons.ATTACH_MONEY),
+                        badge_param("Viagens", f"{int(res['vgs_internal'])} vgs", ft.Icons.CONFIRMATION_NUMBER),
+                        badge_param("Distância", f"{res['km_internal']} km", ft.Icons.ROUTE),
+                        badge_param("Paxs Atuais", f"{int(res['pax_atual_internal'])} paxs", ft.Icons.PEOPLE_ROUNDED),
+                        badge_param("Bus", res['bus_internal'], ft.Icons.BUS_ALERT_ROUNDED),
+                    ], alignment=ft.MainAxisAlignment.CENTER, spacing=10, wrap=True)
+                )
+
                 col_resultado.controls = [
+                    sec_titulo("Parâmetros Digitados"),
+                    area_params,
                     sec_titulo("Dashboard de Performance"),
                     banner,
                     ft.Container(content=grid, padding=ft.Padding(10, 0, 10, 0)),
@@ -1160,6 +1461,7 @@ def main(page: ft.Page):
                     rodape,
                     ft.Container(height=20)
                 ]
+                reaplicar_estilos_recursivo(col_resultado, page.theme_mode)
                 mudar_view_pax("results")
 
             def calcular(e):
@@ -1222,12 +1524,20 @@ def main(page: ft.Page):
 
             view_results = ft.Column([col_resultado], horizontal_alignment=ft.CrossAxisAlignment.CENTER, key="results", scroll=ft.ScrollMode.HIDDEN, expand=True)
 
+            btn_fechar_pax = ft.IconButton(
+                ft.Icons.CLOSE_ROUNDED, 
+                on_click=lambda _: setattr(dialog_pax, 'open', False) or page.update(), 
+                icon_color=ft.Colors.WHITE54,
+                icon_size=22,
+                tooltip="Fechar"
+            )
+            
             dialog_pax = ft.AlertDialog(
                 content=ft.Container(
                     width=980, height=550, padding=15,
                     content=ft.Column([
                         ft.Row([
-                            ft.IconButton(ft.Icons.CLOSE_ROUNDED, on_click=lambda _: setattr(dialog_pax, 'open', False) or page.update(), icon_color=ft.Colors.WHITE54),
+                            btn_fechar_pax,
                             ft.Text("Simulador de Elasticidade", size=20, weight=ft.FontWeight.BOLD),
                             ft.Container(expand=True),
                             btn_metrica,
@@ -1240,6 +1550,7 @@ def main(page: ft.Page):
                     animate=ft.Animation(500, ft.AnimationCurve.DECELERATE)
                 ), bgcolor=ft.Colors.with_opacity(0.98, "#0a0a12")
             )
+            page.overlay.append(dialog_pax)
 
             def mudar_view_pax(qual):
                 view_inputs.visible = (qual == "inputs")
@@ -1250,8 +1561,11 @@ def main(page: ft.Page):
                 page.update()
 
             def abrir_calculadora(e):
-                if dialog_pax not in page.overlay: page.overlay.append(dialog_pax)
-                mudar_view_pax("inputs")
+                view_inputs.visible = True
+                view_results.visible = False
+                btn_recalc.visible = False
+                btn_metrica.visible = False
+                dialog_pax.content.height = 550
                 dialog_pax.open = True
                 page.update()
 
@@ -1286,19 +1600,23 @@ def main(page: ft.Page):
                     ft.Text(f"Olá, {nome_usuario} 👋", size=28, weight=ft.FontWeight.BOLD, no_wrap=False)
                 ], col={"xs": 9, "sm": 10}), 
                 ft.Column([
-                    ft.IconButton(
-                        ft.Icons.LOGOUT, 
-                        icon_color=ft.Colors.RED_400, 
-                        on_click=ir_para_login,
-                        tooltip="Sair"
-                    )
+                    ft.Row([
+                        btn_tema_dash,
+                        ft.IconButton(
+                            ft.Icons.LOGOUT, 
+                            icon_color=ft.Colors.RED_400, 
+                            on_click=ir_para_login,
+                            tooltip="Sair"
+                        )
+                    ], tight=True, spacing=0)
                 ], col={"xs": 3, "sm": 2}, horizontal_alignment=ft.CrossAxisAlignment.END)
             ], vertical_alignment=ft.CrossAxisAlignment.CENTER), 
             margin=ft.Padding(30, 25, 30, 10), 
             padding=25, 
-            bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.BLACK), 
+            bgcolor=ft.Colors.with_opacity(0.15 if page.theme_mode == ft.ThemeMode.DARK else 0.4, ft.Colors.BLACK if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.WHITE), 
             blur=ft.Blur(15, 15), 
-            border_radius=25
+            border_radius=25,
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.15, ft.Colors.WHITE if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.BLACK))
         )
 
         grade_cards = ft.ResponsiveRow(
@@ -1343,6 +1661,11 @@ def main(page: ft.Page):
             )], 
             expand=True
         )
+        # Aplicação master do tema em todo o Dashboard e Janelas logo no login
+        reaplicar_estilos_recursivo(dashboard, page.theme_mode)
+        for ctrl in page.overlay:
+            reaplicar_estilos_recursivo(ctrl, page.theme_mode)
+
         camada_conteudo.content = dashboard
         camada_conteudo.update()
 
