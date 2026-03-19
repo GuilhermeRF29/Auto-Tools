@@ -297,7 +297,13 @@ def main(page: ft.Page):
 
         # TextFields e Dropdowns
         if isinstance(control, (ft.TextField, ft.Dropdown)):
-            control.bgcolor = input_bg
+            # O dropdown de tipo de onibus precisa de fundo opaco para manter
+            # legibilidade no menu de opcoes dentro do dialog da calculadora.
+            label_txt = str(getattr(control, "label", "") or "").lower()
+            if isinstance(control, ft.Dropdown) and label_txt == "tipo de ônibus":
+                control.bgcolor = ft.Colors.with_opacity(0.95 if is_dark else 1.0, "#111522" if is_dark else "#FFFFFF")
+            else:
+                control.bgcolor = input_bg
             control.border_color = border_c
             control.label_style = ft.TextStyle(color=txt_s)
             control.color = txt_p
@@ -578,7 +584,7 @@ def main(page: ft.Page):
     btn_entrar.on_click = tentar_login
     campo_usuario_login.on_submit = tentar_login
     campo_senha_login.on_submit = tentar_login
-    caixa_login.content.controls[-1].on_click = ir_para_cadastro
+    caixa_login.content.controls[0].controls[-1].on_click = ir_para_cadastro
     btn_salvar_cad.on_click = tentar_cadastro
     caixa_cadastro.content.controls[-1].on_click = ir_para_login
     
@@ -1287,24 +1293,45 @@ def main(page: ft.Page):
             campo_pedagio = ft.TextField(label="Pedágio (Vlr)", **estilo_input)
             campo_taxa = ft.TextField(label="Taxa Emb. (Vlr)", **estilo_input)
             
+            # Campo para capacidade manual quando selecionado "PERSONALIZADO"
+            campo_cap_personalizada = ft.TextField(
+                label="Capacidade Manual", 
+                visible=False, 
+                **estilo_input,
+                keyboard_type=ft.KeyboardType.NUMBER
+            )
+            
             def atualizar_capacidade(e):
-                cap = get_capacidade(tipo_onibus.value or "CONVENCIONAL")
-                tipo_onibus.helper_text = f"Capacidade estimada: {cap} pax"
+                is_custom = tipo_onibus.value == "PERSONALIZADO"
+                campo_cap_personalizada.visible = is_custom
+                if is_custom:
+                    tipo_onibus.helper_text = "Defina a capacidade no campo abaixo"
+                else:
+                    cap = get_capacidade(tipo_onibus.value or "CONVENCIONAL")
+                    tipo_onibus.helper_text = f"Capacidade estimada: {cap} pax"
+                
+                # Forçamos a atualização dos componentes no diálogo
                 tipo_onibus.update()
+                campo_cap_personalizada.update()
 
             tipo_onibus = ft.Dropdown(
                 label="Tipo de Ônibus", expand=True, height=55, border_radius=15,
                 on_select=atualizar_capacidade,
-                options=[ft.dropdown.Option(x) for x in ["CONVENCIONAL", "CAMA EXECUTIVO", "EXECUTIVO", "EXECUTIVO CONVENCIONAL", "CAMA CONVENCIONAL", "CAMA SEMILEITO", "SEMILEITO EXECUTIVO", "CONVENCIONAL DD"]],
+                options=[ft.dropdown.Option(x) for x in ["CONVENCIONAL", "CAMA EXECUTIVO", "EXECUTIVO", "EXECUTIVO CONVENCIONAL", "CAMA CONVENCIONAL", "CAMA SEMILEITO", "SEMILEITO EXECUTIVO", "CONVENCIONAL DD", "PERSONALIZADO"]],
                 value="CONVENCIONAL",
                 focused_border_color=ft.Colors.CYAN_400,
-                # Removido bgcolor fixo para herdar do tema
+                bgcolor=ft.Colors.with_opacity(0.95 if is_dark_calc else 1.0, "#111522" if is_dark_calc else "#FFFFFF"),
             )
+
 
             col_resultado = ft.Column(spacing=20, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
             def mostrar_resultados(res):
                 last_res["val"] = res
+                capacidade_base = float(res.get('capacidade_internal', 46) or 46)
+                ocup_floor = (res['floor']['pax_total'] / capacidade_base) * 100 if capacidade_base > 0 else 0
+                ocup_ceil = (res['ceil']['pax_total'] / capacidade_base) * 100 if capacidade_base > 0 else 0
+
                 def fmt_br(v):
                     return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -1323,10 +1350,12 @@ def main(page: ft.Page):
 
                 def badge_param(label, valor, icone):
                     return ft.Container(
-                        content=ft.Row([
-                            ft.Icon(icone, size=14, color=ft.Colors.WHITE38),
-                            ft.Text(f"{label}: {valor}", size=11, color=ft.Colors.WHITE54, weight=ft.FontWeight.W_400)
-                        ], tight=True, spacing=5),
+                        content=ft.Column([
+                            ft.Icon(icone, size=15, color=ft.Colors.WHITE38),
+                            ft.Text(label, size=10, color=ft.Colors.WHITE38, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                            ft.Text(str(valor), size=12, color=ft.Colors.WHITE70, weight=ft.FontWeight.W_500, text_align=ft.TextAlign.CENTER),
+                        ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                        alignment=ft.Alignment.CENTER,
                         bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
                         padding=ft.Padding(12, 6, 12, 6),
                         border_radius=12,
@@ -1435,20 +1464,58 @@ def main(page: ft.Page):
                     margin=ft.Padding(10, 0, 10, 0),
                     content=ft.ResponsiveRow([
                         ft.Column([mini_indicator("PREÇO FINAL (BRUTO)", fmt_br(res['p_nv_internal']), ft.Colors.CYAN_200, f"Dif: {fmt_br(res['reducao_valor'])}")], col={"xs": 12, "sm": 4}, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                        ft.Column([mini_indicator("OCUPAÇÃO", f"{res['ocupacao_atual']:.1f}% ➜ {res['ocupacao_meta']:.1f}%", ft.Colors.CYAN_100)], col={"xs": 12, "sm": 4}, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Column([
+                            ft.Column([
+                                ft.Text("OCUPAÇÃO", size=9, color=ft.Colors.WHITE38, weight=ft.FontWeight.BOLD),
+                                ft.Row([
+                                    ft.Column([
+                                        ft.Text("ATUAL", size=8, color=ft.Colors.WHITE24, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                                        ft.Text(f"{res['ocupacao_atual']:.2f}%", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE, text_align=ft.TextAlign.CENTER),
+                                    ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                                    ft.Icon(ft.Icons.ARROW_FORWARD_ROUNDED, size=16, color=ft.Colors.WHITE38),
+                                    ft.Column([
+                                        ft.Text("PISO", size=8, color=ft.Colors.GREEN_900, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                                        ft.Text(f"{ocup_floor:.2f}%", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_300, text_align=ft.TextAlign.CENTER),
+                                    ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                                    ft.Icon(ft.Icons.ARROW_FORWARD_ROUNDED, size=16, color=ft.Colors.WHITE38),
+                                    ft.Column([
+                                        ft.Text("TETO", size=8, color=ft.Colors.CYAN_900, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                                        ft.Text(f"{ocup_ceil:.2f}%", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.CYAN_300, text_align=ft.TextAlign.CENTER),
+                                    ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                                ], alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
+                            ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                        ], col={"xs": 12, "sm": 4}, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                         ft.Column([mini_indicator("META UNITÁRIA", f"{res['floor']['pax_total']} a {res['ceil']['pax_total']}", ft.Colors.AMBER_400, "Pax p/ Viagem")], col={"xs": 12, "sm": 4}, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                     ], spacing=10, run_spacing=20)
                 )
 
+                badges_params = [
+                    badge_param("Modo", str(res.get('modo_venda_internal', 'PREÇO FINAL')), ft.Icons.TUNE_ROUNDED),
+                    badge_param("Preço Atual", fmt_br(res.get('p_at_internal', 0.0)), ft.Icons.PRICE_CHECK_ROUNDED),
+                    badge_param("Preço Final", fmt_br(res.get('p_nv_internal', 0.0)), ft.Icons.ATTACH_MONEY),
+                    badge_param("Paxs Atuais", f"{int(res.get('pax_atual_internal', 0))} paxs", ft.Icons.PEOPLE_ROUNDED),
+                    badge_param("Viagens", f"{int(res.get('vgs_internal', 0))} vgs", ft.Icons.CONFIRMATION_NUMBER),
+                    badge_param("Distância", f"{res.get('km_internal', 0)} km", ft.Icons.ROUTE),
+                    badge_param("Pedágio", fmt_br(res.get('pedagio_internal', 0.0)), ft.Icons.TOLL_ROUNDED),
+                    badge_param("Taxa Emb.", fmt_br(res.get('taxa_internal', 0.0)), ft.Icons.RECEIPT_LONG_ROUNDED),
+                    badge_param("Bus", str(res.get('bus_internal', 'N/A')), ft.Icons.BUS_ALERT_ROUNDED),
+                    badge_param("Capacidade", f"{int(res.get('capacidade_internal', 0))} pax", ft.Icons.EVENT_SEAT_ROUNDED),
+                ]
+                fifth = len(badges_params) // 5
+                col1_end = fifth
+                col2_end = fifth * 2
+                col3_end = fifth * 3
+                col4_end = fifth * 4
+
                 area_params = ft.Container(
                     margin=ft.Padding(10, 0, 10, 0),
-                    content=ft.Row([
-                        badge_param("P_at (Net)", fmt_br(res['tarifa_liq_atual']), ft.Icons.ATTACH_MONEY),
-                        badge_param("Viagens", f"{int(res['vgs_internal'])} vgs", ft.Icons.CONFIRMATION_NUMBER),
-                        badge_param("Distância", f"{res['km_internal']} km", ft.Icons.ROUTE),
-                        badge_param("Paxs Atuais", f"{int(res['pax_atual_internal'])} paxs", ft.Icons.PEOPLE_ROUNDED),
-                        badge_param("Bus", res['bus_internal'], ft.Icons.BUS_ALERT_ROUNDED),
-                    ], alignment=ft.MainAxisAlignment.CENTER, spacing=10, wrap=True)
+                    content=ft.ResponsiveRow([
+                        ft.Column(badges_params[:col1_end], col={"xs": 12, "md": 6, "lg": 2.4}, spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Column(badges_params[col1_end:col2_end], col={"xs": 12, "md": 6, "lg": 2.4}, spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Column(badges_params[col2_end:col3_end], col={"xs": 12, "md": 6, "lg": 2.4}, spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Column(badges_params[col3_end:col4_end], col={"xs": 12, "md": 6, "lg": 2.4}, spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Column(badges_params[col4_end:], col={"xs": 12, "md": 6, "lg": 2.4}, spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    ], alignment=ft.MainAxisAlignment.CENTER, spacing=12, run_spacing=12)
                 )
 
                 col_resultado.controls = [
@@ -1488,12 +1555,28 @@ def main(page: ft.Page):
                     if vgs <= 0: vgs = 1
                     if p_nv <= 0: p_nv = 0.01
 
-                    res = calculadora_elasticidade_pax(p_at, p_nv, px_at, vgs, get_capacidade(tipo_onibus.value or "CONV"), km, ped, tax)
+                    # Determina a capacidade final (manual ou do mapa)
+                    if tipo_onibus.value == "PERSONALIZADO":
+                        cap_final = parse_vlr(campo_cap_personalizada.value)
+                        if cap_final <= 0: cap_final = 46 # Fallback
+                    else:
+                        cap_final = get_capacidade(tipo_onibus.value or "CONVENCIONAL")
+
+                    res = calculadora_elasticidade_pax(p_at, p_nv, px_at, vgs, cap_final, km, ped, tax)
                     
                     # Injetar valores originais para o card_triplo
                     res['pax_atual_internal'] = px_at
                     res['p_at_internal'] = p_at
                     res['p_nv_internal'] = p_nv
+                    res['valor_digitado_internal'] = val_novo_input
+                    res['modo_venda_internal'] = modo_venda.value
+                    res['vgs_internal'] = vgs
+                    res['km_internal'] = km
+                    res['pedagio_internal'] = ped
+                    res['taxa_internal'] = tax
+                    res['bus_internal'] = tipo_onibus.value or "CONVENCIONAL"
+                    res['capacidade_internal'] = cap_final
+
                     
                     mostrar_resultados(res)
                 except Exception as ex:
@@ -1517,7 +1600,9 @@ def main(page: ft.Page):
                     ft.Column([campo_pedagio], col={"xs": 12, "sm": 6}, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
                     ft.Column([campo_taxa], col={"xs": 12, "sm": 6}, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
                     ft.Column([tipo_onibus], col={"xs": 12, "sm": 6}, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+                    ft.Column([campo_cap_personalizada], col={"xs": 12, "sm": 6}, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
                 ], spacing=15, run_spacing=10),
+
                 ft.Container(height=15),
                 ft.Row([btn_calc], alignment=ft.MainAxisAlignment.CENTER, expand=True)
             ], spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER, key="inputs")

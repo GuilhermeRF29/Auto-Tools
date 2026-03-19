@@ -9,6 +9,13 @@ from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from selenium_helper import get_driver_path
+except ImportError:
+    def get_driver_path():
+        return None
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from openpyxl import load_workbook
@@ -200,7 +207,12 @@ def executar_adm(id_usuario_logado, data_inicio, data_final, callback_progresso=
     opcoes.add_argument("--headless") # Recomendo deixar comentado enquanto testa
 
     if callback_progresso: callback_progresso(0.1, "Abrindo Navegador Invisível...")
-    driver = webdriver.Edge(options=opcoes)
+    driver_path = get_driver_path()
+    if driver_path:
+        from selenium.webdriver.edge.service import Service
+        driver = webdriver.Edge(service=Service(driver_path), options=opcoes)
+    else:
+        driver = webdriver.Edge(options=opcoes)
     
     try:
         checar_parada()

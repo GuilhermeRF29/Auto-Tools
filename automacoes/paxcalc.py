@@ -96,8 +96,20 @@ def calculadora_elasticidade_pax(preco_atual, preco_novo, pax_atual, qtd_viagens
     }
 
 def get_capacidade(tipo_onibus):
+    if not tipo_onibus:
+        return 46
+    
+    # Se o tipo_onibus já for um número (string de número), retorna ele convertido
+    try:
+        val = float(str(tipo_onibus).replace(",", "."))
+        if val > 0:
+            return val
+    except (ValueError, TypeError):
+        pass
+
     bus_map = {
         "CONV": 46,
+        "CONVENCIONAL": 46,
         "CAMA EXECUTIVO": 54,
         "EXECUTIVO": 46,
         "EXECUTIVO CONVENCIONAL": 68,
@@ -107,3 +119,4 @@ def get_capacidade(tipo_onibus):
         "CONVENCIONAL DD": 68
     }
     return bus_map.get(tipo_onibus.upper(), 46)
+

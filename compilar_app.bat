@@ -4,32 +4,30 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ====================================================
-echo   BUILDER AUTO UTILS - VERSÃO ROBUSTA
+echo   BUILDER AUTO UTILS - VERSAO ROBUSTA
 echo ====================================================
 echo.
 
-:: 1. Verifica e instala dependências do requirements.txt
-echo [1/3] Sincronizando bibliotecas (requirements.txt)...
+:: 1. Sincronizando bibliotecas
+echo [1/4] Sincronizando bibliotecas (requirements.txt)...
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 if %errorlevel% neq 0 (
     echo.
-    echo [X] Erro ao instalar dependências. Verifique sua conexão.
+    echo [X] Erro ao instalar dependencias.
     pause
     exit /b
 )
 
-:: 2. Limpeza de builds anteriores
-echo [2/3] Limpando pastas temporárias...
+:: 2. Limpeza
+echo [2/4] Limpando pastas temporarias...
 if exist build rd /s /q build
 if exist dist rd /s /q dist
 
-:: 3. Compilação do executável com arquivos de dados embutidos
-echo [3/3] Iniciando empacotamento (PyInstaller)...
+:: 3. Compilacao
+echo [3/4] Iniciando empacotamento (PyInstaller)...
 echo.
 
-:: --add-data coloca arquivos dentro do .exe (formato: arquivo;destino_interno)
-:: O ponto (.) significa a raiz da pasta onde o .exe será executado
 flet pack app_flet_mica.py ^
     --name "Auto Utils" ^
     --icon "logo_app.png" ^
@@ -40,31 +38,39 @@ flet pack app_flet_mica.py ^
 
 echo.
 echo ====================================================
-echo   PROCESSO FINALIZADO!
+echo   PROCESSO DE COMPILACAO FINALIZADO!
 echo ====================================================
 echo.
+
 if exist "dist\Auto Utils.exe" (
-    echo [OK] O executável foi gerado com sucesso!
+    echo [OK] O executavel foi gerado com sucesso!
     echo Local: "%cd%\dist\Auto Utils.exe"
     
-    :: Copia arquivos de dados persistentes para a pasta dist (opcional para transporte)
     echo.
-    echo [4/4] Preparando pacote de dados...
+    echo [4/4] Copiando arquivos de suporte...
+    
     if exist "Userbank.db" (
-        copy "Userbank.db" "dist\" >nul
-        echo [OK] Banco de Dados copiado para dist\
+        copy "Userbank.db" "dist" >nul
+        echo [OK] Banco de Dados copiado para dist
     )
+    
     if exist ".env" (
-        copy ".env" "dist\" >nul
-        echo [OK] Arquivo .env (chaves) copiado para dist\
+        copy ".env" "dist" >nul
+        echo [OK] Arquivo .env copiado para dist
     )
+
+    if exist "credentials.json" (
+        copy "credentials.json" "dist" >nul
+        echo [OK] Arquivo credentials.json copiado para dist
+    )
+    
     echo.
-    echo DICA: Para levar para outro PC e manter seus dados, 
-    echo       leve o .exe, o .db e o .env juntos na mesma pasta.
+    echo DICA: Leve o .exe, o .db, o .env e o credentials.json juntos na mesma pasta.
 ) else (
-    echo [X] Erro: O arquivo não foi encontrado na pasta dist.
+    echo [X] Erro: O arquivo nao foi encontrado na pasta dist.
 )
+
 echo.
-pause
-
-
+echo Pressione qualquer tecla para sair...
+pause >nul
+exit /b

@@ -9,6 +9,13 @@ from datetime import datetime, timedelta
 from selenium import webdriver # type: ignore
 from selenium.webdriver.common.by import By # type: ignore
 from selenium.webdriver.edge.options import Options # type: ignore
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from selenium_helper import get_driver_path
+except ImportError:
+    def get_driver_path():
+        return None
 from selenium.webdriver.support.ui import WebDriverWait # type: ignore
 from selenium.webdriver.support import expected_conditions as EC # type: ignore
 from openpyxl import load_workbook # type: ignore
@@ -125,7 +132,7 @@ def padronizar_justificativa(df: pd.DataFrame) -> pd.DataFrame:
         eh_vazio = just_str in ('', 'NAN', 'NONE', 'NULL', 'NAT')
         
         if eh_vazio and status_str == 'APROVADO':
-            novos_valores.append('Aprovada')
+            novos_valores.append('Aprovado')
         elif eh_vazio and status_str in ('REPROVADO', 'RECUSADO'):
             novos_valores.append('Concorrência')
         else:
@@ -193,7 +200,7 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
     # TRATAMENTOS UNIVERSAIS (Aplicados a todas as bases)
     # =========================================================
     if 'Origem' in df_novo.columns and 'Destino' in df_novo.columns:
-        df_novo['Concatenar Origem e Destino'] = df_novo['Origem'].astype(str) + " - " + df_novo['Destino'].astype(str)
+        df_novo['Concatenar Origem e Destino'] = df_novo['Origem'].astype(str) + " X " + df_novo['Destino'].astype(str)
 
     if callback_progresso: callback_progresso(0.45, f"{nome_mes} - Executando motor de Justificativas e Status do Revenue...")
     # Aplica as regras da Justificativa antes de começar as comparações
@@ -377,7 +384,12 @@ def executar_ebus(id_usuario_logado, data_inicio, data_final, callback_progresso
     opcoes.add_argument("--window-size=1920,1080")
     opcoes.add_argument("--headless")
 
-    driver = webdriver.Edge(options=opcoes)
+    driver_path = get_driver_path()
+    if driver_path:
+        from selenium.webdriver.edge.service import Service
+        driver = webdriver.Edge(service=Service(driver_path), options=opcoes)
+    else:
+        driver = webdriver.Edge(options=opcoes)
     
     try:
         checar_parada()

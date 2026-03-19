@@ -1,3 +1,5 @@
+import os
+import sys
 import pandas as pd
 from selenium.webdriver.edge.options import Options
 from openpyxl import load_workbook
@@ -7,6 +9,12 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from selenium_helper import get_driver_path
+except ImportError:
+    def get_driver_path():
+        return None
 import io # <-- Importante para corrigir o aviso de descontinuação
 import time
 import math
@@ -16,7 +24,12 @@ def extrair_tabela_exata_para_excel(url, nome_arquivo="meu_relatorio.xlsx"):
     options = Options()
     # options.add_argument("--headless")
     options.add_argument("--window-size=1600,850")
-    driver = webdriver.Edge(options=options)
+    driver_path = get_driver_path()
+    if driver_path:
+        from selenium.webdriver.edge.service import Service
+        driver = webdriver.Edge(service=Service(driver_path), options=options)
+    else:
+        driver = webdriver.Edge(options=options)
     driver.get(url)
     wait = WebDriverWait(driver, 60)
     
