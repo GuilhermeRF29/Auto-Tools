@@ -49,10 +49,10 @@ def check_spec_file():
 
 def check_main_file():
     """Verifica se main app existe"""
-    if not Path("app_flet_mica.py").exists():
-        print("❌ Arquivo app_flet_mica.py não encontrado")
+    if not Path("app_new_complete.py").exists():
+        print("❌ Arquivo app_new_complete.py não encontrado")
         return False
-    print("✅ app_flet_mica.py encontrado")
+    print("✅ app_new_complete.py encontrado")
     return True
 
 def check_selenium_helper():
@@ -76,7 +76,7 @@ def check_automacao_imports():
     files = [
         "automacoes/adm_new.py",
         "automacoes/ebus_new.py",
-        "automacoes/relat_rev.py"
+        "automacoes/relat_rev.py",
     ]
     
     for file in files:
@@ -90,6 +90,7 @@ def check_automacao_imports():
                 content = f.read()
         except UnicodeDecodeError:
             print("UTF-8 decoding failed. Trying another encoding.")
+            return False
 
         # If UTF-8 fails, try Latin-1 (which maps all single bytes 0-255)
         try:
@@ -97,6 +98,7 @@ def check_automacao_imports():
                 content = f.read()
         except UnicodeDecodeError:
             print("Latin-1 decoding failed.")
+            return False
         
         if "selenium_helper" not in content and "get_driver_path" not in content:
             print(f"⚠️  {file} ainda não foi atualizado com suporte a drivers")

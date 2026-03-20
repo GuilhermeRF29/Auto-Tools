@@ -105,25 +105,41 @@ def baixar_anexos_especificos(service, pasta_alvo, nomes_procurados, data_busca=
 # TRATAMENTO DE DADOS
 # ==========================================
 
-def tratar_e_consolidar_bases(caminho_base_rio, caminho_share, caminho_base_principal, datas_filtro=None):
+def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho_base_principal=None, datas_filtro=None):
     print("Iniciando leitura e tratamento dos dados...")
 
+    dfs = []
+    
     # 1. EXTRAÇÃO
-    df1 = pd.read_excel(caminho_base_rio, sheet_name='Planilha1')
-    df1.rename(columns={'PASSAGEIRO': 'PAX'}, inplace=True)
-    df1 = df1[df1['DESTINO'].str.strip().str.upper() == 'RIO DE JANEIRO'].copy()
-    
-    if 'ORIGEM' not in df1.columns:
-        df1['ORIGEM'] = 'SÃO PAULO'
+    if caminho_base_rio and os.path.exists(caminho_base_rio):
+        df1 = pd.read_excel(caminho_base_rio, sheet_name='Planilha1')
+        df1.rename(columns={'PASSAGEIRO': 'PAX'}, inplace=True)
         
-    df2 = pd.read_excel(caminho_share, sheet_name='Base Relatorio   RIO x SAO')
-    if 'DATA SP' in df2.columns:
-        df2['DATA'] = df2['DATA SP']
-    
-    cols_df2 = ['Nº Mês', 'MÊS', 'EMPRESA', 'ORIGEM', 'DESTINO', 'SERVIÇO', 'HORÁRIO', 'PAX', 'DATA']
-    df2 = df2[[c for c in cols_df2 if c in df2.columns]]
+        # Normalização prévia para filtro de destino (para não perder variações como 'RIO')
+        df1['DESTINO'] = df1['DESTINO'].astype(str).str.strip().str.upper()
+        rio_variants = ['RIO', 'RJ', 'RIO JANEIRO', 'RIO DE JANEIRO', 'RIO DE JANERIO']
+        df1 = df1[df1['DESTINO'].isin(rio_variants)].copy()
+        
+        if 'ORIGEM' not in df1.columns:
+            df1['ORIGEM'] = 'SÃO PAULO'
+        dfs.append(df1)
+        print(f"✅ Base RIO carregada: {len(df1)} linhas.")
 
-    df_consolidado = pd.concat([df1, df2], ignore_index=True)
+    if caminho_share and os.path.exists(caminho_share):
+        df2 = pd.read_excel(caminho_share, sheet_name='Base Relatorio   RIO x SAO')
+        if 'DATA SP' in df2.columns:
+            df2['DATA'] = df2['DATA SP']
+        
+        cols_df2 = ['Nº Mês', 'MÊS', 'EMPRESA', 'ORIGEM', 'DESTINO', 'SERVIÇO', 'HORÁRIO', 'PAX', 'DATA']
+        df2 = df2[[c for c in cols_df2 if c in df2.columns]]
+        dfs.append(df2)
+        print(f"✅ Base Share carregada: {len(df2)} linhas.")
+
+    if not dfs:
+        print("⚠️ Nenhum dado encontrado para as bases especificadas.")
+        return
+
+    df_consolidado = pd.concat(dfs, ignore_index=True)
 
     # FILTRO DE DATAS
     if datas_filtro:
@@ -138,11 +154,30 @@ def tratar_e_consolidar_bases(caminho_base_rio, caminho_share, caminho_base_prin
     # 2. LIMPEZA E REGRAS DE NEGÓCIO
     df_consolidado['EMPRESA'] = df_consolidado['EMPRESA'].astype(str)
     
-    mask_tag_sp = df_consolidado['EMPRESA'].str.contains(r'\(BF\)|\(BAF\)|\(RIO\)', na=False, regex=True)
-    df_consolidado.loc[mask_tag_sp & (df_consolidado['DESTINO'].str.strip().str.upper() == 'SÃO PAULO'), 'DESTINO'] = 'SÃO PAULO (BARRA FUNDA)'
-    df_consolidado.loc[mask_tag_sp & (df_consolidado['ORIGEM'].str.strip().str.upper() == 'SÃO PAULO'), 'ORIGEM'] = 'SÃO PAULO (BARRA FUNDA)'
+    # Normalização básica de cidades antes do tratamento das tags
+    for col in ['DESTINO', 'ORIGEM']:
+        df_consolidado[col] = df_consolidado[col].str.strip().str.upper()
+        # Padroniza variações de Rio de Janeiro
+        df_consolidado.loc[df_consolidado[col].isin(['RIO', 'RJ', 'RIO JANEIRO', 'RIO DE JANERIO']), col] = 'RIO DE JANEIRO'
+        # Padroniza variações de São Paulo
+        df_consolidado.loc[df_consolidado[col].isin(['SP', 'SAO PAULO', 'SÃO PAULO']), col] = 'SÃO PAULO'
+
+    # --- REGRAS ESPECÍFICAS DE LOCALIZAÇÃO (BARRA FUNDA E CATARINENSE) ---
+    mask_catarinense = df_consolidado['EMPRESA'].str.contains('CATARINENSE', case=False, na=False)
+    mask_bf = df_consolidado['EMPRESA'].str.contains(r'\(BF\)|\(BAF\)', na=False, regex=True, case=False)
+    
+    # Regra Barra Funda: Se houver tag (BF) ou (BAF) e a cidade for SÃO PAULO, expande para BARRA FUNDA
+    for col in ['DESTINO', 'ORIGEM']:
+        df_consolidado.loc[mask_bf & (df_consolidado[col] == 'SÃO PAULO'), col] = 'SÃO PAULO (BARRA FUNDA)'
+
+    # Regra Específica CATARINENSE: Se não tiver tag BF/BAF, garantir que seja SÃO PAULO limpo
+    for col in ['DESTINO', 'ORIGEM']:
+        df_consolidado.loc[mask_catarinense & ~mask_bf & (df_consolidado[col] == 'SÃO PAULO (BARRA FUNDA)'), col] = 'SÃO PAULO'
+    
+    # Correção específica para Itapemirim -> Kaissara
     df_consolidado.loc[(df_consolidado['EMPRESA'].str.strip().str.upper() == 'ITAPEMIRIM'), 'EMPRESA'] = 'KAISSARA'
 
+    # Limpeza dos nomes das empresas (remove tags entre parênteses)
     df_consolidado['EMPRESA'] = df_consolidado['EMPRESA'].str.replace(r'\s*\(.*?\)\s*', '', regex=True)
     df_consolidado['EMPRESA'] = df_consolidado['EMPRESA'].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper().str.strip()
 
@@ -195,40 +230,56 @@ def tratar_e_consolidar_bases(caminho_base_rio, caminho_share, caminho_base_prin
     
     if 'SERVIÇO' not in df_consolidado.columns:
         df_consolidado['SERVIÇO'] = 1
-    else:
-        df_consolidado['SERVIÇO'] = df_consolidado['SERVIÇO'].fillna(1)
+    
+    # Garante que SERVIÇO seja inteiro (sem decimais)
+    df_consolidado['SERVIÇO'] = pd.to_numeric(df_consolidado['SERVIÇO'], errors='coerce').fillna(1).astype(int)
 
     df_final = df_consolidado[ordem_colunas]
 
     # --- LÓGICA DE PREVENÇÃO DE DUPLICATAS ---
     try:
-        # Lemos as colunas chaves da base principal
-        colunas_checar = ['DATA', 'HORÁRIO', 'PAX', 'IPV']
-        df_existente = pd.read_excel(caminho_base_principal, sheet_name='Base Relatorio   RIO x SAO', usecols=colunas_checar)
+        colunas_checar = ['DATA', 'HORÁRIO', 'EMPRESA', 'ORIGEM', 'DESTINO', 'PAX', 'IPV', 'SERVIÇO', 'Ano']
+        df_existente = pd.read_excel(caminho_base_principal, sheet_name='Base Relatorio   RIO x SAO', usecols=lambda x: x in colunas_checar)
         
-        # Padronização para comparação:
-        # 1. Converter datas para datetime e extrair apenas a data
-        df_existente['DATA'] = pd.to_datetime(df_existente['DATA']).dt.date
-        # 2. Garantir que HORÁRIO seja string (para evitar problemas entre time e datetime)
-        df_existente['HORÁRIO'] = df_existente['HORÁRIO'].astype(str)
-        # 3. Arredondar IPV para evitar erros de precisão de float
-        df_existente['IPV'] = df_existente['IPV'].round(4)
-        
-        # Criamos uma chave composta temporária para o df_existente
-        chaves_existentes = set(df_existente.apply(lambda r: f"{r['DATA']}_{r['HORÁRIO']}_{r['PAX']}_{r['IPV']}", axis=1))
+        # Função para gerar chave única de forma robusta
+        def gerar_chave(row):
+            d = str(row['DATA'])
+            h = str(row['HORÁRIO']).split('.')[0] if pd.notnull(row['HORÁRIO']) else "None"
+            e = str(row['EMPRESA']).strip().upper()
+            o = str(row['ORIGEM']).strip().upper()
+            dest = str(row['DESTINO']).strip().upper()
+            # Garante que PAX e IPV sejam strings normalizadas
+            try:
+                p = str(int(float(row['PAX'])))
+            except:
+                p = str(row['PAX'])
+            try:
+                ipv = str(round(float(row['IPV']), 4))
+            except:
+                ipv = str(row['IPV'])
+            
+            # Normalização de SERVIÇO na chave para evitar 1 vs 1.0
+            try:
+                srv = str(int(float(row.get('SERVIÇO', 1))))
+            except:
+                srv = str(row.get('SERVIÇO', '1')).strip().upper()
+                
+            ano = str(row.get('Ano', '')).strip()
+            return f"{d}|{h}|{e}|{o}|{dest}|{p}|{ipv}|{srv}|{ano}"
 
-        # Criamos a mesma chave para o df_final (o que queremos adicionar agora)
-        # d_temp['HORÁRIO'] no df_final já é extraído como .time() ou similar, vamos garantir string
+        # Lemos e padronizamos a base existente
+        df_existente['DATA'] = pd.to_datetime(df_existente['DATA']).dt.date
+        chaves_existentes = set(df_existente.apply(gerar_chave, axis=1))
+
+        # Criamos a mesma chave para o df_final
         df_final_temp = df_final.copy()
-        df_final_temp['KEY'] = df_final_temp.apply(
-            lambda r: f"{r['DATA']}_{str(r['HORÁRIO'])}_{r['PAX']}_{round(float(r['IPV']), 4)}", axis=1
-        )
+        df_final_temp['KEY'] = df_final_temp.apply(gerar_chave, axis=1)
         
-        # Filtramos o df_final
+        # Filtramos o df_final removendo o que já existe na base
         df_final = df_final[~df_final_temp['KEY'].isin(chaves_existentes)].copy()
         
         if df_final.empty:
-            print("ℹ️ Todos os dados processados já constam na base principal (Verificado por Data, Hora, PAX e IPV). Nada a adicionar.")
+            print("ℹ️ Todos os dados processados já constam na base principal. Nada a adicionar.")
             return
         else:
             print(f"📌 Adicionando {len(df_final)} novas linhas inéditas...")
@@ -289,8 +340,8 @@ def executar_sr(id_usuario, e_ini, e_fim, b_ini, b_fim, callback_progresso=None,
         
         if hook_cancelamento and hook_cancelamento(): return
         
-        if all(termo in arquivos for termo in termos_esperados):
-            if callback_progresso: callback_progresso(0.6, "Arquivos baixados. Iniciando processamento da base...")
+        if len(arquivos) > 0:
+            if callback_progresso: callback_progresso(0.6, "Iniciando processamento da base...")
             
             # Gerar lista de datas entre b_ini e b_fim para o filtro do DataFrame
             d_ini = datetime.strptime(b_ini, "%d/%m/%Y")
@@ -299,16 +350,15 @@ def executar_sr(id_usuario, e_ini, e_fim, b_ini, b_fim, callback_progresso=None,
             lista_datas_base = [(d_ini + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta.days + 1)]
             
             tratar_e_consolidar_bases(
-                caminho_base_rio=arquivos["BASE RIO"],
-                caminho_share=arquivos["Share - Mercado RIO"],
+                caminho_base_rio=arquivos.get("BASE RIO"),
+                caminho_share=arquivos.get("Share - Mercado RIO"),
                 caminho_base_principal=arq_principal,
                 datas_filtro=lista_datas_base
             )
             
             if callback_progresso: callback_progresso(1.0, "Concluído com sucesso!")
         else:
-            faltando = [t for t in termos_esperados if t not in arquivos]
-            raise Exception(f"Arquivos não encontrados no e-mail: {faltando}")
+            raise Exception(f"Nenhum dos arquivos esperados foi encontrado no e-mail: {termos_esperados}")
             
     except Exception as e:
         raise Exception(f"Erro SR: {str(e)}")

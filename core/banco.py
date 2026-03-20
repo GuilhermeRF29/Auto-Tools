@@ -54,8 +54,14 @@ def configurar_banco():
                         id INTEGER PRIMARY KEY AUTOINCREMENT, 
                         servico TEXT, login_acesso TEXT, senha_acesso TEXT, 
                         user_id INTEGER, FOREIGN KEY (user_id) REFERENCES usuarios(id))''')
+    
+    cursor.execute('''CREATE TABLE IF NOT EXISTS onibus (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                        nome TEXT UNIQUE, 
+                        capacidade INTEGER)''')
     conexao.commit()
     conexao.close()
+
 
 # ADICIONADO O PARÂMETRO 'nome' NA FUNÇÃO DE CADASTRO
 def cadastrar_usuario_principal(nome, usuario, senha):
@@ -120,3 +126,36 @@ def verificar_senha_mestra(user_id, senha_digitada):
     if hashed_senha and bcrypt.checkpw(senha_digitada.encode('utf-8'), hashed_senha[0]):
          return True
     return False
+
+def inicializar_onibus_padrao():
+    onibus_padrao = [
+        ("CONVENCIONAL", 46),
+        ("CAMA EXECUTIVO", 54),
+        ("EXECUTIVO", 46),
+        ("EXECUTIVO CONVENCIONAL", 68),
+        ("CAMA CONVENCIONAL", 54),
+        ("CAMA SEMILEITO", 54),
+        ("SEMILEITO EXECUTIVO", 54),
+        ("CONVENCIONAL DD", 68)
+    ]
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    for nome, cap in onibus_padrao:
+        cursor.execute("INSERT OR IGNORE INTO onibus (nome, capacidade) VALUES (?, ?)", (nome, cap))
+    conexao.commit()
+    conexao.close()
+
+def listar_onibus():
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    cursor.execute("SELECT nome, capacidade FROM onibus ORDER BY nome ASC")
+    res = cursor.fetchall()
+    conexao.close()
+    return res
+
+def salvar_onibus(nome, capacidade):
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    cursor.execute("INSERT OR REPLACE INTO onibus (nome, capacidade) VALUES (?, ?)", (nome, capacidade))
+    conexao.commit()
+    conexao.close()
