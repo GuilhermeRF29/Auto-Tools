@@ -210,9 +210,12 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
     # ESTRUTURA DE PASTAS E ARQUIVOS
     # =========================================================
     nome_oficial = f"Relatorio Revenue Completo - {nome_mes.capitalize()} {ano_atual}.xlsx"
-    
-    pasta_base = destino / "BASE"
-    pasta_backup = destino / "BACKUP"
+
+    caminho_rede = Path(r"\\172.16.98.12")
+    destino_padrao = caminho_rede / "Relatórios Power BI" / "DASH REVENUE" 
+
+    pasta_base = destino_padrao / "BASE"
+    pasta_backup = destino_padrao / "BACKUP"
     pasta_base_nova = destino / "BASE NOVA"
     pasta_backup_base_nova = destino / "BACKUP NOVO"
     
@@ -221,9 +224,7 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
         pasta.mkdir(parents=True, exist_ok=True)
 
     caminho_base = pasta_base / nome_oficial
-    caminho_backup = pasta_backup / nome_oficial
     caminho_base_nova = pasta_base_nova / nome_oficial
-    caminho_backup_base_nova = pasta_backup_base_nova / nome_oficial
 
     # =========================================================
     # PARTE 1: BASE NOVA (Mapeamento de Novo / Excluido / Presente)
@@ -290,7 +291,13 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
         
         if caminho_base_nova.exists():
             if callback_progresso: callback_progresso(0.75, "Fazendo backup da Base Nova...")
-            shutil.copy2(str(caminho_base_nova), str(caminho_backup_base_nova))
+            
+            # Mantendo histórico também para a Base Nova
+            mtime_nova = os.path.getmtime(caminho_base_nova)
+            data_mod_nova = datetime.fromtimestamp(mtime_nova).strftime('%d.%m.%Y_%H:%M:%S')
+            nome_backup_nova_com_data = f"{caminho_base_nova.stem} - Backup ({data_mod_nova}){caminho_base_nova.suffix}"
+            
+            shutil.copy2(str(caminho_base_nova), str(pasta_backup_base_nova / nome_backup_nova_com_data))
             caminho_base_nova.unlink()
             
         shutil.move(str(arquivo_temp_estado), str(caminho_base_nova))
@@ -352,7 +359,13 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
         
         if caminho_base.exists():
             if callback_progresso: callback_progresso(0.85, "Fazendo backup da Base...")
-            shutil.copy2(str(caminho_base), str(caminho_backup))
+            
+            # Obtém a data de modificação do arquivo atual para compor o nome do backup
+            mtime = os.path.getmtime(caminho_base)
+            data_mod = datetime.fromtimestamp(mtime).strftime('%d.%m.%Y_%H:%M:%S')
+            nome_backup_com_data = f"{caminho_base.stem} - Backup ({data_mod}){caminho_base.suffix}"
+            
+            shutil.copy2(str(caminho_base), str(pasta_backup / nome_backup_com_data))
             caminho_base.unlink()
             
         shutil.move(str(arquivo_temp_base), str(caminho_base))
