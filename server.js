@@ -15,6 +15,13 @@ const PYTHON_PATH = path.join(__dirname, 'backup_pyside', 'venv', 'Scripts', 'py
 
 app.use(express.json());
 
+// Inicializar banco de dados ao subir o servidor
+const initDbCmd = `from core import banco; banco.configurar_banco(); print('DB OK')`;
+exec(`"${PYTHON_PATH}" -c "${initDbCmd}"`, (error) => {
+  if (error) console.error(`[SYSTEM] Erro ao inicializar banco: ${error.message}`);
+  else console.log(`[SYSTEM] Banco de dados verificado/inicializado.`);
+});
+
 // Rota de status
 app.get('/api/status', (req, res) => {
   res.json({ status: 'ok', version: '1.5.2-FINAL-V3', python: PYTHON_PATH });
@@ -141,8 +148,9 @@ app.get('/api/credentials/:user_id', (req, res) => {
 
 // VAULT: Salvar credencial
 app.post('/api/credentials', (req, res) => {
-    const { user_id, servico, login, senha } = req.body;
-    const cmd = `import sys; from core import banco; banco.adicionar_credencial_site(${user_id}, '${servico}', '${login}', '${senha}'); print('ok')`;
+    const { user_id, servico, login, senha, eh_personalizado } = req.body;
+    const isCustom = eh_personalizado ? 'True' : 'False';
+    const cmd = `import sys; from core import banco; banco.adicionar_credencial_site(${user_id}, '${servico}', '${login}', '${senha}', ${isCustom}); print('ok')`;
     exec(`"${PYTHON_PATH}" -c "${cmd}"`, (error, stdout, stderr) => {
         if (error) return res.status(500).json({ error: 'Erro ao salvar credencial' });
         res.json({ success: true });
@@ -152,7 +160,9 @@ app.post('/api/credentials', (req, res) => {
 // VAULT: Excluir credencial
 app.delete('/api/credentials/:id', (req, res) => {
     const { id } = req.params;
-    const cmd = `from core import banco; banco.excluir_credencial(${id}); print('ok')`;
+    const { type } = req.query;
+    const isCustom = type === 'custom' ? 'True' : 'False';
+    const cmd = `from core import banco; banco.excluir_credencial(${id}, ${isCustom}); print('ok')`;
     exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
         if (error) return res.status(500).json({ error: 'Erro ao excluir' });
         res.json({ success: true });
