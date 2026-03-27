@@ -6,7 +6,7 @@ import {
   Calendar, ChevronRight, LayoutDashboard, Columns, LogOut,
   ArrowLeft, RotateCcw, Percent, DollarSign, TrendingUp, Bus,
   Info, TrendingDown, Gauge, PlayCircle, Clock, ChevronDown, Save,
-  Repeat, Navigation, Map, Calculator
+  Repeat, Navigation, Map, Calculator, Menu
 } from 'lucide-react';
 
 const BackgroundAnimation = () => (
@@ -45,12 +45,12 @@ const Card = ({ children, className = '' }: { children: React.ReactNode, classNa
 );
 
 const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, type = "button" }: any) => {
-  const baseStyle = "inline-flex items-center justify-center px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2";
+  const baseStyle = "inline-flex items-center justify-center px-6 py-3 text-sm font-bold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 rounded-2xl";
   const variants = {
-    primary: "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 disabled:bg-blue-400",
-    secondary: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus:ring-blue-500",
-    danger: "bg-red-600 text-white hover:bg-red-700 focus:ring-red-500",
-    ghost: "bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+    primary: "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30",
+    secondary: "bg-white text-slate-700 border-2 border-slate-100 hover:bg-slate-50 hover:border-slate-200 focus:ring-slate-500 shadow-sm",
+    danger: "bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 shadow-lg shadow-red-500/20",
+    ghost: "bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800"
   };
   return (
     <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant as keyof typeof variants]} ${className}`}>
@@ -62,15 +62,15 @@ const Button = ({ children, onClick, variant = 'primary', className = '', disabl
 const Modal = ({ isOpen, onClose, title, children }: any) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50">
-          <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+        <div className="flex justify-between items-center p-6 border-b border-slate-100 bg-slate-50/50">
+          <h3 className="text-lg font-bold text-slate-800 tracking-tight">{title}</h3>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">
             <X size={20} />
           </button>
         </div>
-        <div className="p-6">
+        <div className="p-6 overflow-y-auto">
           {children}
         </div>
       </div>
@@ -105,38 +105,38 @@ const DashboardView = ({ setView }: { setView: (v: View) => void }) => {
       {/* Ações Rápidas */}
       <section>
         <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">Ações Rápidas</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="p-4 hover:border-blue-400 hover:shadow-md transition-all cursor-pointer group" >
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <Card className="p-5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/5 transition-all cursor-pointer group bg-gradient-to-br from-white to-slate-50/50" >
             <div className="flex items-start justify-between" onClick={handleQuickRun}>
               <div>
-                <h4 className="font-medium text-slate-800 group-hover:text-blue-600 transition-colors">Relatório de Vendas</h4>
-                <p className="text-sm text-slate-500 mt-1">Baixar últimos 7 dias</p>
+                <h4 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">Relatório de Vendas</h4>
+                <p className="text-xs text-slate-500 mt-1 font-medium">Baixar últimos 7 dias</p>
               </div>
-              <div className={`p-2 rounded-full ${isRunning ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-600 group-hover:bg-blue-100 group-hover:text-blue-600'}`}>
+              <div className={`p-3 rounded-2xl transition-all ${isRunning ? 'bg-blue-100 text-blue-600' : 'bg-white shadow-sm border border-slate-100 text-slate-400 group-hover:bg-blue-600 group-hover:text-white group-hover:scale-110'}`}>
                 {isRunning ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} />}
               </div>
             </div>
           </Card>
-
-          <Card className="p-4 hover:border-blue-400 hover:shadow-md transition-all cursor-pointer group">
+ 
+          <Card className="p-5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/5 transition-all cursor-pointer group bg-gradient-to-br from-white to-slate-50/50">
             <div className="flex items-start justify-between" onClick={() => setView('calculator')}>
               <div>
-                <h4 className="font-medium text-slate-800 group-hover:text-blue-600 transition-colors">Nova Cotação</h4>
-                <p className="text-sm text-slate-500 mt-1">Calculadora de passagens</p>
+                <h4 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">Nova Cotação</h4>
+                <p className="text-xs text-slate-500 mt-1 font-medium">Calculadora de passagens</p>
               </div>
-              <div className="p-2 rounded-full bg-slate-100 text-slate-600 group-hover:bg-blue-100 group-hover:text-blue-600">
+              <div className="p-3 rounded-2xl bg-white shadow-sm border border-slate-100 text-slate-400 group-hover:bg-blue-600 group-hover:text-white group-hover:scale-110 transition-all">
                 <Calculator size={20} />
               </div>
             </div>
           </Card>
-
-          <Card className="p-4 hover:border-blue-400 hover:shadow-md transition-all cursor-pointer group">
+ 
+          <Card className="p-5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/5 transition-all cursor-pointer group bg-gradient-to-br from-white to-slate-50/50">
             <div className="flex items-start justify-between" onClick={() => setView('vault')}>
               <div>
-                <h4 className="font-medium text-slate-800 group-hover:text-blue-600 transition-colors">Acessar Cofre</h4>
-                <p className="text-sm text-slate-500 mt-1">Gerenciar credenciais</p>
+                <h4 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">Acessar Cofre</h4>
+                <p className="text-xs text-slate-500 mt-1 font-medium">Gerenciar credenciais</p>
               </div>
-              <div className="p-2 rounded-full bg-slate-100 text-slate-600 group-hover:bg-blue-100 group-hover:text-blue-600">
+              <div className="p-3 rounded-2xl bg-white shadow-sm border border-slate-100 text-slate-400 group-hover:bg-blue-600 group-hover:text-white group-hover:scale-110 transition-all">
                 <Key size={20} />
               </div>
             </div>
@@ -154,8 +154,8 @@ const DashboardView = ({ setView }: { setView: (v: View) => void }) => {
             </h3>
             <button onClick={() => setView('reports')} className="text-sm text-blue-600 hover:text-blue-800 font-medium">Ver todos</button>
           </div>
-          <div className="p-0 flex-1">
-            <table className="w-full text-sm text-left">
+          <div className="p-0 flex-1 overflow-x-auto">
+            <table className="w-full text-sm text-left min-w-[500px]">
               <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
                 <tr>
                   <th className="px-4 py-3 font-medium">Arquivo</th>
@@ -283,36 +283,38 @@ const ReportsView = () => {
         <h2 className="text-2xl font-bold text-slate-800">Automação de Relatórios</h2>
       </div>
 
-      <Card>
-        <table className="w-full text-sm text-left">
-          <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
-            <tr>
-              <th className="px-6 py-4 font-medium">Nome da Rotina</th>
-              <th className="px-6 py-4 font-medium">Descrição</th>
-              <th className="px-6 py-4 font-medium">Tempo Est.</th>
-              <th className="px-6 py-4 font-medium text-right">Ação</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {reports.map((rep) => (
-              <tr key={rep.id} className="hover:bg-slate-50 transition-colors group">
-                <td className="px-6 py-4 font-medium text-slate-800 flex items-center gap-3">
-                  <div className="p-2 bg-blue-50 text-blue-600 rounded-md">
-                    <FileSpreadsheet size={18} />
-                  </div>
-                  {rep.name}
-                </td>
-                <td className="px-6 py-4 text-slate-500">{rep.desc}</td>
-                <td className="px-6 py-4 text-slate-500">{rep.time}</td>
-                <td className="px-6 py-4 text-right">
-                  <Button onClick={() => handleOpenConfig(rep.name)} variant="secondary" className="shadow-sm">
-                    Configurar <ChevronRight size={16} className="ml-1" />
-                  </Button>
-                </td>
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left min-w-[700px]">
+            <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
+              <tr>
+                <th className="px-6 py-4 font-bold">Nome da Rotina</th>
+                <th className="px-6 py-4 font-bold">Descrição</th>
+                <th className="px-6 py-4 font-bold">Tempo Est.</th>
+                <th className="px-6 py-4 font-bold text-right">Ação</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {reports.map((rep) => (
+                <tr key={rep.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <td className="px-6 py-5 font-bold text-slate-800 flex items-center gap-3">
+                    <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                      <FileSpreadsheet size={18} />
+                    </div>
+                    {rep.name}
+                  </td>
+                  <td className="px-6 py-5 text-slate-500 font-medium">{rep.desc}</td>
+                  <td className="px-6 py-5 text-slate-500 font-bold">{rep.time}</td>
+                  <td className="px-6 py-5 text-right">
+                    <Button onClick={() => handleOpenConfig(rep.name)} variant="secondary" className="shadow-sm rounded-xl py-2 px-4 text-xs font-bold">
+                      Configurar <ChevronRight size={14} className="ml-1" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       <Modal isOpen={isModalOpen} onClose={() => !isExecuting && setIsModalOpen(false)} title={`Executar: ${selectedReport}`}>
@@ -337,19 +339,19 @@ const ReportsView = () => {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Data Inicial</label>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Data Inicial</label>
                 <div className="relative">
-                  <Calendar size={16} className="absolute left-3 top-3 text-slate-400" />
-                  <input type="date" disabled className="w-full border border-slate-300 rounded-md pl-10 p-2.5 text-sm bg-slate-50 text-slate-500" />
+                  <Calendar size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input type="date" disabled className="w-full border-2 border-slate-100 rounded-2xl pl-10 p-3 text-sm bg-slate-50 text-slate-500 font-bold outline-none cursor-not-allowed" />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Data Final</label>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Data Final</label>
                 <div className="relative">
-                  <Calendar size={16} className="absolute left-3 top-3 text-slate-400" />
-                  <input type="date" disabled className="w-full border border-slate-300 rounded-md pl-10 p-2.5 text-sm bg-slate-50 text-slate-500" />
+                  <Calendar size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input type="date" disabled className="w-full border-2 border-slate-100 rounded-2xl pl-10 p-3 text-sm bg-slate-50 text-slate-500 font-bold outline-none cursor-not-allowed" />
                 </div>
               </div>
             </div>
@@ -578,88 +580,90 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
       <div className="grid grid-cols-1 gap-6">
         <Card className="border-none shadow-none bg-transparent">
           <div className="overflow-hidden bg-white border border-slate-200 rounded-[2rem] shadow-sm">
-            <table className="w-full text-sm text-left">
-              <thead>
-                <tr className="bg-slate-50/80 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 font-mono">
-                  <th className="px-8 py-5">Identificação / Site</th>
-                  <th className="px-8 py-5">Credencial</th>
-                  <th className="px-8 py-5">Senha</th>
-                  <th className="px-8 py-5 text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50 text-xs">
-                {!Array.isArray(credentials) || credentials.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-8 py-20 text-center text-slate-400 font-medium italic">
-                      Nenhuma credencial cadastrada.
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left min-w-[800px]">
+                <thead>
+                  <tr className="bg-slate-50/80 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 font-mono">
+                    <th className="px-8 py-5">Identificação / Site</th>
+                    <th className="px-8 py-5">Credencial</th>
+                    <th className="px-8 py-5">Senha</th>
+                    <th className="px-8 py-5 text-right">Ações</th>
                   </tr>
-                ) : (
-                  credentials.map((cred) => (
-                    <tr key={`${cred.type}-${cred.id}`} className="group hover:bg-slate-50/50 transition-colors">
-                      <td className="px-8 py-5">
-                        <div
-                          onClick={() => openSite(cred)}
-                          className="flex items-center gap-3 cursor-pointer group/site w-fit"
-                        >
-                          <div className={`p-2.5 rounded-xl ${cred.type === 'system' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'} transition-transform group-hover/site:scale-105`}>
-                            {cred.type === 'system' ? <LayoutDashboard size={20} /> : <Home size={20} />}
-                          </div>
-                          <div>
-                            <div className="font-bold text-slate-800 text-sm group-hover/site:text-blue-600 transition-all flex items-center gap-1.5">
-                              {cred.site}
-                              <ChevronRight size={12} className="opacity-0 -translate-x-2 group-hover/site:opacity-100 group-hover/site:translate-x-0 transition-all text-blue-400" />
-                            </div>
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tight">
-                              {cred.type === 'system' ? 'Sistema AutoBot' : (cred.url_custom || 'Site Próprio')}
-                            </span>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-8 py-5">
-                        <div className="font-mono text-xs text-slate-700 font-bold bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100 w-fit">
-                          {cred.user}
-                        </div>
-                      </td>
-                      <td className="px-8 py-5">
-                        <div className="flex items-center gap-2">
-                          <span className={`font-mono text-xs tracking-wider transition-all ${showPassword === `${cred.type}-${cred.id}` ? 'text-blue-700 font-bold' : 'text-slate-400'}`}>
-                            {showPassword === `${cred.type}-${cred.id}` ? cred.pass : '••••••••••••'}
-                          </span>
-                          <button
-                            onClick={() => setShowPassword(showPassword === `${cred.type}-${cred.id}` ? null : `${cred.type}-${cred.id}`)}
-                            className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"
-                          >
-                            {showPassword === `${cred.type}-${cred.id}` ? <EyeOff size={14} /> : <Eye size={14} />}
-                          </button>
-                        </div>
-                      </td>
-                      <td className="px-8 py-5 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(cred.pass);
-                              alert('Senha copiada!');
-                            }}
-                            className="p-2 text-slate-400 hover:text-blue-700 transition-all"
-                            title="Copiar"
-                          >
-                            <Copy size={18} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(cred.id, cred.type)}
-                            className="p-2 text-slate-400 hover:text-red-600 transition-all"
-                            title="Excluir"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </div>
+                </thead>
+                <tbody className="divide-y divide-slate-50 text-xs">
+                  {!Array.isArray(credentials) || credentials.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-8 py-20 text-center text-slate-400 font-medium italic">
+                        Nenhuma credencial cadastrada.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    credentials.map((cred) => (
+                      <tr key={`${cred.type}-${cred.id}`} className="group hover:bg-slate-50/50 transition-colors">
+                        <td className="px-8 py-5">
+                          <div
+                            onClick={() => openSite(cred)}
+                            className="flex items-center gap-3 cursor-pointer group/site w-fit"
+                          >
+                            <div className={`p-2.5 rounded-xl ${cred.type === 'system' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'} transition-transform group-hover/site:scale-105`}>
+                              {cred.type === 'system' ? <LayoutDashboard size={20} /> : <Home size={20} />}
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-800 text-sm group-hover/site:text-blue-600 transition-all flex items-center gap-1.5">
+                                {cred.site}
+                                <ChevronRight size={12} className="opacity-0 -translate-x-2 group-hover/site:opacity-100 group-hover/site:translate-x-0 transition-all text-blue-400" />
+                              </div>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tight">
+                                {cred.type === 'system' ? 'Sistema AutoBot' : (cred.url_custom || 'Site Próprio')}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-8 py-5">
+                          <div className="font-mono text-xs text-slate-700 font-bold bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100 w-fit">
+                            {cred.user}
+                          </div>
+                        </td>
+                        <td className="px-8 py-5">
+                          <div className="flex items-center gap-2">
+                            <span className={`font-mono text-xs tracking-wider transition-all ${showPassword === `${cred.type}-${cred.id}` ? 'text-blue-700 font-bold' : 'text-slate-400'}`}>
+                              {showPassword === `${cred.type}-${cred.id}` ? cred.pass : '••••••••••••'}
+                            </span>
+                            <button
+                              onClick={() => setShowPassword(showPassword === `${cred.type}-${cred.id}` ? null : `${cred.type}-${cred.id}`)}
+                              className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"
+                            >
+                              {showPassword === `${cred.type}-${cred.id}` ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-8 py-5 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(cred.pass);
+                                alert('Senha copiada!');
+                              }}
+                              className="p-2 text-slate-400 hover:text-blue-700 transition-all"
+                              title="Copiar"
+                            >
+                              <Copy size={18} />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(cred.id, cred.type)}
+                              className="p-2 text-slate-400 hover:text-red-600 transition-all"
+                              title="Excluir"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </Card>
       </div>
@@ -1409,6 +1413,11 @@ export default function App() {
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
 
   const [serverInfo, setServerInfo] = useState<{ version?: string } | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    setIsSidebarOpen(false);
+  }, [currentView]);
 
   useEffect(() => {
     fetch('/api/status')
@@ -1604,13 +1613,36 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen font-sans overflow-hidden">
       <div className="flex-1 flex overflow-hidden relative bg-slate-100">
-        <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shadow-xl z-20">
-          <div className="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950">
-            <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center mr-3 shadow-lg shadow-blue-900/20">
-              <Play size={18} className="text-white ml-0.5" />
+        {/* Mobile Overlay */}
+        {isSidebarOpen && (
+          <div 
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[90] md:hidden"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
+
+        <aside className={`${
+          isSidebarOpen 
+            ? 'fixed inset-0 z-[100] w-full translate-x-0' 
+            : 'absolute inset-y-0 left-0 -translate-x-full md:relative md:translate-x-0'
+          } transition-transform duration-300 ease-in-out w-64 bg-slate-900 text-slate-300 flex flex-col shadow-xl z-[100] md:z-20`}>
+          
+          <div className="h-16 flex items-center justify-between px-6 border-b border-slate-800 bg-slate-950">
+            <div className="flex items-center">
+              <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center mr-3 shadow-lg shadow-blue-900/20">
+                <Play size={18} className="text-white ml-0.5" />
+              </div>
+              <span className="text-white font-bold tracking-wide">AutoBot Pro</span>
             </div>
-            <span className="text-white font-bold tracking-wide">AutoBot Pro</span>
+            {/* Close button for mobile */}
+            <button 
+              onClick={() => setIsSidebarOpen(false)}
+              className="md:hidden p-2 text-slate-400 hover:text-white"
+            >
+              <X size={24} />
+            </button>
           </div>
+          
           <nav className="flex-1 py-6 px-3 space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -1628,6 +1660,7 @@ export default function App() {
               );
             })}
           </nav>
+          
           <div className="p-4 border-t border-slate-800">
             <button
               onClick={() => setUser(null)}
@@ -1640,22 +1673,33 @@ export default function App() {
         </aside>
 
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm z-10">
-            <div className="flex items-center bg-slate-100 rounded-md px-3 py-1.5 w-96 border border-slate-200">
-              <Search size={16} className="text-slate-400 mr-2" />
-              <input type="text" placeholder="Buscar..." className="bg-transparent border-none outline-none text-sm w-full" />
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right hidden sm:block">
-                <p className="text-sm font-bold text-slate-800">{user.nome}</p>
-                <p className="text-xs text-slate-500">Acesso Operacional</p>
+          <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shadow-sm z-10 transition-all">
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setIsSidebarOpen(true)}
+                className="p-2 -ml-2 text-slate-600 md:hidden hover:bg-slate-100 rounded-lg transition-colors"
+                aria-label="Menu"
+              >
+                <Menu size={20} />
+              </button>
+              <div className="flex items-center bg-slate-100 rounded-xl px-3 py-1.5 w-40 sm:w-96 border border-slate-200 transition-all focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:bg-white focus-within:border-blue-300">
+                <Search size={16} className="text-slate-400 mr-2" />
+                <input type="text" placeholder="Buscar..." className="bg-transparent border-none outline-none text-sm w-full font-medium" />
               </div>
-              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 shadow-sm">
-                <User size={20} />
+            </div>
+            
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="text-right hidden xs:block">
+                <p className="text-xs sm:text-sm font-bold text-slate-800 truncate max-w-[120px]">{user.nome}</p>
+                <p className="text-[10px] sm:text-xs text-slate-500 font-medium">Operacional</p>
+              </div>
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 shadow-sm border border-blue-200">
+                <User size={18} className="sm:size-[20px]" />
               </div>
             </div>
           </header>
-          <main className="flex-1 overflow-y-auto p-8">
+          
+          <main className="flex-1 overflow-y-auto p-4 sm:p-8">
             <div className="max-w-6xl mx-auto">
               {currentView === 'dashboard' && <DashboardView setView={setCurrentView} />}
               {currentView === 'reports' && <ReportsView />}
