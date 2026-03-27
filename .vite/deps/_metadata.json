@@ -1,8 +1,37 @@
 {
-  "hash": "d903c8ec",
+  "hash": "c08d452c",
   "configHash": "c8882a6e",
-  "lockfileHash": "e3b0c442",
-  "browserHash": "959d4f81",
-  "optimized": {},
-  "chunks": {}
+  "lockfileHash": "ac360505",
+  "browserHash": "9ad21eb3",
+  "optimized": {
+    "react/jsx-dev-runtime": {
+      "src": "../../node_modules/react/jsx-dev-runtime.js",
+      "file": "react_jsx-dev-runtime.js",
+      "fileHash": "d7d03589",
+      "needsInterop": true
+    },
+    "react": {
+      "src": "../../node_modules/react/index.js",
+      "file": "react.js",
+      "fileHash": "37439393",
+      "needsInterop": true
+    },
+    "react-dom/client": {
+      "src": "../../node_modules/react-dom/client.js",
+      "file": "react-dom_client.js",
+      "fileHash": "c90b8867",
+      "needsInterop": true
+    },
+    "lucide-react": {
+      "src": "../../node_modules/lucide-react/dist/esm/lucide-react.js",
+      "file": "lucide-react.js",
+      "fileHash": "bf15db91",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-FOCRCYUM": {
+      "file": "chunk-FOCRCYUM.js"
+    }
+  }
 }
