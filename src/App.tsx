@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Home, FileText, Lock, Settings, Search, User,
   Play, Download, CheckCircle, ShieldCheck, FileSpreadsheet,
@@ -45,7 +45,7 @@ const Card = ({ children, className = '' }: { children: React.ReactNode, classNa
 );
 
 const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, type = "button" }: any) => {
-  const baseStyle = "inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2";
+  const baseStyle = "inline-flex items-center justify-center px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2";
   const variants = {
     primary: "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 disabled:bg-blue-400",
     secondary: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus:ring-blue-500",
@@ -379,11 +379,24 @@ const PREDEFINED_SITES = [
 const VaultView = ({ currentUser }: { currentUser: any }) => {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isUnlocking, setIsUnlocking] = useState(false);
+  const [isLocking, setIsLocking] = useState(false);
   const [password, setPassword] = useState('');
   const [credentials, setCredentials] = useState<any[]>([]);
   const [showPassword, setShowPassword] = useState<number | null | string>(null);
   const [isAdding, setIsAdding] = useState(false);
-  const [newCred, setNewCred] = useState({ site: '', user: '', pass: '', customSite: '' });
+  const [newCred, setNewCred] = useState({ site: '', user: '', pass: '', customSite: '', customName: '' });
+  const [isSiteDropdownOpen, setIsSiteDropdownOpen] = useState(false);
+  const siteDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (siteDropdownRef.current && !siteDropdownRef.current.contains(event.target as Node)) {
+        setIsSiteDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const fetchCredentials = async () => {
     try {
@@ -428,25 +441,40 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
     }
   };
 
+  const handleLock = () => {
+    setIsLocking(true);
+    setTimeout(() => {
+      setIsUnlocked(false);
+      setIsLocking(false);
+      setPassword('');
+      setShowPassword(null);
+    }, 600);
+  };
+
   const handleAddCred = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newCred.site) { alert('Selecione o destino'); return; }
+    
     const isCustom = newCred.site === 'SITE PRÓPRIO';
-    const siteName = isCustom ? newCred.customSite : newCred.site;
-
+    // Se for personalizado, usa customName como 'site' e customSite como 'url'
+    const siteDisplayName = isCustom ? (newCred.customName || newCred.customSite) : newCred.site;
+    const siteUrl = isCustom ? newCred.customSite : '';
+    
     try {
       await fetch('/api/credentials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: currentUser.id,
-          servico: siteName,
-          login: newCred.user,
+        body: JSON.stringify({ 
+          user_id: currentUser.id, 
+          servico: siteDisplayName, 
+          login: newCred.user, 
           senha: newCred.pass,
-          eh_personalizado: isCustom
+          eh_personalizado: isCustom,
+          url: siteUrl
         })
       });
       setIsAdding(false);
-      setNewCred({ site: '', user: '', pass: '', customSite: '' });
+      setNewCred({ site: '', user: '', pass: '', customSite: '', customName: '' });
       fetchCredentials();
     } catch (error) {
       alert('Erro ao salvar');
@@ -460,15 +488,15 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
     }
   };
 
-  const openSite = (siteName: string) => {
-    const predefined = PREDEFINED_SITES.find(s => s.name === siteName);
-    if (predefined) {
-      window.open(predefined.url, '_blank');
+  const openSite = (cred: any) => {
+    if (cred.type === 'system') {
+      const predefined = PREDEFINED_SITES.find(s => s.name === cred.site);
+      if (predefined) window.open(predefined.url, '_blank');
     } else {
-      // Tenta inferir se é uma URL
-      if (siteName.includes('.') || siteName.includes('http')) {
-        const url = siteName.startsWith('http') ? siteName : `https://${siteName}`;
-        window.open(url, '_blank');
+      const url = cred.url_custom || cred.site;
+      if (url.includes('.') || url.includes('http')) {
+        const fullUrl = url.startsWith('http') ? url : `https://${url}`;
+        window.open(fullUrl, '_blank');
       }
     }
   };
@@ -476,21 +504,24 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
   if (!isUnlocked) {
     return (
       <div className="h-[60vh] flex items-center justify-center">
-        <Card className={`w-full max-w-md p-10 text-center transition-all duration-700 transform ${isUnlocking ? 'scale-110 opacity-0 blur-lg' : 'scale-100 opacity-100 blur-0'}`}>
-          <div className="relative w-24 h-24 mx-auto mb-8">
-            <div className={`absolute inset-0 bg-blue-100 rounded-full flex items-center justify-center transition-all duration-500 ${isUnlocking ? 'scale-150 opacity-0' : 'scale-100 opacity-100'}`}>
-              <Lock size={42} className="text-blue-600" />
+        <Card className={`w-full max-w-md p-10 text-center transition-all duration-700 transform 
+          ${isUnlocking ? 'scale-110 opacity-0 blur-lg' : 'scale-100 opacity-100 blur-0'}
+          ${isLocking ? 'scale-95 opacity-0 blur-sm' : ''}
+        `}>
+          <div className="relative w-20 h-20 mx-auto mb-6">
+            <div className={`absolute inset-0 bg-slate-100 rounded-full flex items-center justify-center transition-all duration-500 ${isUnlocking ? 'scale-150 opacity-0' : 'scale-100 opacity-100'}`}>
+              <Lock size={32} className="text-slate-400" />
             </div>
             {isUnlocking && (
               <div className="absolute inset-0 bg-green-100 rounded-full flex items-center justify-center animate-in zoom-in duration-300">
-                <ShieldCheck size={42} className="text-green-600" />
+                <ShieldCheck size={32} className="text-green-600" />
               </div>
             )}
           </div>
 
           <div className={`${isUnlocking ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'} transition-all duration-500 delay-100`}>
-            <h2 className="text-3xl font-black text-slate-800 mb-2">Cofre de Senhas</h2>
-            <p className="text-slate-500 mb-10 text-sm">Proteção avançada para suas credenciais de automação.</p>
+            <h2 className="text-2xl font-black text-slate-800 mb-2">Cofre de Senhas</h2>
+            <p className="text-slate-500 mb-8 text-xs font-medium">Insira sua chave mestre para acessar as credenciais.</p>
 
             <form onSubmit={handleUnlock} className="space-y-6">
               <div className="relative group">
@@ -501,13 +532,13 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="DIGITE A SENHA MESTRE"
-                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-4 py-4 text-center text-lg font-bold tracking-widest focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none uppercase placeholder:text-slate-300 placeholder:tracking-normal placeholder:font-medium"
+                  placeholder="PALAVRA-CHAVE MESTRE"
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-4 py-4 text-center text-sm font-bold tracking-[0.2em] focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none uppercase placeholder:text-slate-300 placeholder:tracking-normal placeholder:font-medium"
                   autoFocus
                 />
               </div>
-              <Button type="submit" className="w-full py-4 text-sm font-black uppercase tracking-widest bg-slate-900 hover:bg-black shadow-xl shadow-slate-200">
-                DESBLOQUEAR ACESSO
+              <Button type="submit" className="w-full py-4 text-xs font-black uppercase tracking-widest bg-slate-900 hover:bg-black shadow-xl shadow-slate-200 rounded-2xl transition-all active:scale-95">
+                DESBLOQUEAR COFRE
               </Button>
             </form>
           </div>
@@ -517,29 +548,29 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+    <div className={`space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 ${isLocking ? 'animate-out fade-out slide-out-to-top-4 scale-95 transition-all' : ''}`}>
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <div className="p-2 bg-green-100 rounded-xl text-green-600">
-              <ShieldCheck size={24} />
+            <div className="p-2 bg-slate-100 rounded-xl text-slate-500">
+              <Lock size={20} />
             </div>
-            <h2 className="text-3xl font-black text-slate-800 tracking-tight">Cofre de Segurança</h2>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight text-xl">Cofre de Segurança</h2>
           </div>
-          <p className="text-slate-500 text-sm font-medium ml-12">Total de {Array.isArray(credentials) ? credentials.length : 0} credenciais criptografadas de ponta a ponta.</p>
+          <p className="text-slate-500 text-[11px] font-bold ml-12 uppercase tracking-tighter opacity-70">Total de {Array.isArray(credentials) ? credentials.length : 0} credenciais ativas</p>
         </div>
         <div className="flex gap-4">
           <button
-            onClick={() => setIsUnlocked(false)}
-            className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-white border-2 border-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-50 hover:border-slate-200 transition-all"
+            onClick={handleLock}
+            className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-white border-2 border-slate-100 text-slate-500 font-bold text-xs hover:bg-slate-50 hover:border-slate-200 transition-all active:scale-95"
           >
-            <Lock size={18} /> BLOQUEAR
+            <Lock size={16} /> BLOQUEAR
           </button>
           <button
             onClick={() => setIsAdding(true)}
-            className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-blue-600 text-white font-black text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
+            className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-blue-600 text-white font-black text-xs hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 active:scale-95"
           >
-            <Plus size={20} /> ADICIONAR NOVA
+            <Plus size={18} /> NOVA CREDENCIAL
           </button>
         </div>
       </div>
@@ -549,75 +580,75 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
           <div className="overflow-hidden bg-white border border-slate-200 rounded-[2rem] shadow-sm">
             <table className="w-full text-sm text-left">
               <thead>
-                <tr className="bg-slate-50/80 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
-                  <th className="px-8 py-5">Sistema ou Site</th>
-                  <th className="px-8 py-5">Usuário / Login</th>
-                  <th className="px-8 py-5">Senha Protegida</th>
+                <tr className="bg-slate-50/80 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 font-mono">
+                  <th className="px-8 py-5">Identificação / Site</th>
+                  <th className="px-8 py-5">Credencial</th>
+                  <th className="px-8 py-5">Senha</th>
                   <th className="px-8 py-5 text-right">Ações</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50">
+              <tbody className="divide-y divide-slate-50 text-xs">
                 {!Array.isArray(credentials) || credentials.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-8 py-20 text-center text-slate-400 font-medium">
-                      Nenhuma credencial cadastrada no momento.
+                    <td colSpan={4} className="px-8 py-20 text-center text-slate-400 font-medium italic">
+                      Nenhuma credencial cadastrada.
                     </td>
                   </tr>
                 ) : (
                   credentials.map((cred) => (
-                    <tr key={`${cred.type}-${cred.id}`} className="group hover:bg-blue-50/30 transition-colors">
-                      <td className="px-8 py-6">
+                    <tr key={`${cred.type}-${cred.id}`} className="group hover:bg-slate-50/50 transition-colors">
+                      <td className="px-8 py-5">
                         <div
-                          onClick={() => openSite(cred.site)}
+                          onClick={() => openSite(cred)}
                           className="flex items-center gap-3 cursor-pointer group/site w-fit"
                         >
-                          <div className={`p-2.5 rounded-2xl ${cred.type === 'system' ? 'bg-blue-50 text-blue-600 group-hover/site:bg-blue-100' : 'bg-slate-100 text-slate-600 group-hover/site:bg-indigo-100 group-hover/site:text-indigo-600'} transition-colors`}>
-                            {cred.type === 'system' ? <LayoutDashboard size={18} /> : <Home size={18} />}
+                          <div className={`p-2.5 rounded-xl ${cred.type === 'system' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'} transition-transform group-hover/site:scale-105`}>
+                            {cred.type === 'system' ? <LayoutDashboard size={20} /> : <Home size={20} />}
                           </div>
                           <div>
-                            <div className="font-black text-slate-800 text-base group-hover/site:text-blue-600 transition-all flex items-center gap-2">
+                            <div className="font-bold text-slate-800 text-sm group-hover/site:text-blue-600 transition-all flex items-center gap-1.5">
                               {cred.site}
-                              <ChevronRight size={14} className="opacity-0 -translate-x-2 group-hover/site:opacity-100 group-hover/site:translate-x-0 transition-all" />
+                              <ChevronRight size={12} className="opacity-0 -translate-x-2 group-hover/site:opacity-100 group-hover/site:translate-x-0 transition-all text-blue-400" />
                             </div>
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">
-                              {cred.type === 'system' ? 'AUTOMAÇÃO DO SISTEMA' : 'SITE PERSONALIZADO'}
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tight">
+                              {cred.type === 'system' ? 'Sistema AutoBot' : (cred.url_custom || 'Site Próprio')}
                             </span>
                           </div>
                         </div>
                       </td>
-                      <td className="px-8 py-6">
-                        <div className="font-mono text-xs bg-slate-50 border border-slate-100 px-3 py-1.5 rounded-xl text-slate-600 w-fit">
+                      <td className="px-8 py-5">
+                        <div className="font-mono text-xs text-slate-700 font-bold bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100 w-fit">
                           {cred.user}
                         </div>
                       </td>
-                      <td className="px-8 py-6">
-                        <div className="flex items-center gap-3">
-                          <span className={`font-mono text-xs tracking-wider transition-all ${showPassword === `${cred.type}-${cred.id}` ? 'text-blue-600 font-bold translate-x-1' : 'text-slate-300'}`}>
-                            {showPassword === `${cred.type}-${cred.id}` ? cred.pass : '••••••••••••••••'}
+                      <td className="px-8 py-5">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-mono text-xs tracking-wider transition-all ${showPassword === `${cred.type}-${cred.id}` ? 'text-blue-700 font-bold' : 'text-slate-400'}`}>
+                            {showPassword === `${cred.type}-${cred.id}` ? cred.pass : '••••••••••••'}
                           </span>
                           <button
                             onClick={() => setShowPassword(showPassword === `${cred.type}-${cred.id}` ? null : `${cred.type}-${cred.id}`)}
-                            className="p-2 text-slate-300 hover:text-slate-600 transition-colors"
+                            className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"
                           >
-                            {showPassword === `${cred.type}-${cred.id}` ? <EyeOff size={16} /> : <Eye size={16} />}
+                            {showPassword === `${cred.type}-${cred.id}` ? <EyeOff size={14} /> : <Eye size={14} />}
                           </button>
                         </div>
                       </td>
-                      <td className="px-8 py-6 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                      <td className="px-8 py-5 text-right">
+                        <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => {
                               navigator.clipboard.writeText(cred.pass);
                               alert('Senha copiada!');
                             }}
-                            className="p-3 text-slate-400 hover:text-blue-600 hover:bg-white hover:shadow-md rounded-2xl transition-all"
-                            title="Copiar Senha"
+                            className="p-2 text-slate-400 hover:text-blue-700 transition-all"
+                            title="Copiar"
                           >
                             <Copy size={18} />
                           </button>
                           <button
                             onClick={() => handleDelete(cred.id, cred.type)}
-                            className="p-3 text-slate-400 hover:text-red-600 hover:bg-white hover:shadow-md rounded-2xl transition-all"
+                            className="p-2 text-slate-400 hover:text-red-600 transition-all"
                             title="Excluir"
                           >
                             <Trash2 size={18} />
@@ -633,74 +664,127 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
         </Card>
       </div>
 
-      <Modal isOpen={isAdding} onClose={() => setIsAdding(false)} title="Segurança: Nova Credencial">
-        <form onSubmit={handleAddCred} className="space-y-6">
-          <div className="grid grid-cols-1 gap-5">
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 px-1">Selecione o Destino</label>
-              <select
-                required
-                value={newCred.site}
-                onChange={e => setNewCred({ ...newCred, site: e.target.value })}
-                className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
-              >
-                <option value="">Selecione um sistema...</option>
-                {PREDEFINED_SITES.map(s => (
-                  <option key={s.name} value={s.name}>{s.name}</option>
-                ))}
-                <option value="SITE PRÓPRIO">SITE PRÓPRIO / OUTRO</option>
-              </select>
+      <Modal isOpen={isAdding} onClose={() => setIsAdding(false)} title="Nova Credencial">
+        <div className="-mt-6 mb-6 p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-3">
+          <div className="p-2 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-200">
+            <ShieldCheck size={20} />
+          </div>
+          <div>
+            <h4 className="text-sm font-black text-slate-800 tracking-tight">Segurança de Dados</h4>
+            <p className="text-[10px] text-slate-500 font-medium">As informações serão criptografadas antes do salvamento.</p>
+          </div>
+        </div>
+
+        <form onSubmit={handleAddCred} className="space-y-5">
+          <div className="grid grid-cols-1 gap-4">
+            <div className="space-y-1.5 overflow-visible">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Tipo de Acesso</label>
+              <div className="relative" ref={siteDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsSiteDropdownOpen(!isSiteDropdownOpen)}
+                  className="w-full bg-white border-2 border-slate-100 rounded-2xl px-5 py-3.5 text-sm font-black text-slate-700 flex items-center justify-between hover:border-slate-300 transition-all shadow-sm outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-500/10"
+                >
+                  <div className="flex items-center gap-3">
+                    {newCred.site ? (
+                      <>
+                        <div className={`p-1.5 rounded-lg ${newCred.site === 'SITE PRÓPRIO' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>
+                          {newCred.site === 'SITE PRÓPRIO' ? <Home size={16} /> : <LayoutDashboard size={16} />}
+                        </div>
+                        <span className="truncate max-w-[200px]">{newCred.site}</span>
+                      </>
+                    ) : (
+                      <span className="text-slate-400 font-bold">Selecione o destino...</span>
+                    )}
+                  </div>
+                  <ChevronDown size={20} className={`text-slate-400 transition-transform duration-300 shrink-0 ${isSiteDropdownOpen ? 'rotate-180 text-blue-600' : ''}`} />
+                </button>
+
+                {isSiteDropdownOpen && (
+                  <div className="absolute top-full left-0 right-0 mt-2 bg-white border-2 border-slate-100 rounded-2xl shadow-2xl p-2 z-[60] max-h-56 overflow-y-auto animate-in slide-in-from-top-2 duration-300">
+                    <div className="grid grid-cols-1 gap-1">
+                      {PREDEFINED_SITES.map(s => (
+                        <button
+                          key={s.name}
+                          type="button"
+                          onClick={() => {
+                            setNewCred({ ...newCred, site: s.name });
+                            setIsSiteDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 rounded-xl flex items-center gap-3 transition-all ${newCred.site === s.name ? 'bg-blue-50 text-blue-700 font-black' : 'hover:bg-slate-50 text-slate-600'}`}
+                        >
+                          <div className={`p-1.5 rounded-lg ${newCred.site === s.name ? 'bg-blue-100' : 'bg-slate-100 opacity-70'}`}>
+                            <LayoutDashboard size={14} />
+                          </div>
+                          <span className="font-bold text-[11px] truncate">{s.name} (SISTEMA)</span>
+                        </button>
+                      ))}
+                      <div className="h-[1px] bg-slate-100 my-1 mx-2"></div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewCred({ ...newCred, site: 'SITE PRÓPRIO' });
+                          setIsSiteDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-4 py-2 rounded-xl flex items-center gap-3 transition-all ${newCred.site === 'SITE PRÓPRIO' ? 'bg-indigo-50 text-indigo-700 font-black' : 'hover:bg-indigo-50/50 text-slate-600 font-bold'}`}
+                      >
+                        <div className={`p-1.5 rounded-lg ${newCred.site === 'SITE PRÓPRIO' ? 'bg-indigo-100' : 'bg-indigo-100/50'}`}>
+                          <Home size={14} />
+                        </div>
+                        <span className="font-bold text-[11px]">PROPRIO / PERSONALIZADO</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {newCred.site === 'SITE PRÓPRIO' && (
-              <div className="animate-in slide-in-from-top-2 duration-300">
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 px-1">Endereço do Site (URL ou Nome)</label>
-                <div className="relative group">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors">
-                    <Home size={18} />
-                  </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-top-2 duration-300">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Nome de Exibição (Opcional)</label>
+                  <input
+                    type="text"
+                    value={newCred.customName}
+                    onChange={e => setNewCred({ ...newCred, customName: e.target.value })}
+                    placeholder="Ex: Banco do Brasil"
+                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">URL do Site</label>
                   <input
                     required
                     type="text"
                     value={newCred.customSite}
                     onChange={e => setNewCred({ ...newCred, customSite: e.target.value })}
-                    placeholder="Ex: portal.empresa.com.br"
-                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
+                    placeholder="Ex: bb.com.br"
+                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
                   />
                 </div>
               </div>
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 px-1">Usuário / Login</label>
-                <div className="relative group">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors">
-                    <User size={18} />
-                  </div>
-                  <input
-                    required
-                    type="text"
-                    value={newCred.user}
-                    onChange={e => setNewCred({ ...newCred, user: e.target.value })}
-                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Usuário / Login</label>
+                <input
+                  required
+                  type="text"
+                  value={newCred.user}
+                  onChange={e => setNewCred({ ...newCred, user: e.target.value })}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
+                />
               </div>
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 px-1">Senha de Acesso</label>
-                <div className="relative group">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors">
-                    <Key size={18} />
-                  </div>
-                  <input
-                    required
-                    type="text"
-                    value={newCred.pass}
-                    onChange={e => setNewCred({ ...newCred, pass: e.target.value })}
-                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-12 pr-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Senha</label>
+                <input
+                  required
+                  type="text"
+                  value={newCred.pass}
+                  onChange={e => setNewCred({ ...newCred, pass: e.target.value })}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
+                />
               </div>
             </div>
           </div>
@@ -709,15 +793,15 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
             <button
               type="button"
               onClick={() => setIsAdding(false)}
-              className="px-6 py-3 rounded-2xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200 transition-all"
+              className="px-6 py-3 rounded-2xl bg-slate-50 text-slate-500 font-bold text-xs hover:bg-slate-100 transition-all active:scale-95"
             >
               CANCELAR
             </button>
             <button
               type="submit"
-              className="px-8 py-3 rounded-2xl bg-blue-600 text-white font-black text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
+              className="px-8 py-3 rounded-2xl bg-slate-900 text-white font-black text-xs hover:bg-black transition-all shadow-lg shadow-slate-200 active:scale-95"
             >
-              SALVAR CREDENCIAL
+              SALVAR ACESSO
             </button>
           </div>
         </form>
@@ -1167,7 +1251,7 @@ const CalculatorView = () => {
                 <button
                   type="button"
                   onClick={() => setIsBusDropdownOpen(!isBusDropdownOpen)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3.5 pl-3 pr-10 text-left text-slate-800 font-semibold focus:ring-2 focus:ring-blue-500 outline-none hover:bg-slate-100 transition-all flex items-center justify-between shadow-sm overflow-hidden"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3.5 text-left text-slate-800 font-semibold focus:ring-2 focus:ring-blue-500 outline-none hover:bg-slate-100 transition-all flex items-center justify-between shadow-sm overflow-hidden"
                 >
                   <div className="flex items-center gap-2 overflow-hidden w-full">
                     <Bus size={18} className="text-slate-400 shrink-0" />
@@ -1182,32 +1266,45 @@ const CalculatorView = () => {
 
                 {isBusDropdownOpen && (
                   <div className="absolute bottom-full left-0 right-0 mb-2 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 py-2 max-h-60 overflow-y-auto animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <div className="px-5 py-2 text-[8px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-50 mb-1">Escolha uma Categoria</div>
+                    <div className="px-5 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 mb-1 flex items-center justify-between">
+                      <span>Categorias</span>
+                      <Bus size={10} />
+                    </div>
                     <button
                       type="button"
                       onClick={() => handleBusChange('CONVENCIONAL', '46')}
-                      className="w-full text-left px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      className={`w-full text-left px-5 py-2.5 text-xs font-bold transition-all flex items-center gap-3 ${inputs.tipo_onibus === 'CONVENCIONAL' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}
                     >
-                      CONVENCIONAL
+                      <div className={`p-1 rounded-lg ${inputs.tipo_onibus === 'CONVENCIONAL' ? 'bg-blue-100' : 'bg-slate-100'}`}>
+                         <Bus size={12} />
+                      </div>
+                      CONVENCIONAL (46 PAX)
                     </button>
                     {busTypes.map(bus => (
                       <button
                         key={bus[0]}
                         type="button"
                         onClick={() => handleBusChange(bus[0], bus[1].toString())}
-                        className="w-full text-left px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                        className={`w-full text-left px-5 py-2.5 text-xs font-bold transition-all flex items-center gap-3 ${inputs.tipo_onibus === bus[0] ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}
                       >
-                        {bus[0]}
+                        <div className={`p-1 rounded-lg ${inputs.tipo_onibus === bus[0] ? 'bg-blue-100' : 'bg-slate-100'}`}>
+                           <Bus size={12} />
+                        </div>
+                        {bus[0]} ({bus[1]} PAX)
                       </button>
                     ))}
                     <div className="h-[1px] bg-slate-100 my-1 mx-4"></div>
                     <button
                       type="button"
                       onClick={() => handleBusChange('PERSONALIZADO')}
-                      className="w-full text-left px-5 py-3 text-sm font-bold text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center justify-between"
+                      className={`w-full text-left px-5 py-3 text-xs font-black transition-all flex items-center justify-between ${inputs.tipo_onibus === 'PERSONALIZADO' ? 'bg-indigo-50 text-indigo-700' : 'text-indigo-600 hover:bg-indigo-50/50 font-bold'}`}
                     >
-                      <span>+ PERSONALIZADO...</span>
-                      <Settings size={14} className="opacity-50" />
+                      <div className="flex items-center gap-3">
+                         <div className={`p-1 rounded-lg ${inputs.tipo_onibus === 'PERSONALIZADO' ? 'bg-indigo-100' : 'bg-indigo-50'}`}>
+                            <Settings size={12} />
+                         </div>
+                         <span>+ PERSONALIZADO...</span>
+                      </div>
                     </button>
                   </div>
                 )}

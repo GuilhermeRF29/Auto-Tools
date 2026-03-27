@@ -148,9 +148,10 @@ app.get('/api/credentials/:user_id', (req, res) => {
 
 // VAULT: Salvar credencial
 app.post('/api/credentials', (req, res) => {
-    const { user_id, servico, login, senha, eh_personalizado } = req.body;
+    const { user_id, servico, login, senha, eh_personalizado, url } = req.body;
     const isCustom = eh_personalizado ? 'True' : 'False';
-    const cmd = `import sys; from core import banco; banco.adicionar_credencial_site(${user_id}, '${servico}', '${login}', '${senha}', ${isCustom}); print('ok')`;
+    const safeUrl = (url || '').replace(/'/g, "\\'");
+    const cmd = `import sys; from core import banco; banco.adicionar_credencial_site(${user_id}, '${servico}', '${login}', '${senha}', ${isCustom}, '${safeUrl}'); print('ok')`;
     exec(`"${PYTHON_PATH}" -c "${cmd}"`, (error, stdout, stderr) => {
         if (error) return res.status(500).json({ error: 'Erro ao salvar credencial' });
         res.json({ success: true });
