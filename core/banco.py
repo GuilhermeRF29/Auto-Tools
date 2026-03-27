@@ -55,6 +55,12 @@ def configurar_banco():
                         servico TEXT, login_acesso TEXT, senha_acesso TEXT, 
                         user_id INTEGER, FOREIGN KEY (user_id) REFERENCES usuarios(id))''')
     
+    # NOVA TABELA PARA SENHAS PERSONALIZADAS
+    cursor.execute('''CREATE TABLE IF NOT EXISTS acessos_personalizados (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                        nome_site TEXT, login_acesso TEXT, senha_acesso TEXT, 
+                        user_id INTEGER, FOREIGN KEY (user_id) REFERENCES usuarios(id))''')
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS onibus (
                         id INTEGER PRIMARY KEY AUTOINCREMENT, 
                         nome TEXT UNIQUE, 
@@ -89,32 +95,75 @@ def login_principal(usuario, senha):
         return user[0], user[1] # Retorna (ID, NOME)
     return None, None
 
-def adicionar_credencial_site(user_id, servico, login_site, senha_site):
+def adicionar_credencial_site(user_id, servico, login_site, senha_site, eh_personalizado=False):
     fernet = obter_fernet()
-    senha_cripto = fernet.encrypt(senha_site.encode('utf-8'))
+    senha_cripto = fernet.encrypt(senha_site.encode('utf-8')).decode('utf-8')
     
     conexao = sqlite3.connect(DB_PATH)
     cursor = conexao.cursor()
-    # Limpa antes de gravar para evitar duplicação
-    cursor.execute("DELETE FROM acessos WHERE user_id = ? AND servico = ?", (user_id, servico))
-    cursor.execute('''INSERT INTO acessos (servico, login_acesso, senha_acesso, user_id)
-                      VALUES (?, ?, ?, ?)''', (servico, login_site, senha_cripto, user_id))
+    
+    if eh_personalizado:
+        # Tabela personalizada não precisa limpar por serviço (pode ter vários com o mesmo nome se quiser, ou limpamos por nome_site)
+        cursor.execute("DELETE FROM acessos_personalizados WHERE user_id = ? AND nome_site = ?", (user_id, servico))
+        cursor.execute('''INSERT INTO acessos_personalizados (nome_site, login_acesso, senha_acesso, user_id)
+                          VALUES (?, ?, ?, ?)''', (servico, login_site, senha_cripto, user_id))
+    else:
+        cursor.execute("DELETE FROM acessos WHERE user_id = ? AND servico = ?", (user_id, servico))
+        cursor.execute('''INSERT INTO acessos (servico, login_acesso, senha_acesso, user_id)
+                          VALUES (?, ?, ?, ?)''', (servico, login_site, senha_cripto, user_id))
+    
     conexao.commit()
     conexao.close()
 
-def buscar_credencial_site(user_id, servico):
+def listar_credenciais(user_id):
     conexao = sqlite3.connect(DB_PATH)
     cursor = conexao.cursor()
-    cursor.execute("SELECT login_acesso, senha_acesso FROM acessos WHERE user_id = ? AND servico = ?", (user_id, servico))
-    dados = cursor.fetchone()
+    
+    # Buscar dos sistemas
+    cursor.execute("SELECT id, servico, login_acesso, senha_acesso FROM acessos WHERE user_id = ?", (user_id,))
+    dados_sist = cursor.fetchall()
+    
+    # Buscar personalizados
+    cursor.execute("SELECT id, nome_site, login_acesso, senha_acesso FROM acessos_personalizados WHERE user_id = ?", (user_id,))
+    dados_pers = cursor.fetchall()
+    
     conexao.close()
     
-    if dados:
-        fernet = obter_fernet()
-        login = dados[0]
-        senha = fernet.decrypt(dados[1]).decode('utf-8')
-        return login, senha
-    return None, None
+    lista = []
+    fernet = obter_fernet()
+
+    # Processar Sistemas
+    for d in dados_sist:
+        try:
+            token = d[3]
+            if isinstance(token, str): token = token.encode('utf-8')
+            senha = fernet.decrypt(token).decode('utf-8')
+        except:
+            senha = "Erro decript"
+        lista.append({"id": d[0], "site": d[1], "user": d[2], "pass": senha, "type": "system"})
+
+    # Processar Personalizados
+    for d in dados_pers:
+        try:
+            token = d[3]
+            if isinstance(token, str): token = token.encode('utf-8')
+            senha = fernet.decrypt(token).decode('utf-8')
+        except:
+            senha = "Erro decript"
+        lista.append({"id": d[0], "site": d[1], "user": d[2], "pass": senha, "type": "custom"})
+
+    return lista
+
+def excluir_credencial(credential_id, eh_personalizado=False):
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    if eh_personalizado:
+        cursor.execute("DELETE FROM acessos_personalizados WHERE id = ?", (credential_id,))
+    else:
+        cursor.execute("DELETE FROM acessos WHERE id = ?", (credential_id,))
+    conexao.commit()
+    conexao.close()
+    return True
 
 def verificar_senha_mestra(user_id, senha_digitada):
     conexao = sqlite3.connect(DB_PATH)

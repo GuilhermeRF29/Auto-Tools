@@ -1,15 +1,20 @@
-# AutoUtils
-App de automações e utilidades para o setor de pricing do Grupo JCA
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-# Apresentação
-Aplicativo desenvolvido para realizar tarefas manuais de forma automática, facilitando o download e atualização de relatórios importantes para a equipe de pricing, onde é atualmente focado e criado para ser usado. 
+# Run and deploy your AI Studio app
 
-# Funcionalidades
-## Relatórios
-- Permite o download do relatório de demandas para atualização de relatórios e dashboards. Permite o dowbkiad em períodos específicos ou padrões. 
-- Permite o download de relários de revenue diretamente no site em períodos específicos ou padrões. É usado para atualização de dashboards.
+This contains everything you need to run your app locally.
 
-## Ferramentas
-- Calculadora de redução de preço de passagens com reltório de completo comparativo e números necessários para compensação. 
-- Cofre de senhas para acesso em plataformas para download de relatórios e consulta de senhas e cadastros. 
-- Tela de login com dados criptografados para segurança da informação.
+View your app in AI Studio: https://ai.studio/apps/ac51df92-2269-450a-a98a-619882bb9284
+
+## Run Locally
+
+**Prerequisites:**  Node.js
+
+
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`
