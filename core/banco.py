@@ -116,6 +116,37 @@ def buscar_credencial_site(user_id, servico):
         return login, senha
     return None, None
 
+def listar_credenciais(user_id):
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    cursor.execute("SELECT id, servico, login_acesso, senha_acesso FROM acessos WHERE user_id = ?", (user_id,))
+    dados = cursor.fetchall()
+    conexao.close()
+    
+    lista = []
+    if dados:
+        fernet = obter_fernet()
+        for d in dados:
+            try:
+                senha = fernet.decrypt(d[3]).decode('utf-8')
+            except:
+                senha = "Erro decript"
+            lista.append({
+                "id": d[0],
+                "site": d[1],
+                "user": d[2],
+                "pass": senha
+            })
+    return lista
+
+def excluir_credencial(credential_id):
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    cursor.execute("DELETE FROM acessos WHERE id = ?", (credential_id,))
+    conexao.commit()
+    conexao.close()
+    return True
+
 def verificar_senha_mestra(user_id, senha_digitada):
     conexao = sqlite3.connect(DB_PATH)
     cursor = conexao.cursor()
