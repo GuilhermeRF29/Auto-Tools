@@ -1,8 +1,10 @@
 import express from 'express';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,32 +55,175 @@ app.get('/api/abrir-explorador-pastas', (req, res) => {
     });
 });
 
-// Rota para rodar automações
-app.post('/api/run-automation', (req, res) => {
-    const { name } = req.body;
+
+const jobs = new Map();
+
+app.post('/api/run-automation', async (req, res) => {
+    const { name, ...params } = req.body;
+    const jobId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
 
     let scriptPath = '';
-    // Mapeamento de nomes do Frontend para scripts Python
-    if (name.includes('Vendas')) scriptPath = path.join('automacoes', 'sr_new.py');
-    else if (name.includes('Fechamento')) scriptPath = path.join('automacoes', 'ebus_new.py');
-    else if (name.includes('Taxas')) scriptPath = path.join('automacoes', 'adm_new.py');
-    else if (name.includes('Cotação')) scriptPath = path.join('automacoes', 'paxcalc.py');
+    
+    // Mapeamento exato com os nomes que aparecem na interface (App.tsx)
+    if (name.includes('RIO X SP')) scriptPath = path.join(__dirname, 'automacoes', 'sr_new.py');
+    else if (name.includes('Revenue')) scriptPath = path.join(__dirname, 'automacoes', 'ebus_new.py');
+    else if (name.includes('Demandas')) scriptPath = path.join(__dirname, 'automacoes', 'adm_new.py');
+    else if (name.includes('Cotação')) scriptPath = path.join(__dirname, 'automacoes', 'paxcalc.py');
+
+
+
 
     if (!scriptPath) {
         return res.status(400).json({ error: 'Nenhuma automação mapeada para este nome.' });
     }
 
-    console.log(`[BACKEND] Iniciando execução: ${scriptPath}`);
+    const job = {
+        id: jobId,
+        name,
+        script: scriptPath,
+        status: 'running',
+        progress: 0,
+        message: 'Iniciando...',
+        output: '',
+        process: null,
+        events: []
+    };
+    jobs.set(jobId, job);
 
-    exec(`"${PYTHON_PATH}" "${scriptPath}"`, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`[ERRO] ${error.message}`);
-            return res.status(500).json({ error: 'Erro durante execução da automação.', details: stderr });
+    const logMsg = `[BACKEND] Job ${jobId} iniciado: ${scriptPath}\n`;
+    fs.appendFileSync(path.join(__dirname, 'server_debug.log'), logMsg);
+
+    // Passamos os parâmetros em Base64 via CLI para evitar problemas com caracteres e stdin
+    const paramsBase64 = Buffer.from(JSON.stringify({ ...params, user_id: 1 })).toString('base64');
+
+    const child = spawn(PYTHON_PATH, ['-u', scriptPath, paramsBase64], {
+        cwd: __dirname,
+        env: { 
+            ...process.env, 
+            PYTHONIOENCODING: 'utf8', 
+            PYTHONUNBUFFERED: '1',
+            PYTHONPATH: __dirname
         }
-        console.log(`[SUCESSO] ${scriptPath} finalizado.`);
-        res.json({ success: true, message: 'Automação concluída com sucesso.', output: stdout });
     });
+    job.process = child;
+
+
+    child.stdout.on('data', (data) => {
+        const text = data.toString();
+        fs.appendFileSync(path.join(__dirname, 'server_debug.log'), `[STDOUT ${jobId}] ${text}`);
+        const lines = text.split('\n');
+        
+        lines.forEach(line => {
+            if (!line.trim()) return;
+            job.output += line + '\n';
+            
+            const match = line.match(/PROGRESS:({.*})/);
+            if (match) {
+                try {
+                    const data = JSON.parse(match[1]);
+                    job.progress = data.p;
+                    job.message = data.m;
+                    job.events.forEach(res => {
+                        res.write(`data: ${JSON.stringify({ progress: job.progress, message: job.message, status: job.status })}\n\n`);
+                    });
+                } catch (e) {}
+            }
+        });
+    });
+
+    child.stderr.on('data', (data) => {
+        const err = data.toString();
+        fs.appendFileSync(path.join(__dirname, 'server_debug.log'), `[STDERR ${jobId}] ${err}`);
+        console.error(`[PY-STDERR] ${err}`);
+        job.output += `[ERRO] ${err}\n`;
+        // Enviar erro parcial se possível
+        job.events.forEach(res => {
+            res.write(`data: ${JSON.stringify({ progress: job.progress, message: err.substring(0, 50), status: 'running' })}\n\n`);
+        });
+    });
+
+    child.on('close', (code) => {
+        if (job.status === 'cancelled') return;
+
+        job.status = code === 0 ? 'completed' : 'failed';
+        console.log(`[BACKEND] Job ${jobId} finalizado com status: ${job.status}`);
+        
+        if (job.status === 'failed') {
+            job.message = "Erro na execução da automação.";
+        } else {
+            job.progress = 100;
+            job.message = "Concluído com sucesso!";
+        }
+
+        const lastLine = job.output.trim().split('\n').pop();
+        job.events.forEach(res => {
+            res.write(`data: ${JSON.stringify({ progress: job.progress, message: job.message, status: job.status, result: lastLine })}\n\n`);
+            res.end();
+        });
+        
+        setTimeout(() => jobs.delete(jobId), 10 * 60 * 1000);
+    });
+
+    res.json({ success: true, jobId });
 });
+
+app.get('/api/automation-progress/:jobId', (req, res) => {
+    const { jobId } = req.params;
+    const job = jobs.get(jobId);
+
+    if (!job) return res.status(404).json({ error: 'Job não encontrado.' });
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    res.write(`data: ${JSON.stringify({ progress: job.progress, message: job.message, status: job.status })}\n\n`);
+
+    if (job.status === 'running') {
+        job.events.push(res);
+        req.on('close', () => {
+            job.events = job.events.filter(r => r !== res);
+        });
+    } else {
+        res.end();
+    }
+});
+
+app.post('/api/cancel-automation/:jobId', (req, res) => {
+    const { jobId } = req.params;
+    const job = jobs.get(jobId);
+
+    if (job && job.process && job.status === 'running') {
+        job.status = 'cancelled';
+        job.message = "Cancelado pelo usuário.";
+        job.process.kill('SIGINT'); // Tentativa de fechar gracefully
+        setTimeout(() => { if (job.process) job.process.kill('SIGKILL'); }, 2000);
+        
+        job.events.forEach(res => {
+            res.write(`data: ${JSON.stringify({ progress: job.progress, message: job.message, status: job.status })}\n\n`);
+            res.end();
+        });
+        return res.json({ success: true });
+    }
+    res.status(404).json({ error: 'Job não encontrado ou já finalizado.' });
+});
+
+
+// Rota para baixar arquivos (Segurança mínima: apenas permitir da pasta Downloads ou subpastas seguras)
+app.get('/api/download', (req, res) => {
+    const filePath = req.query.path;
+    if (!filePath) return res.status(400).send('Caminho não fornecido');
+    
+    // Validar se o arquivo existe e está em local permitido
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).send('Arquivo não encontrado no servidor: ' + filePath);
+    }
+
+    res.download(filePath);
+});
+
 
 // Funções de Banco de Dados (Via chamadas curtas de Python para reaproveitar banco.py)
 // LOGIN: Autenticar usuário

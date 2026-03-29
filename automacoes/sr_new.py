@@ -1,18 +1,29 @@
+import sys
 import os
 import base64
+import json
+# Feedback em ASCII puro para o dashboard
+print("PROGRESS:{\"p\": 1, \"m\": \"Carregando Modulos SR...\"}", flush=True)
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import shutil
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
+from core.banco import BASE_DIR, ASSETS_DIR
+
+
+# Importar Google só quando necessário ou agora, mas já demos o feedback
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-import sys
-from core.banco import BASE_DIR, ASSETS_DIR
+
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Side
+
 
 # ==========================================
 # CONFIGURAÇÕES GMAIL
@@ -331,6 +342,8 @@ def executar_sr(
     base_automacao=None,
 ):
     """Executa SR com suporte a modos modulares sem quebrar compatibilidade."""
+    if callback_progresso:
+        callback_progresso(0.01, "Inicializando Robô SR...")
 
     modos_validos = {
         "completo",
@@ -501,9 +514,60 @@ def executar_sr(
 # ==========================================
 # EXECUÇÃO MANUAL (TESTE)
 # ==========================================
+
+# ==========================================
+# EXECUÇÃO VIA CLI/BACKEND
+# ==========================================
 if __name__ == '__main__':
-    # No manual, usamos hoje para e-mail e ontem para base
-    hoje = datetime.now().strftime('%d/%m/%Y')
-    ontem = (datetime.now() - timedelta(days=1)).strftime('%d/%m/%Y')
+    # Ler parâmetros de CLI (Base64) ou STDIN
+    try:
+        if len(sys.argv) > 1:
+            params = json.loads(base64.b64decode(sys.argv[1]))
+        else:
+            line = sys.stdin.readline()
+            params = json.loads(line) if line else {}
+    except:
+        params = {}
+
+
+    user_id = params.get('user_id', 1)
+    e_ini = params.get('data_ini') or (datetime.now().strftime('%d/%m/%Y'))
+    e_fim = params.get('data_fim') or e_ini
+    b_ini = params.get('data_ini_base') or (datetime.now() - timedelta(days=1)).strftime('%d/%m/%Y')
+    b_fim = params.get('data_fim_base') or b_ini
     
-    executar_sr(1, hoje, hoje, ontem, ontem)
+    # Datas podem vir em ISO do frontend, converter se necessário
+    def fix_date(d):
+        if not d: return d
+        if 'T' in d: # ISO 2024-03-29T...
+            return datetime.fromisoformat(d.replace('Z', '')).strftime('%d/%m/%Y')
+        return d
+
+    e_ini = fix_date(e_ini)
+    e_fim = fix_date(e_fim)
+    b_ini = fix_date(b_ini)
+    b_fim = fix_date(b_fim)
+
+    def progress_callback(p, m):
+        # Formato que o server.js captura
+        print(f'PROGRESS:{{"p": {int(p*100)}, "m": "{m}"}}', flush=True)
+
+    try:
+        resultado = executar_sr(
+            id_usuario=user_id,
+            e_ini=e_ini,
+            e_fim=e_fim,
+            b_ini=b_ini,
+            b_fim=b_fim,
+            callback_progresso=progress_callback,
+            modo_execucao=params.get('acao', 'completo'),
+            pasta_destino=params.get('pasta_saida'),
+            arquivo_entrada=params.get('pasta_personalizada'),
+            base_automacao=params.get('base')
+        )
+        # O último print deve ser o resultado para o backend capturar
+        print(json.dumps(resultado))
+    except Exception as e:
+        print(f"ERRO: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
