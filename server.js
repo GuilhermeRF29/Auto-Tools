@@ -18,40 +18,66 @@ app.use(express.json());
 // Inicializar banco de dados ao subir o servidor
 const initDbCmd = `from core import banco; banco.configurar_banco(); print('DB OK')`;
 exec(`"${PYTHON_PATH}" -c "${initDbCmd}"`, (error) => {
-  if (error) console.error(`[SYSTEM] Erro ao inicializar banco: ${error.message}`);
-  else console.log(`[SYSTEM] Banco de dados verificado/inicializado.`);
+    if (error) console.error(`[SYSTEM] Erro ao inicializar banco: ${error.message}`);
+    else console.log(`[SYSTEM] Banco de dados verificado/inicializado.`);
 });
 
 // Rota de status
 app.get('/api/status', (req, res) => {
-  res.json({ status: 'ok', version: '1.5.2-FINAL-V3', python: PYTHON_PATH });
+    res.json({ status: 'ok', version: 'Versão de desenvolvimento 2.3', python: PYTHON_PATH });
+});
+
+// ROUTE: Abrir explorador do Windows nativo
+app.get('/api/abrir-explorador-pastas', (req, res) => {
+    // Definimos o script Python separadamente para evitar conflitos de aspas
+    const script = `import tkinter as tk; from tkinter import filedialog; import json, os; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); p=filedialog.askdirectory(title='Selecione a Pasta'); root.destroy(); print(json.dumps({'caminho': os.path.normpath(p).replace('\\\\', '\\\\\\\\') if p else ''}))`;
+
+    // No Windows, usar aspas duplas envolta do comando -c de python Ã© mais seguro com exec
+    const fullCmd = `"${PYTHON_PATH}" -c "${script.replace(/"/g, '\\"')}"`;
+
+    exec(fullCmd, { 
+        cwd: __dirname, 
+        encoding: 'utf8',
+        windowsHide: true
+    }, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`[EXPLORER_ERROR] ${error.message}`);
+            return res.json({ caminho: '' });
+        }
+        try {
+            const out = stdout.trim().split('\n').pop();
+            res.json(JSON.parse(out));
+        } catch (e) {
+            res.json({ caminho: '' });
+        }
+    });
 });
 
 // Rota para rodar automações
 app.post('/api/run-automation', (req, res) => {
-  const { name } = req.body;
-  
-  let scriptPath = '';
-  // Mapeamento de nomes do Frontend para scripts Python
-  if (name.includes('Vendas')) scriptPath = path.join('automacoes', 'sr_new.py');
-  else if (name.includes('Fechamento')) scriptPath = path.join('automacoes', 'ebus_new.py');
-  else if (name.includes('Taxas')) scriptPath = path.join('automacoes', 'adm_new.py');
-  else if (name.includes('Cotação')) scriptPath = path.join('automacoes', 'paxcalc.py');
+    const { name } = req.body;
 
-  if (!scriptPath) {
-    return res.status(400).json({ error: 'Nenhuma automação mapeada para este nome.' });
-  }
+    let scriptPath = '';
+    // Mapeamento de nomes do Frontend para scripts Python
+    if (name.includes('Vendas')) scriptPath = path.join('automacoes', 'sr_new.py');
+    else if (name.includes('Fechamento')) scriptPath = path.join('automacoes', 'ebus_new.py');
+    else if (name.includes('Taxas')) scriptPath = path.join('automacoes', 'adm_new.py');
+    else if (name.includes('Cotação')) scriptPath = path.join('automacoes', 'paxcalc.py');
 
-  console.log(`[BACKEND] Iniciando execução: ${scriptPath}`);
-  
-  exec(`"${PYTHON_PATH}" "${scriptPath}"`, (error, stdout, stderr) => {
-    if (error) {
-      console.error(`[ERRO] ${error.message}`);
-      return res.status(500).json({ error: 'Erro durante execução da automação.', details: stderr });
+    if (!scriptPath) {
+        return res.status(400).json({ error: 'Nenhuma automação mapeada para este nome.' });
     }
-    console.log(`[SUCESSO] ${scriptPath} finalizado.`);
-    res.json({ success: true, message: 'Automação concluída com sucesso.', output: stdout });
-  });
+
+    console.log(`[BACKEND] Iniciando execução: ${scriptPath}`);
+
+    exec(`"${PYTHON_PATH}" "${scriptPath}"`, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`[ERRO] ${error.message}`);
+            return res.status(500).json({ error: 'Erro durante execução da automação.', details: stderr });
+        }
+        console.log(`[SUCESSO] ${scriptPath} finalizado.`);
+        res.json({ success: true, message: 'Automação concluída com sucesso.', output: stdout });
+    });
 });
 
 // Funções de Banco de Dados (Via chamadas curtas de Python para reaproveitar banco.py)
@@ -60,23 +86,23 @@ app.post('/api/login', (req, res) => {
     const { usuario, senha } = req.body;
     const safeUser = usuario.replace(/'/g, "\\'");
     const safePass = senha.replace(/'/g, "\\'");
-    
+
     // Usar json.dumps para evitar erro de aspas no parse do JS
     const cmd = `import sys, json; from core import banco; print(json.dumps(banco.login_principal('${safeUser}', '${safePass}')))`;
     exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
         if (error) {
             console.error(`[AUTH] Login error: ${error.message} \nStderr: ${stderr}`);
-            return res.status(500).json({ 
-                error: 'Erro no servidor Python', 
-                details: error.message, 
-                stderr: stderr 
+            return res.status(500).json({
+                error: 'Erro no servidor Python',
+                details: error.message,
+                stderr: stderr
             });
         }
         const result = stdout.trim();
         try {
             const userArray = JSON.parse(result); // Agora vem como [id, nome]
             const [id, nome] = userArray;
-            
+
             if (id !== null) {
                 res.json({ success: true, user: { id, nome, usuario: usuario } });
             } else {
@@ -99,10 +125,10 @@ app.post('/api/register', (req, res) => {
     exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
         if (error) {
             console.error(`[AUTH] Register error: ${error.message} \nStderr: ${stderr}`);
-            return res.status(500).json({ 
-                error: 'Erro ao cadastrar via Python', 
-                details: error.message, 
-                stderr: stderr 
+            return res.status(500).json({
+                error: 'Erro ao cadastrar via Python',
+                details: error.message,
+                stderr: stderr
             });
         }
         const result = stdout.trim();
@@ -173,10 +199,10 @@ app.delete('/api/credentials/:id', (req, res) => {
 // CALCULATOR: Calcular elasticidade pax
 app.post('/api/calculate-pax', (req, res) => {
     const { preco_atual, preco_novo, pax_atual, qtd_viagens, capacidade, km_rodado, pedagio, taxa_embarque } = req.body;
-    
+
     // Comando Python chamando a função do paxcalc.py
     const cmd = `import sys, json; from automacoes.paxcalc import calculadora_elasticidade_pax; res = calculadora_elasticidade_pax(${preco_atual}, ${preco_novo}, ${pax_atual}, ${qtd_viagens}, ${capacidade}, ${km_rodado}, ${pedagio}, ${taxa_embarque}); print(json.dumps(res))`;
-    
+
     exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
         if (error) {
             console.error(`[CALC] Error: ${error.message} \nStderr: ${stderr}`);
