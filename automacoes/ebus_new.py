@@ -1,5 +1,10 @@
-# automacoes/ebus_new.py
+import sys
 import os
+# Feedback imediato para o dashboard!
+print("PROGRESS:{\"p\": 1, \"m\": \"Carregando módulos eBus...\"}", flush=True)
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import time
 import shutil
 import calendar
@@ -9,8 +14,7 @@ from datetime import datetime, timedelta
 from selenium import webdriver # type: ignore
 from selenium.webdriver.common.by import By # type: ignore
 from selenium.webdriver.edge.options import Options # type: ignore
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 try:
     from selenium_helper import get_driver_path
 except ImportError:
@@ -666,3 +670,47 @@ def executar_ebus(
                 driver.quit()
             except Exception:
                 pass
+
+# ==========================================
+# EXECUÇÃO VIA CLI/BACKEND
+# ==========================================
+if __name__ == '__main__':
+    import json
+    import sys
+
+    try:
+        line = sys.stdin.readline()
+        params = json.loads(line) if line else {}
+    except:
+        params = {}
+
+    user_id = params.get('user_id', 1)
+    
+    # Formatos de data
+    def fix_date(d):
+        if not d: return d
+        if 'T' in d: # ISO
+            return datetime.fromisoformat(d.replace('Z', '')).strftime('%d/%m/%Y')
+        return d
+
+    data_ini = fix_date(params.get('data_ini')) or (datetime.now().strftime('%d/%m/%Y'))
+    data_fim = fix_date(params.get('data_fim')) or data_ini
+
+    def progress_callback(p, m):
+        print(f'PROGRESS:{{"p": {int(p*100)}, "m": "{m}"}}', flush=True)
+
+    try:
+        resultado = executar_ebus(
+            id_usuario_logado=user_id,
+            data_inicio=data_ini,
+            data_final=data_fim,
+            callback_progresso=progress_callback,
+            modo_execucao=params.get('acao', 'completo'),
+            pasta_destino=params.get('pasta_saida'),
+            arquivo_entrada=params.get('pasta_personalizada'),
+            base_automacao=params.get('base')
+        )
+        print(json.dumps(resultado))
+    except Exception as e:
+        print(f"ERRO: {str(e)}", file=sys.stderr)
+        sys.exit(1)

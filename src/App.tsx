@@ -269,8 +269,9 @@ interface RunningTask {
   id: string;
   name: string;
   progress: number;
-  status: 'running' | 'completed' | 'cancelled';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   startTime: Date;
+  message?: string;
 }
 
 const CustomDropdown = ({ label, value, options, onChange, icon: Icon }: any) => {
@@ -386,15 +387,15 @@ const CustomDatePicker = ({ label, value, onChange, align = 'left', disabled = f
   const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
   const weekDays = ["D", "S", "T", "Q", "Q", "S", "S"];
 
-  const isSelected = (day: number) => value && 
-    value.getDate() === day && 
-    value.getMonth() === currentDate.getMonth() && 
+  const isSelected = (day: number) => value &&
+    value.getDate() === day &&
+    value.getMonth() === currentDate.getMonth() &&
     value.getFullYear() === currentDate.getFullYear();
 
   const isToday = (day: number) => {
     const today = new Date();
-    return today.getDate() === day && 
-      today.getMonth() === currentDate.getMonth() && 
+    return today.getDate() === day &&
+      today.getMonth() === currentDate.getMonth() &&
       today.getFullYear() === currentDate.getFullYear();
   };
 
@@ -449,7 +450,7 @@ const CustomDatePicker = ({ label, value, onChange, align = 'left', disabled = f
                     }}
                     className={`
                       w-8 h-8 flex items-center justify-center text-[11px] sm:text-xs font-bold rounded-full transition-all mx-auto
-                      ${selected ? 'bg-blue-600 text-white shadow-md shadow-blue-200 scale-110' : 
+                      ${selected ? 'bg-blue-600 text-white shadow-md shadow-blue-200 scale-110' :
                         today ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200' : 'text-slate-600 hover:bg-slate-100'}
                     `}
                   >
@@ -471,7 +472,7 @@ const ReportsView = () => {
   const [isExecuting, setIsExecuting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [runningTasks, setRunningTasks] = useState<RunningTask[]>([]);
-  
+
   const [configAcao, setConfigAcao] = useState('completo');
   const [configBase, setConfigBase] = useState('padrao');
   const [configSaida, setConfigSaida] = useState('padrao');
@@ -480,12 +481,12 @@ const ReportsView = () => {
   const [outFolderPath, setOutFolderPath] = useState('');
   const [dataInicial, setDataInicial] = useState<Date | null>(null);
   const [dataFinal, setDataFinal] = useState<Date | null>(null);
-  const [defaultDates, setDefaultDates] = useState<{ini: Date, fim: Date} | null>(null);
+  const [defaultDates, setDefaultDates] = useState<{ ini: Date, fim: Date } | null>(null);
 
   const reports = [
-    { id: 'adm_new', name: 'Relatório de Demandas', desc: 'Extração e consolidação de demandas e passagens.', time: '~3 min', icon: <FileSpreadsheet size={18} /> },
-    { id: 'ebus_new', name: 'Relatório Revenue', desc: 'Processamento de dados do eBus e receitas.', time: '~5 min', icon: <Bus size={18} /> },
-    { id: 'sr_new', name: 'Relatório BASE RIO X SP', desc: 'Base consolidada das operações e ocupações.', time: '~2 min', icon: <Navigation size={18} /> },
+    { id: 'adm_new', name: 'Relatório de Demandas', desc: 'Extração e consolidação de demandas e passagens.', time: '~25 min', icon: <FileSpreadsheet size={18} /> },
+    { id: 'ebus_new', name: 'Relatório Revenue', desc: 'Processamento de dados do eBus e receitas.', time: '~8 min', icon: <Bus size={18} /> },
+    { id: 'sr_new', name: 'Relatório BASE RIO X SP', desc: 'Base consolidada das operações e ocupações.', time: '~6 min', icon: <Navigation size={18} /> },
   ];
 
   const handleOpenConfig = (name: string) => {
@@ -499,28 +500,27 @@ const ReportsView = () => {
     let fim = hoje;
 
     if (name === 'Relatório de Demandas') {
-        ini = new Date(hoje.getFullYear(), 0, 1);
-        fim = new Date(hoje.getFullYear(), 11, 31);
+      ini = new Date(hoje.getFullYear(), 0, 1);
+      fim = new Date(hoje.getFullYear(), 11, 31);
     } else if (name === 'Relatório Revenue') {
-        ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
-        fim = new Date(hoje.getFullYear(), hoje.getMonth() + 5, 0);
+      ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+      fim = new Date(hoje.getFullYear(), hoje.getMonth() + 5, 0);
     }
-    
+
     setDefaultDates({ ini, fim });
     setDataInicial(ini);
     setDataFinal(fim);
-    
+
     // Reset de estados de configuração
     setConfigPeriodo('padrao');
     setConfigAcao('completo');
   };
 
+
   const handleExecute = async () => {
     setIsExecuting(true);
-    const taskId = Date.now().toString();
     const repName = selectedReport || 'Relatório Desconhecido';
 
-    // Preparando o payload completo para o Backend Real
     const payload = {
       name: selectedReport,
       acao: configAcao,
@@ -533,43 +533,81 @@ const ReportsView = () => {
       data_fim: dataFinal?.toISOString() || null
     };
 
-    // Chamada real (Descomentar em produção)
-    /*
     try {
-      await fetch('/api/run-automation', {
+      const response = await fetch('/api/run-automation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-    } catch (e) { console.error("Falha no backend", e); }
-    */
-    
-    // Inicia a tarefa no frontend (simulado animado)
-    const newTask: RunningTask = { id: taskId, name: repName, progress: 0, status: 'running', startTime: new Date() };
-    setRunningTasks(prev => [newTask, ...prev]);
 
-    setShowSuccess(true);
-    setIsExecuting(false);
-    
-    // Simula a progressão da barra (no futuro será via WebSocket ou Polling)
-    const interval = setInterval(() => {
-      setRunningTasks(prev => {
-        let isDone = false;
-        const next = prev.map(t => {
-          if (t.id === taskId && t.status === 'running') {
-            const nextProg = Math.min(t.progress + (Math.random() * 8 + 2), 100);
-            if (nextProg === 100) {
-              isDone = true;
-              return { ...t, progress: 100, status: 'completed' };
-            }
-            return { ...t, progress: nextProg };
+      const { jobId } = await response.json();
+
+      // Inicia a tarefa no frontend
+      const newTask: RunningTask = { id: jobId, name: repName, progress: 0, status: 'running', startTime: new Date() };
+      setRunningTasks(prev => [newTask, ...prev]);
+
+      setShowSuccess(true);
+      setIsExecuting(false);
+
+      // Escuta o progresso via SSE
+      const eventSource = new EventSource(`/api/automation-progress/${jobId}`);
+
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        setRunningTasks(prev => prev.map(t => {
+          if (t.id === jobId) {
+            const updated = {
+              ...t,
+              progress: data.progress,
+              status: data.status,
+              // Armazenar a mensagem (que está no 'data') em uma propriedade extra ou abusar do status
+              message: data.message
+            };
+            return updated;
           }
           return t;
-        });
-        if (isDone) clearInterval(interval);
-        return next;
-      });
-    }, 1500);
+        }));
+
+        if (data.status === 'completed' || data.status === 'failed') {
+          eventSource.close();
+
+
+          if (data.status === 'completed' && data.result) {
+            try {
+              const resObj = JSON.parse(data.result);
+              const path = resObj.arquivo_principal;
+              if (path) {
+                // Trigger download via hidden link
+                const link = document.createElement('a');
+                link.href = `/api/download?path=${encodeURIComponent(path)}`;
+                link.setAttribute('download', '');
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }
+            } catch (e) {
+              console.error("Erro ao parsear resultado final", e);
+            }
+          }
+
+
+          // Auto-remover depois de 10 segundos se concluído
+          setTimeout(() => {
+            setRunningTasks(prev => prev.filter(t => t.id !== jobId));
+          }, 10000);
+        }
+      };
+
+      eventSource.onerror = () => {
+        eventSource.close();
+      };
+
+    } catch (e) {
+      console.error("Falha ao iniciar automação", e);
+      setIsExecuting(false);
+      alert("Erro ao conectar com o servidor.");
+    }
 
     setTimeout(() => {
       setIsModalOpen(false);
@@ -577,9 +615,27 @@ const ReportsView = () => {
     }, 2500);
   };
 
-  const handleCancelTask = (id: string) => {
-    setRunningTasks(prev => prev.map(t => t.id === id ? { ...t, status: 'cancelled' } : t));
+
+  const handleCancelTask = async (id: string) => {
+    try {
+      await fetch(`/api/cancel-automation/${id}`, { method: 'POST' });
+
+      setRunningTasks(prev => prev.map(t => {
+        if (t.id === id) {
+          return { ...t, status: 'cancelled', message: 'Cancelamento solicitado...' };
+        }
+        return t;
+      }));
+
+      // Auto-remover também se cancelado manualmente
+      setTimeout(() => {
+        setRunningTasks(prev => prev.filter(t => t.id !== id));
+      }, 5000);
+    } catch (e) {
+      console.error("Erro ao cancelar tarefa", e);
+    }
   };
+
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -590,40 +646,46 @@ const ReportsView = () => {
       {runningTasks.length > 0 && (
         <Card className="p-5 border-blue-100 bg-blue-50/50">
           <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <Loader2 size={16} className="text-blue-600 animate-spin" /> 
-            Tarefas em Execução ({runningTasks.filter(t => t.status === 'running').length})
+            <Loader2 size={16} className="text-blue-600 animate-spin" />
+            Fila de Processamento ({runningTasks.filter(t => t.status === 'running').length})
           </h3>
           <div className="space-y-4">
+
             {runningTasks.map(task => (
-              <div key={task.id} className="bg-white rounded-2xl p-4 border border-blue-100 shadow-sm relative overflow-hidden group">
-                <div className="absolute top-0 left-0 bottom-0 bg-blue-50/50 w-full z-0"></div>
-                <div 
+              <div key={task.id} className={`bg-white rounded-2xl p-4 border shadow-sm relative overflow-hidden group transition-all duration-500 
+                ${task.status === 'completed' ? 'border-green-100' : (task.status === 'failed' || task.status === 'cancelled') ? 'border-red-100' : 'border-blue-100'}`}>
+                <div className="absolute top-0 left-0 bottom-0 bg-slate-50/50 w-full z-0"></div>
+                <div
                   className={`absolute top-0 left-0 bottom-0 z-0 transition-all duration-500 ease-out opacity-20
-                    ${task.status === 'completed' ? 'bg-green-500' : task.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-500'}
-                  `} 
+                    ${task.status === 'completed' ? 'bg-green-500' : (task.status === 'failed' || task.status === 'cancelled') ? 'bg-red-500' : 'bg-blue-500'}
+                  `}
                   style={{ width: `${task.progress}%` }}
                 ></div>
-                
+
                 <div className="relative z-10 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-xl text-white shadow-sm flex-shrink-0
-                      ${task.status === 'completed' ? 'bg-green-500 shadow-green-200' : 
-                        task.status === 'cancelled' ? 'bg-red-500 shadow-red-200' : 'bg-blue-600 shadow-blue-200'}`}
+                    <div className={`p-2 rounded-xl text-white shadow-sm flex-shrink-0 transition-colors
+                      ${task.status === 'completed' ? 'bg-green-500 shadow-green-200' :
+                        (task.status === 'failed' || task.status === 'cancelled') ? 'bg-red-500 shadow-red-200' : 'bg-blue-600 shadow-blue-200'}`}
                     >
-                      {task.status === 'completed' ? <CheckCircle size={16} /> : 
-                       task.status === 'cancelled' ? <X size={16} /> : <PlayCircle size={16} className="animate-pulse" />}
+                      {task.status === 'completed' ? <CheckCircle size={16} /> :
+                        (task.status === 'failed' || task.status === 'cancelled') ? <X size={16} /> : <Loader2 size={16} className="animate-spin" />}
                     </div>
                     <div>
-                      <h4 className="font-bold text-slate-800 text-sm">{task.name}</h4>
-                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                        {task.status === 'running' ? `Progresso: ${Math.round(task.progress)}%` : 
-                         task.status === 'completed' ? 'Finalizado com Sucesso' : 'Cancelado pelo Usuário'}
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-slate-800 text-sm">{task.name}</h4>
+                        {task.status === 'completed' && <span className="text-[10px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full uppercase tracking-widest">Concluído</span>}
+                        {(task.status === 'failed' || task.status === 'cancelled') && <span className="text-[10px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded-full uppercase tracking-widest">{task.status === 'failed' ? 'Falha' : 'Cancelado'}</span>}
+                      </div>
+                      <p className="text-[11px] font-bold text-slate-500 uppercase tracking-tight mt-0.5">
+                        {task.message || (task.status === 'running' ? `Processando... ${Math.round(task.progress)}%` :
+                          task.status === 'completed' ? 'Relatório gerado com sucesso!' : 'Operação interrompida')}
                       </p>
                     </div>
                   </div>
-                  
+
                   {task.status === 'running' && (
-                    <button 
+                    <button
                       onClick={() => handleCancelTask(task.id)}
                       className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
                       title="Cancelar"
@@ -634,9 +696,11 @@ const ReportsView = () => {
                 </div>
               </div>
             ))}
+
           </div>
         </Card>
       )}
+
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
@@ -672,9 +736,9 @@ const ReportsView = () => {
         </div>
       </Card>
 
-      <Modal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
         title={`Configurar: ${selectedReport}`}
         footer={!showSuccess && (
           <div className="flex justify-end gap-3">
@@ -698,21 +762,21 @@ const ReportsView = () => {
             <div className="space-y-1.5 mb-1">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Cronograma de Retirada</label>
               <div className="flex items-center gap-1 p-1 bg-slate-50 border-2 border-slate-100 rounded-2xl w-full">
-                {[{id: 'padrao', label: 'Padrão'}, {id: 'modificada', label: 'Modificado'}, {id: 'custom', label: 'Personalizado'}].map(p => (
+                {[{ id: 'padrao', label: 'Padrão' }, { id: 'modificada', label: 'Modificado' }, { id: 'custom', label: 'Personalizado' }].map(p => (
                   <button
                     key={p.id}
                     onClick={() => {
-                        setConfigPeriodo(p.id);
-                        if (p.id !== 'custom') setConfigAcao('completo');
-                        
-                        // Nova Lógica: Se for padrão, volta para as datas automáticas. Caso contrário, limpa para escolha.
-                        if (p.id === 'padrao' && defaultDates) {
-                          setDataInicial(defaultDates.ini);
-                          setDataFinal(defaultDates.fim);
-                        } else {
-                          setDataInicial(null);
-                          setDataFinal(null);
-                        }
+                      setConfigPeriodo(p.id);
+                      if (p.id !== 'custom') setConfigAcao('completo');
+
+                      // Nova Lógica: Se for padrão, volta para as datas automáticas. Caso contrário, limpa para escolha.
+                      if (p.id === 'padrao' && defaultDates) {
+                        setDataInicial(defaultDates.ini);
+                        setDataFinal(defaultDates.fim);
+                      } else {
+                        setDataInicial(null);
+                        setDataFinal(null);
+                      }
                     }}
                     className={`flex-1 text-center py-2.5 rounded-xl text-xs font-bold transition-all ${configPeriodo === p.id ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
                   >
@@ -731,10 +795,10 @@ const ReportsView = () => {
             <div className="grid grid-cols-1 gap-4">
               {configPeriodo === 'custom' && (
                 <div className="animate-in fade-in slide-in-from-top-2 duration-300">
-                  <CustomDropdown 
-                    label="Ação do Processo" 
-                    value={configAcao} 
-                    onChange={setConfigAcao} 
+                  <CustomDropdown
+                    label="Ação do Processo"
+                    value={configAcao}
+                    onChange={setConfigAcao}
                     icon={PlayCircle}
                     options={[
                       { value: 'completo', label: 'Processo completo' },
@@ -742,7 +806,7 @@ const ReportsView = () => {
                       { value: 'download_tratamento', label: 'Download + tratamento' },
                       { value: 'tratamento', label: 'Apenas tratamento' },
                       { value: 'tratamento_envio', label: 'Tratamento + envio' },
-                    ]} 
+                    ]}
                   />
                 </div>
               )}
@@ -750,32 +814,32 @@ const ReportsView = () => {
               {/* 4. Base da Automação e Local de Saída (Apenas para custom e não completo) */}
               {configPeriodo === 'custom' && configAcao !== 'completo' && (
                 <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                  
+
                   {configAcao !== 'download' && (
                     <div className="space-y-3">
-                      <CustomDropdown 
-                        label="Base da Automação" 
-                        value={configBase} 
-                        onChange={setConfigBase} 
+                      <CustomDropdown
+                        label="Base da Automação"
+                        value={configBase}
+                        onChange={setConfigBase}
                         icon={LayoutDashboard}
                         options={[
                           { value: 'padrao', label: 'Base padrão' },
                           { value: 'sem_base', label: 'Sem base (Pular comparação)' },
                           { value: 'personalizada', label: 'Escolher local (Personalizado)' },
-                        ]} 
+                        ]}
                       />
-                      
+
                       {configBase === 'personalizada' && (
                         <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             value={folderPath}
                             onChange={(e) => setFolderPath(e.target.value)}
-                            placeholder="C:\\Caminho\\Ate\\a\\Base..." 
+                            placeholder="C:\\Caminho\\Ate\\a\\Base..."
                             className="flex-1 min-w-0 bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
                           />
-                          <button 
-                            type="button" 
+                          <button
+                            type="button"
                             onClick={async () => {
                               try {
                                 const res = await fetch('/api/abrir-explorador-pastas');
@@ -796,35 +860,35 @@ const ReportsView = () => {
                   )}
 
                   <div className={`space-y-3 ${configAcao !== 'download' ? 'pt-3 border-t border-slate-100' : ''}`}>
-                    <CustomDropdown 
-                      label="Local de Saída" 
-                      value={configSaida} 
-                      onChange={setConfigSaida} 
+                    <CustomDropdown
+                      label="Local de Saída"
+                      value={configSaida}
+                      onChange={setConfigSaida}
                       icon={Download}
                       options={[
                         { value: 'padrao', label: 'Pasta padrão' },
                         { value: 'personalizada', label: 'Escolher pasta de saída...' },
-                      ]} 
+                      ]}
                     />
-                    
+
                     {configSaida === 'personalizada' && (
                       <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           value={outFolderPath}
                           onChange={(e) => setOutFolderPath(e.target.value)}
-                          placeholder="C:\\Caminho\\Para\\Saida..." 
+                          placeholder="C:\\Caminho\\Para\\Saida..."
                           className="flex-1 min-w-0 bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
                         />
-                        <button 
-                          type="button" 
+                        <button
+                          type="button"
                           onClick={async () => {
                             try {
                               const res = await fetch('/api/abrir-explorador-pastas');
                               const data = await res.json();
                               if (data.caminho) setOutFolderPath(data.caminho);
                             } catch (e) {
-                               alert('Servidor py local não rodando. Cole o caminho na caixa de texto.');
+                              alert('Servidor py local não rodando. Cole o caminho na caixa de texto.');
                             }
                           }}
                           className="p-3.5 flex-shrink-0 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-600 hover:text-white transition-colors"
@@ -2047,7 +2111,7 @@ export default function App() {
                     {serverStatus === 'online' ? 'Infra Ativa: ' + (serverInfo?.version || 'V1.5.0') : 'Offline - Verifique Conexão'}
                   </span>
                 </div>
-                
+
                 <div className="w-16 h-16 mb-3">
                   <img src={logoApp} alt="Logo" className="w-full h-full object-contain drop-shadow-sm" />
                 </div>
@@ -2102,7 +2166,7 @@ export default function App() {
                     placeholder="••••••••"
                   />
                 </div>
- 
+
                 <Button type="submit" disabled={isLoggingIn} className="w-full py-4 text-sm font-black uppercase tracking-[0.15em] shadow-xl shadow-blue-500/30 mt-4 rounded-2xl hover:scale-[1.02] transition-all duration-300">
                   {isLoggingIn ? (
                     <><Loader2 size={18} className="animate-spin mr-2" /> Carregando...</>

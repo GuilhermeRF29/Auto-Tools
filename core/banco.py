@@ -213,4 +213,36 @@ def salvar_onibus(nome, capacidade):
     cursor = conexao.cursor()
     cursor.execute("INSERT OR REPLACE INTO onibus (nome, capacidade) VALUES (?, ?)", (nome, capacidade))
     conexao.commit()
-    conexao.close()
+    conexao.close()
+
+def buscar_credencial_site(user_id, servico):
+    """
+    Busca credenciais (login/senha) de um sistema (acessos) 
+    ou site personalizado (acessos_personalizados)
+    """
+    try:
+        conexao = sqlite3.connect(DB_PATH)
+        cursor = conexao.cursor()
+        
+        # 1. Tentar na tabela de sistemas
+        cursor.execute("SELECT login_acesso, senha_acesso FROM acessos WHERE user_id = ? AND servico = ?", (user_id, servico))
+        res = cursor.fetchone()
+        
+        # 2. Se não achar, tentar na tabela personalizada (site name)
+        if not res:
+            cursor.execute("SELECT login_acesso, senha_acesso FROM acessos_personalizados WHERE user_id = ? AND nome_site = ?", (user_id, servico))
+            res = cursor.fetchone()
+            
+        conexao.close()
+        
+        if res:
+            fernet = obter_fernet()
+            token = res[1]
+            if isinstance(token, str): token = token.encode('utf-8')
+            senha_dec = fernet.decrypt(token).decode('utf-8')
+            return (res[0], senha_dec)  # Retornar tupla para facilitar desempacotamento
+    except Exception as e:
+        print(f"[DB_ERROR] {e}")
+    return None, None  # Retornar dois valores nulos se falhar
+
+
