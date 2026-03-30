@@ -474,6 +474,8 @@ def executar_ebus(
         pasta_final.mkdir(parents=True, exist_ok=True)
         destino_final = pasta_final / origem_arquivo.name
         shutil.copy2(str(origem_arquivo), str(destino_final))
+        if callback_progresso:
+            callback_progresso(1.0, "Arquivo enviado com sucesso!")
         return {
             "arquivo_principal": str(destino_final),
             "arquivos_saida": [str(destino_final)],
@@ -597,6 +599,8 @@ def executar_ebus(
                         arquivos_saida.append(str(destino_item))
                     pasta_final = destino_envio
 
+                if callback_progresso:
+                    callback_progresso(1.0, "Download EBUS concluído com sucesso!")
                 return {
                     "arquivo_principal": arquivos_saida[0] if arquivos_saida else None,
                     "arquivos_saida": arquivos_saida,
@@ -643,7 +647,7 @@ def executar_ebus(
             pasta_final = resultados_processamento[-1].get("pasta_final")
 
             if callback_progresso:
-                callback_progresso(0.95, "Finalizando...")
+                callback_progresso(1.0, "Processo EBUS concluído com sucesso!")
 
             return {
                 "arquivo_principal": arquivo_principal,
@@ -652,6 +656,8 @@ def executar_ebus(
                 "mensagem": "Processo EBUS concluído com sucesso.",
             }
 
+        if callback_progresso:
+            callback_progresso(1.0, "Nenhuma ação executada.")
         return {
             "arquivo_principal": None,
             "arquivos_saida": [],

@@ -7,7 +7,7 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Play, Download, CheckCircle, ShieldCheck, FileSpreadsheet,
   Key, AlertCircle, Loader2, ChevronRight, Lock,
-  Calculator, Settings, Activity, Layers, Zap
+  Calculator, Settings, Activity, Layers, Zap, FolderOpen
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -15,7 +15,13 @@ import type { View } from '../types';
 import Card from '../components/Card';
 import Button from '../components/Button';
 
-const DashboardView = ({ setView, onReRun, currentUser }: { setView: (v: View) => void, onReRun?: (item: any) => void, currentUser?: any }) => {
+const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasksCount }: { 
+  setView: (v: View) => void, 
+  onReRun?: (item: any) => void, 
+  onStartAutomation?: (payload: any) => Promise<string | null>,
+  currentUser?: any, 
+  tasksCount?: number 
+}) => {
   const [isRunning, setIsRunning] = useState(false);
   const [tab, setTab] = useState<'files' | 'history'>('files');
   const [data, setData] = useState<any[]>([]);
@@ -43,7 +49,7 @@ const DashboardView = ({ setView, onReRun, currentUser }: { setView: (v: View) =
 
   useEffect(() => {
     fetchHistory();
-  }, []);
+  }, [tasksCount]); // Recarrega sempre que o número de tarefas mudas (início/fim)
 
   /** Execução rápida de relatório de vendas (atalho do dashboard). */
   const handleQuickRun = async () => {
@@ -289,19 +295,36 @@ const DashboardView = ({ setView, onReRun, currentUser }: { setView: (v: View) =
                                <button 
                                  onClick={() => handleReveal(item.path_backup)}
                                  className="p-2 sm:p-2.5 text-slate-400 hover:text-amber-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
-                                 title="Local"
+                                 title="Abrir Pasta"
                                >
-                                 <Settings size={18} />
+                                 <FolderOpen size={18} />
                                </button>
                             </>
                           ) : (
-                            <button 
-                              onClick={() => onReRun?.(item)}
-                              className="p-2 sm:p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
-                              title="Play"
-                            >
-                              <Play size={18} />
-                            </button>
+                            <div className="flex items-center justify-end gap-1">
+                              <button 
+                                onClick={() => {
+                                  // Limpa o nome para evitar "Nome (Arq) (Arq) (Arq)"
+                                  const cleanName = item.nome_automacao.split(' (')[0];
+                                  onStartAutomation?.({
+                                    name: cleanName,
+                                    ...item.params,
+                                    user_id: currentUser?.id
+                                  });
+                                }}
+                                className="p-2 sm:p-2.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
+                                title="Executar agora com mesmos filtros"
+                              >
+                                <Play size={18} />
+                              </button>
+                              <button 
+                                onClick={() => onReRun?.(item)}
+                                className="p-2 sm:p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
+                                title="Ajustar Filtros e Rodar"
+                              >
+                                <Settings size={18} />
+                              </button>
+                            </div>
                           )}
                         </div>
                       </td>

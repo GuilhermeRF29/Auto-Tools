@@ -66,50 +66,80 @@ def obter_servico_gmail():
     
     return service, user_info.get('email')
 
-def baixar_anexos_especificos(service, pasta_alvo, nomes_procurados, data_busca=None):
+def baixar_anexos_especificos(service, pasta_alvo, nomes_procurados, data_inicio=None, data_fim=None):
     """
-    Busca e baixa anexos que contenham as palavras-chave no nome.
-    data_busca: string no formato 'YYYY/MM/DD' ou None (hoje).
+    Busca e baixa anexos que contenham as palavras-chave no nome, selecionando os mais recentes.
+    data_inicio: 'YYYY/MM/DD'
+    data_fim: 'YYYY/MM/DD'
     """
     if not os.path.exists(pasta_alvo):
         os.makedirs(pasta_alvo)
 
-    if not data_busca:
-        data_busca = datetime.now().strftime('%Y/%m/%d')
+    if not data_inicio:
+        data_inicio = datetime.now().strftime('%Y/%m/%d')
     
-    query = f'has:attachment after:{data_busca}'
+    query = f'has:attachment after:{data_inicio}'
+    if data_fim:
+        # Adiciona 1 dia para o 'before' ser inclusive (Gmail before é exclusivo)
+        fim_dt = datetime.strptime(data_fim, '%Y/%m/%d') + timedelta(days=1)
+        query += f' before:{fim_dt.strftime("%Y/%m/%d")}'
     
+    print(f"DEBUG: Query Gmail: {query}")
     resultado = service.users().messages().list(userId='me', q=query).execute()
     mensagens = resultado.get('messages', [])
 
-    arquivos_baixados = {}
+    # Dicionário para guardar o melhor candidato para cada termo: {termo: {date: X, filename: Y, id: Z, msgId: W}}
+    candidatos = {termo: {"date": 0, "filename": None, "attachmentId": None, "messageId": None} for termo in nomes_procurados}
+
+    def processar_partes_recursivo(parts, msg_id, msg_date):
+        for parte in parts:
+            nome_arquivo = parte.get('filename')
+            if nome_arquivo:
+                # Log de auditoria para o usuário
+                print(f"DEBUG: Arquivo ignorado ou analisado: {nome_arquivo}")
+                for termo in nomes_procurados:
+                    if termo.lower() in nome_arquivo.lower():
+                        if msg_date > candidatos[termo]["date"]:
+                            if 'body' in parte and 'attachmentId' in parte['body']:
+                                candidatos[termo] = {
+                                    "date": msg_date,
+                                    "filename": nome_arquivo,
+                                    "attachmentId": parte['body']['attachmentId'],
+                                    "messageId": msg_id
+                                }
+            # Se houver sub-partes, busca nelas também
+            if 'parts' in parte:
+                processar_partes_recursivo(parte['parts'], msg_id, msg_date)
 
     for m in mensagens:
         msg_completa = service.users().messages().get(userId='me', id=m['id']).execute()
-        partes = msg_completa.get('payload', {}).get('parts', [])
-
-        for parte in partes:
-            nome_arquivo = parte.get('filename')
-            if nome_arquivo:
-                for termo in nomes_procurados:
-                    if termo.lower() in nome_arquivo.lower() and termo not in arquivos_baixados:
-                        if 'body' in parte and 'attachmentId' in parte['body']:
-                            anexo_id = parte['body']['attachmentId']
-                            anexo = service.users().messages().attachments().get(
-                                userId='me', messageId=m['id'], id=anexo_id).execute()
-                            
-                            dados_decodificados = base64.urlsafe_b64decode(anexo['data'])
-                            
-                            caminho_final = os.path.join(pasta_alvo, nome_arquivo)
-                            with open(caminho_final, 'wb') as f:
-                                f.write(dados_decodificados)
-                            
-                            print(f"✅ Arquivo encontrado e salvo: {nome_arquivo}")
-                            arquivos_baixados[termo] = caminho_final
-                            break
+        msg_date = int(msg_completa.get('internalDate', 0))
+        payload = msg_completa.get('payload', {})
         
-        if len(arquivos_baixados) == len(nomes_procurados):
-            break
+        # Inicia a busca recursiva a partir das partes do payload
+        if 'parts' in payload:
+            processar_partes_recursivo(payload['parts'], m['id'], msg_date)
+        elif 'filename' in payload and payload['filename']:
+            # Caso raro onde o payload principal é o próprio arquivo
+            processar_partes_recursivo([payload], m['id'], msg_date)
+    
+    arquivos_baixados = {}
+    for termo, info in candidatos.items():
+        if info["filename"]:
+            try:
+                anexo = service.users().messages().attachments().get(
+                    userId='me', messageId=info["messageId"], id=info["attachmentId"]).execute()
+                
+                dados_decodificados = base64.urlsafe_b64decode(anexo['data'])
+                caminho_final = os.path.join(pasta_alvo, info["filename"])
+                
+                with open(caminho_final, 'wb') as f:
+                    f.write(dados_decodificados)
+                
+                print(f"[OK] Download realizado (Versao mais recente): {info['filename']}")
+                arquivos_baixados[termo] = caminho_final
+            except Exception as e:
+                print(f"[ERRO] Falha ao baixar candidato {info['filename']}: {e}")
 
     return arquivos_baixados
 
@@ -135,7 +165,7 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
         if 'ORIGEM' not in df1.columns:
             df1['ORIGEM'] = 'SÃO PAULO'
         dfs.append(df1)
-        print(f"✅ Base RIO carregada: {len(df1)} linhas.")
+        print(f"[DATA] Base RIO carregada: {len(df1)} linhas.")
 
     if caminho_share and os.path.exists(caminho_share):
         df2 = pd.read_excel(caminho_share, sheet_name='Base Relatorio   RIO x SAO')
@@ -145,7 +175,7 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
         cols_df2 = ['Nº Mês', 'MÊS', 'EMPRESA', 'ORIGEM', 'DESTINO', 'SERVIÇO', 'HORÁRIO', 'PAX', 'DATA']
         df2 = df2[[c for c in cols_df2 if c in df2.columns]]
         dfs.append(df2)
-        print(f"✅ Base Share carregada: {len(df2)} linhas.")
+        print(f"[DATA] Base Share carregada: {len(df2)} linhas.")
 
     if not dfs:
         print("⚠️ Nenhum dado encontrado para as bases especificadas.")
@@ -160,7 +190,7 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
         df_consolidado = df_consolidado[df_consolidado['DATA'].isin(datas_limite)].copy()
         
         if df_consolidado.empty:
-            print("⚠️ Nenhum dado encontrado para as datas especificadas.")
+            print("[AVISO] Nenhum dado encontrado para as datas especificadas.")
             return
 
     # 2. LIMPEZA E REGRAS DE NEGÓCIO
@@ -213,7 +243,7 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
 
     empresas_nao_mapeadas = df_consolidado[df_consolidado['GRUPO'] == 'OUTROS']['EMPRESA'].unique()
     if len(empresas_nao_mapeadas) > 0:
-        raise ValueError(f"🚨 ERRO CRÍTICO: As seguintes empresas não estão no mapa: {empresas_nao_mapeadas}")
+        raise ValueError(f"[ERRO DE MAPEAMENTO] As seguintes empresas nao estao no sistema: {list(empresas_nao_mapeadas)}. Favor contatar o administrador para atualizar o mapa de regras.")
 
     df_consolidado = df_consolidado[df_consolidado['PAX'] <= 69].copy()
     df_consolidado.loc[df_consolidado['PAX'] == 69, 'PAX'] = 68
@@ -291,10 +321,10 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
         df_final = df_final[~df_final_temp['KEY'].isin(chaves_existentes)].copy()
         
         if df_final.empty:
-            print("ℹ️ Todos os dados processados já constam na base principal. Nada a adicionar.")
+            print("[INFO] Todos os dados processados ja constam na base principal. Nada a adicionar.")
             return
         else:
-            print(f"📌 Adicionando {len(df_final)} novas linhas inéditas...")
+            print(f"[INFO] Adicionando {len(df_final)} novas linhas ineditas...")
             
     except Exception as e:
         print(f"⚠️ Não foi possível verificar duplicas de forma detalhada: {e}. Prosseguindo com precaução.")
@@ -322,7 +352,7 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
                 cell.number_format = '0%'
 
     book.save(caminho_base_principal)
-    print(f"✅ Sucesso! O arquivo foi atualizado com novos dados em: {caminho_base_principal}")
+    print(f"[OK] Sucesso! O arquivo foi atualizado com novos dados em: {caminho_base_principal}")
 
 # ==========================================
 # INTEGRAÇÃO COM A UI
@@ -400,6 +430,8 @@ def executar_sr(
             destino_final = pasta_final / origem_arquivo.name
             if origem_arquivo.resolve() != destino_final.resolve():
                 shutil.copy2(str(origem_arquivo), str(destino_final))
+            if callback_progresso:
+                callback_progresso(1.0, "Arquivo enviado com sucesso!")
             return {
                 "arquivo_principal": str(destino_final),
                 "arquivos_saida": [str(destino_final)],
@@ -450,11 +482,12 @@ def executar_sr(
 
         termos_esperados = ["BASE RIO", "Share - Mercado RIO"]
 
-        data_busca_gmail = datetime.strptime(e_ini, "%d/%m/%Y").strftime("%Y/%m/%d")
+        data_busca_ini = datetime.strptime(e_ini, "%d/%m/%Y").strftime("%Y/%m/%d")
+        data_busca_fim = datetime.strptime(e_fim, "%d/%m/%Y").strftime("%Y/%m/%d")
 
         if callback_progresso:
-            callback_progresso(0.3, f"Buscando anexos desde {e_ini}...")
-        arquivos = baixar_anexos_especificos(service, pasta_downloads, termos_esperados, data_busca=data_busca_gmail)
+            callback_progresso(0.3, f"Buscando anexos entre {e_ini} e {e_fim}...")
+        arquivos = baixar_anexos_especificos(service, pasta_downloads, termos_esperados, data_inicio=data_busca_ini, data_fim=data_busca_fim)
 
         if hook_cancelamento and hook_cancelamento():
             return {
@@ -480,6 +513,8 @@ def executar_sr(
                     arquivos_copiados.append(str(destino_item))
                 arquivos_baixados = arquivos_copiados
 
+            if callback_progresso:
+                callback_progresso(1.0, "Download de anexos concluído com sucesso!")
             return {
                 "arquivo_principal": arquivos_baixados[0] if arquivos_baixados else None,
                 "arquivos_saida": arquivos_baixados,
