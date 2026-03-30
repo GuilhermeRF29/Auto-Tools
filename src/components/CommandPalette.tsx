@@ -10,15 +10,17 @@ import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Search, LayoutDashboard, FileDown, Lock, Calculator,
-  FileText, ChevronRight
+  FileText, ChevronRight, CheckCircle, Loader2, AlertCircle
 } from 'lucide-react';
+import { cn } from '../utils/cn';
 import type { View } from '../types';
 
-const CommandPalette = ({ isOpen, onClose, onSelect, onDeepSelect }: { 
+const CommandPalette = ({ isOpen, onClose, onSelect, onDeepSelect, historyItems = [] }: { 
   isOpen: boolean, 
   onClose: () => void, 
   onSelect: (s: View) => void,
-  onDeepSelect: (view: View, id: string) => void
+  onDeepSelect: (view: View, id: string) => void,
+  historyItems?: any[]
 }) => {
   const [search, setSearch] = useState('');
 
@@ -39,6 +41,10 @@ const CommandPalette = ({ isOpen, onClose, onSelect, onDeepSelect }: {
 
   const filteredMenu = menuItems.filter(i => i.label.toLowerCase().includes(search.toLowerCase()));
   const filteredReports = reportItems.filter(i => i.label.toLowerCase().includes(search.toLowerCase()));
+  const filteredHistory = historyItems.filter(i => 
+    i.nome_automacao.toLowerCase().includes(search.toLowerCase()) ||
+    (i.arquivo_nome && i.arquivo_nome.toLowerCase().includes(search.toLowerCase()))
+  ).slice(0, 8); // Limita a 8 resultados para não poluir
 
   /** Navega para a view, com deep-select se for um relatório específico. */
   const handleSelect = (view: View, id?: string) => {
@@ -107,23 +113,23 @@ const CommandPalette = ({ isOpen, onClose, onSelect, onDeepSelect }: {
                 </div>
               )}
 
-              {/* Seção de Relatórios */}
+              {/* Seção de Relatórios Disponíveis */}
               {filteredReports.length > 0 && (
-                <div>
-                  <div className="px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Relatórios & Detalhes</div>
+                <div className="mt-4">
+                  <div className="px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Automações Disponíveis</div>
                   {filteredReports.map(item => (
                     <button
-                      key={item.id}
+                      key={`rep-${item.id}`}
                       onClick={() => handleSelect(item.view, item.id)}
                       className="w-full flex items-center justify-between p-3.5 hover:bg-blue-50/50 rounded-2xl transition-all group"
                     >
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-amber-500 group-hover:text-white group-hover:scale-110 transition-all shadow-sm">
+                        <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-amber-500 group-hover:text-white group-hover:rotate-6 transition-all shadow-sm">
                           <FileText size={18} />
                         </div>
                         <div className="flex flex-col items-start">
                           <span className="text-sm font-bold text-slate-600 group-hover:text-slate-900">{item.label}</span>
-                          <span className="text-[10px] font-medium text-slate-400">Abrir em Automações</span>
+                          <span className="text-[10px] font-medium text-slate-400">Abrir configurações</span>
                         </div>
                       </div>
                       <ChevronRight size={16} className="text-slate-300 group-hover:text-blue-500 transition-colors" />
@@ -132,8 +138,43 @@ const CommandPalette = ({ isOpen, onClose, onSelect, onDeepSelect }: {
                 </div>
               )}
 
+              {/* Seção de Histórico Recente */}
+              {filteredHistory.length > 0 && (
+                <div className="mt-4">
+                  <div className="px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Execuções Recentes (Histórico)</div>
+                  {filteredHistory.map(item => (
+                    <button
+                      key={`hist-${item.id}`}
+                      onClick={() => handleSelect('history' as View, String(item.id))}
+                      className="w-full flex items-center justify-between p-3.5 hover:bg-blue-50/50 rounded-2xl transition-all group"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={cn(
+                          "w-10 h-10 rounded-xl flex items-center justify-center transition-all shadow-sm group-hover:scale-110",
+                          item.status === 'completed' ? "bg-green-50 text-green-600 group-hover:bg-green-500 group-hover:text-white" : 
+                          item.status === 'running' ? "bg-blue-50 text-blue-600 group-hover:bg-blue-500 group-hover:text-white" : 
+                          "bg-red-50 text-red-600 group-hover:bg-red-500 group-hover:text-white"
+                        )}>
+                          {item.status === 'completed' ? <CheckCircle size={18} /> : 
+                           item.status === 'running' ? <Loader2 size={18} className="animate-spin" /> : 
+                           <AlertCircle size={18} />}
+                        </div>
+                        <div className="flex flex-col items-start min-w-0 flex-1">
+                          <span className="text-sm font-bold text-slate-600 group-hover:text-slate-900 truncate w-full">{item.nome_automacao}</span>
+                          <div className="flex items-center gap-2">
+                             {item.arquivo_nome && <span className="text-[10px] font-medium text-slate-400 truncate max-w-[150px]">{item.arquivo_nome}</span>}
+                             <span className="text-[10px] font-black text-slate-300 uppercase">{new Date(item.data).toLocaleDateString('pt-BR')}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="text-slate-300 group-hover:text-blue-500 transition-colors flex-shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {/* Estado vazio */}
-              {filteredMenu.length === 0 && filteredReports.length === 0 && (
+              {filteredMenu.length === 0 && filteredReports.length === 0 && filteredHistory.length === 0 && (
                 <div className="p-12 text-center">
                   <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Search size={24} className="text-slate-200" />
