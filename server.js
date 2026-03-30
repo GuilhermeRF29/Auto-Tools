@@ -14,11 +14,17 @@ const port = 3001;
 
 // Caminho para o executável do Python no venv (que movi para backup_pyside)
 const PYTHON_PATH = path.join(__dirname, 'backup_pyside', 'venv', 'Scripts', 'python.exe');
+const BACKUP_DIR = path.join(__dirname, 'backups_sistema');
+
+// Criar pasta de backup se não existir
+if (!fs.existsSync(BACKUP_DIR)) {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+}
 
 app.use(express.json());
 
-// Inicializar banco de dados ao subir o servidor
-const initDbCmd = `from core import banco; banco.configurar_banco(); print('DB OK')`;
+// Inicializar banco de dados e limpar histórico antigo (30 dias) ao subir o servidor
+const initDbCmd = `import os; from core import banco; banco.configurar_banco(); l = banco.excluir_historico_antigo(dias=30); [os.remove(p) for p in l if os.path.exists(p)]; print('DB OK')`;
 exec(`"${PYTHON_PATH}" -c "${initDbCmd}"`, (error) => {
     if (error) console.error(`[SYSTEM] Erro ao inicializar banco: ${error.message}`);
     else console.log(`[SYSTEM] Banco de dados verificado/inicializado.`);
@@ -59,7 +65,7 @@ app.get('/api/abrir-explorador-pastas', (req, res) => {
 const jobs = new Map();
 
 app.post('/api/run-automation', async (req, res) => {
-    const { name, ...params } = req.body;
+    const { name, user_id, ...params } = req.body;
     const jobId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
 
@@ -87,27 +93,26 @@ app.post('/api/run-automation', async (req, res) => {
         message: 'Iniciando...',
         output: '',
         process: null,
-        events: []
+        events: [],
+        params: params, // Parâmetros de configuração (acao, base, saida, etc.)
+        user_id: user_id // ID do usuário que disparou a automação
     };
     jobs.set(jobId, job);
 
-    const logMsg = `[BACKEND] Job ${jobId} iniciado: ${scriptPath}\n`;
-    fs.appendFileSync(path.join(__dirname, 'server_debug.log'), logMsg);
-
     // Passamos os parâmetros em Base64 via CLI para evitar problemas com caracteres e stdin
-    const paramsBase64 = Buffer.from(JSON.stringify({ ...params, user_id: 1 })).toString('base64');
+    const paramsBase64 = Buffer.from(JSON.stringify({ ...params, user_id: user_id || 1 })).toString('base64');
 
-    const child = spawn(PYTHON_PATH, ['-u', scriptPath, paramsBase64], {
-        cwd: __dirname,
-        env: { 
-            ...process.env, 
-            PYTHONIOENCODING: 'utf8', 
-            PYTHONUNBUFFERED: '1',
-            PYTHONPATH: __dirname
-        }
+    const child = spawn(`"${PYTHON_PATH}"`, [`"${scriptPath}"`, paramsBase64], { 
+        shell: true,
+        cwd: __dirname 
     });
     job.process = child;
 
+    // Registro Imediato no Banco (Histórico de 'Em andamento')
+    const paramsStr = JSON.stringify(params || {}).replace(/"/g, '\\"');
+    const safeUid = (user_id === 'undefined' || !user_id) ? 'None' : user_id;
+    const startCmd = `import sys, json; from core import banco; banco.salvar_historico_relatorio(${safeUid}, "${name}", "${paramsStr}", "", "", "running")`;
+    exec(`"${PYTHON_PATH}" -c "${startCmd}"`, { cwd: __dirname });
 
     child.stdout.on('data', (data) => {
         const text = data.toString();
@@ -149,15 +154,56 @@ app.post('/api/run-automation', async (req, res) => {
         job.status = code === 0 ? 'completed' : 'failed';
         console.log(`[BACKEND] Job ${jobId} finalizado com status: ${job.status}`);
         
+        let pathBackupSalvar = "";
+        let nomeArquivoSalvar = "Nenhum arquivo gerado";
+
         if (job.status === 'failed') {
-            job.message = "Erro na execução da automação.";
+            job.message = job.message || "Erro na execução da automação.";
         } else {
             job.progress = 100;
             job.message = "Concluído com sucesso!";
+            
+            // Tenta capturar arquivo de backup se existir
+            try {
+                const lines = job.output.split('\n');
+                let resultObj = null;
+                for (let i = lines.length - 1; i >= 0; i--) {
+                    const line = lines[i].trim();
+                    if (line.startsWith('{') && line.includes('arquivo_principal')) {
+                        try { resultObj = JSON.parse(line); break; } catch (e) {}
+                    }
+                }
+
+                if (resultObj && resultObj.arquivo_principal && fs.existsSync(resultObj.arquivo_principal)) {
+                    const arquivoOriginal = resultObj.arquivo_principal;
+                    nomeArquivoSalvar = path.basename(arquivoOriginal);
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    const nomeBackup = `${timestamp}_${nomeArquivoSalvar}`;
+                    const caminhoBackup = path.join(BACKUP_DIR, nomeBackup);
+
+                    if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
+                    fs.copyFileSync(arquivoOriginal, caminhoBackup);
+                    pathBackupSalvar = caminhoBackup.replace(/\\/g, '/');
+                    console.log(`[BACKUP] Arquivo salvo: ${nomeBackup}`);
+                }
+            } catch (err) {
+                console.error(`[BACKEND] Erro no backup: ${err.message}`);
+            }
         }
 
-        const lastLine = job.output.trim().split('\n').pop();
+        // REGISTRO OBRIGATÓRIO NO HISTÓRICO (BD) - Independente de sucesso/falha
+        try {
+            const paramsStr = JSON.stringify(job.params || {}).replace(/"/g, '\\"');
+            const safeUid = (job.user_id === 'undefined' || !job.user_id) ? 'None' : job.user_id;
+            const cmd = `import sys, json; from core import banco; banco.salvar_historico_relatorio(${safeUid}, "${job.name}", "${paramsStr}", "${nomeArquivoSalvar}", "${pathBackupSalvar}", "${job.status}")`;
+            exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname });
+            console.log(`[HISTORY] Registro persistido no banco de dados para o job ${jobId}`);
+        } catch (e) {
+            console.error(`[HISTORY_ERROR] Falha ao persistir no BD: ${e.message}`);
+        }
+
         job.events.forEach(res => {
+            const lastLine = job.output.trim().split('\n').pop() || "";
             res.write(`data: ${JSON.stringify({ progress: job.progress, message: job.message, status: job.status, result: lastLine })}\n\n`);
             res.end();
         });
@@ -211,17 +257,13 @@ app.post('/api/cancel-automation/:jobId', (req, res) => {
 });
 
 
-// Rota para baixar arquivos (Segurança mínima: apenas permitir da pasta Downloads ou subpastas seguras)
-app.get('/api/download', (req, res) => {
-    const filePath = req.query.path;
-    if (!filePath) return res.status(400).send('Caminho não fornecido');
-    
-    // Validar se o arquivo existe e está em local permitido
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).send('Arquivo não encontrado no servidor: ' + filePath);
-    }
-
-    res.download(filePath);
+// LIMPEZA AUTOMÁTICA (Pode ser chamada pelo front ou via cron interno)
+app.post('/api/clean-backups', (req, res) => {
+    const cmd = `import sys, json, os; from core import banco; files = banco.excluir_historico_antigo(30); [os.remove(f) for f in files if os.path.exists(f)]; print('ok')`;
+    exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname }, (error) => {
+        if (error) return res.status(500).json({ success: false });
+        res.json({ success: true });
+    });
 });
 
 
@@ -337,6 +379,48 @@ app.delete('/api/credentials/:id', (req, res) => {
     const cmd = `from core import banco; banco.excluir_credencial(${id}, ${isCustom}); print('ok')`;
     exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
         if (error) return res.status(500).json({ error: 'Erro ao excluir' });
+        res.json({ success: true });
+    });
+});
+
+// HISTORY: Buscar histórico completo de relatórios (via Python banco.py)
+app.get('/api/relatorios-history', (req, res) => {
+    const limit = req.query.limit || 50;
+    const { user_id } = req.query;
+    // IMPORTANTE: Trata as strings vazias ou o literal "undefined" como None no Python
+    const safeUserId = (user_id === 'undefined' || !user_id) ? 'None' : user_id;
+    const cmd = `import sys, json; from core import banco; res = banco.listar_historico_relatorios(limit=${limit}, user_id=${safeUserId}); print(json.dumps(res))`;
+    
+    exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
+        if (error) return res.status(500).json({ error: 'Erro ao buscar histórico' });
+        try {
+            const data = JSON.parse(stdout.trim());
+            res.json(data);
+        } catch (e) {
+            res.status(500).json({ error: 'Erro no parse do histórico', details: stdout });
+        }
+    });
+});
+
+// DOWNLOAD: Servir arquivo de backup
+app.get('/api/download', (req, res) => {
+    const filePath = req.query.path;
+    if (!filePath || !fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Arquivo não encontrado para download.' });
+    }
+    res.download(filePath);
+});
+
+// REVEAL: Abrir pasta do arquivo no explorer
+app.get('/api/revelar-arquivo', (req, res) => {
+    const filePath = req.query.path;
+    if (!filePath || !fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Arquivo não encontrado.' });
+    }
+    // No Windows, explorer /select,path_do_arquivo abre a pasta com ele selecionado
+    const cmd = `explorer /select,"${path.normalize(filePath)}"`;
+    exec(cmd, (error) => {
+        if (error) return res.status(500).json({ error: 'Erro ao abrir explorer' });
         res.json({ success: true });
     });
 });
