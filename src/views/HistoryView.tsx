@@ -8,26 +8,47 @@ import { useState, useEffect } from 'react';
 import {
   Search, FileSpreadsheet, Activity, AlertCircle, Loader2,
   RotateCcw, Download, Settings, Play, Layers, ChevronRight, FolderOpen,
-  Trash2, ArrowLeft, AlertTriangle
+  Trash2, ArrowLeft, AlertTriangle, Filter, X, ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import Modal from '../components/Modal';
+import CustomDatePicker from '../components/CustomDatePicker';
+import CustomSelect from '../components/CustomSelect';
+import PulseHighlight from '../components/PulseHighlight';
 import type { View } from '../types';
 
-const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView }: { 
+const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView, highlightId }: { 
   onReRun?: (item: any) => void, 
   onStartAutomation?: (payload: any) => Promise<string | null>,
   currentUser?: any,
-  setView?: (v: View) => void
+  setView?: (v: View) => void,
+  highlightId?: string | null
 }) => {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [deleteItem, setDeleteItem] = useState<any | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Estados dos Filtros
+  const [isFilterVisible, setIsFilterVisible] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'running' | 'failed'>('all');
+  const [startDate, setStartDate] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
+
+  // Helper para lidar com a mudança de data início
+  const handleStartDateChange = (date: Date | null) => {
+    setStartDate(date);
+    // Se não houver data fim selecionada, herda a data início para facilitar busca de dia único
+    if (date && !endDate) {
+      setEndDate(date);
+    }
+  };
+
+  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
   /** Busca o histórico completo (até 500 registros) do banco. */
   const fetchFullHistory = async () => {
@@ -65,7 +86,40 @@ const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView }: {
   const filtered = data.filter(item => 
     item.nome_automacao.toLowerCase().includes(search.toLowerCase()) ||
     (item.arquivo_nome && item.arquivo_nome.toLowerCase().includes(search.toLowerCase()))
-  );
+  ).filter(item => {
+    // Filtro de Status
+    if (statusFilter !== 'all' && item.status !== statusFilter) return false;
+    
+    // Filtro de Período (Date Range)
+    if (startDate || endDate) {
+      const itemDate = new Date(item.data);
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        if (itemDate < start) return false;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        if (itemDate > end) return false;
+      }
+    }
+    
+    return true;
+  }).sort((a, b) => {
+    // Ordenação (Recentes/Antigos)
+    const dateA = new Date(a.data).getTime();
+    const dateB = new Date(b.data).getTime();
+    return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
+  });
+
+  const clearFilters = () => {
+    setSearch('');
+    setStatusFilter('all');
+    setStartDate(null);
+    setEndDate(null);
+    setSortOrder('desc');
+  };
   
   /** Executa a exclusão via API. */
   const handleDelete = async (withFile: boolean) => {
@@ -113,11 +167,86 @@ const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView }: {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <Button variant="secondary" className="px-4 py-2.5 h-10 rounded-2xl" onClick={fetchFullHistory}>
+          <Button 
+            variant="secondary" 
+            className={cn("px-4 py-2.5 h-10 rounded-2xl border-none", isFilterVisible ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-400")}
+            onClick={() => setIsFilterVisible(!isFilterVisible)}
+            title="Filtros Avançados"
+          >
+            <Filter size={16} />
+          </Button>
+          <Button variant="secondary" className="px-4 py-2.5 h-10 rounded-2xl bg-slate-100 text-slate-400 border-none" onClick={fetchFullHistory}>
             <RotateCcw size={16} className={loading ? "animate-spin" : ""} />
           </Button>
         </div>
       </div>
+
+      {/* Painel de Filtros Avançados */}
+      <AnimatePresence>
+        {isFilterVisible && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-visible"
+          >
+            <Card className="p-4 bg-slate-50/50 border-slate-200 overflow-visible">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+                {/* Filtro de Status */}
+                <CustomSelect
+                  label="Status"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  icon={Activity}
+                  options={[
+                    { label: 'Todos', value: 'all' },
+                    { label: 'Concluídos', value: 'completed', icon: FileSpreadsheet },
+                    { label: 'Em andamento', value: 'running', icon: Activity },
+                    { label: 'Falharam', value: 'failed', icon: AlertCircle }
+                  ]}
+                />
+
+                {/* Filtro de Data Início */}
+                <CustomDatePicker
+                  label="Data Início"
+                  value={startDate}
+                  onChange={handleStartDateChange}
+                />
+
+                {/* Filtro de Data Fim */}
+                <CustomDatePicker
+                  label="Data Fim"
+                  value={endDate}
+                  onChange={setEndDate}
+                />
+
+                {/* Ordenação e Limpeza */}
+                <div className="flex items-end gap-2">
+                   <div className="flex-1">
+                     <CustomSelect
+                        label="Ordenação"
+                        value={sortOrder}
+                        onChange={setSortOrder}
+                        icon={Layers}
+                        options={[
+                          { label: 'Recentes', value: 'desc' },
+                          { label: 'Antigos', value: 'asc' }
+                        ]}
+                      />
+                   </div>
+                   <button 
+                     onClick={clearFilters}
+                     className="mb-[2px] p-[13px] bg-white border-2 border-slate-100 text-slate-400 hover:text-red-500 hover:border-red-200 rounded-2xl transition-all flex items-center justify-center shadow-sm"
+                     title="Limpar filtros"
+                   >
+                     <X size={20} />
+                   </button>
+                </div>
+              </div>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <Card className="min-h-[500px]">
         <div className="overflow-x-auto custom-scrollbar">
@@ -148,91 +277,103 @@ const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView }: {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.02 }}
-                    className="hover:bg-slate-50/50 transition-all group"
+                    className={cn(
+                      "hover:bg-slate-50/50 transition-all group relative",
+                      String(highlightId) === String(item.id) && "z-20"
+                    )}
                   >
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-4">
-                        <div className={cn(
-                          "w-10 h-10 rounded-xl flex items-center justify-center shadow-sm transition-all group-hover:scale-110",
-                          item.status === 'completed' ? "bg-green-50 text-green-600" : 
-                          item.status === 'running' ? "bg-blue-50 text-blue-600" : "bg-red-50 text-red-600"
-                        )}>
-                          {item.status === 'completed' ? <FileSpreadsheet size={18} /> : 
-                           item.status === 'running' ? <Activity size={18} /> : <AlertCircle size={18} />}
-                        </div>
-                        <div>
-                          <p className="font-bold text-slate-700 leading-none mb-1">{item.nome_automacao}</p>
-                          <p className="text-[10px] text-slate-400 font-medium">#{item.id}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                       <span className={cn(
-                         "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                         item.status === 'completed' ? "bg-green-100 text-green-700" :
-                         item.status === 'running' ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"
-                       )}>
-                         {item.status === 'completed' ? 'Concluído' :
-                          item.status === 'running' ? 'Em andamento' : 'Falhou'}
-                       </span>
-                    </td>
-                    <td className="px-6 py-4">
-                       <div className="flex flex-col">
-                          <p className="text-xs font-bold text-slate-600">{new Date(item.data).toLocaleDateString('pt-BR')}</p>
-                          <p className="text-[10px] text-slate-400 font-medium">{new Date(item.data).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
-                       </div>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {item.path_backup && (
-                            <>
-                              <a 
-                                href={`/api/download?path=${encodeURIComponent(item.path_backup)}`}
-                                download
-                                className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
-                                title="Download do Backup"
-                              >
-                                <Download size={18} />
-                              </a>
-                              <button 
-                                onClick={() => handleReveal(item.path_backup)}
-                                className="p-2.5 text-slate-400 hover:text-amber-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
-                                title="Ver na Pasta"
-                              >
-                                <FolderOpen size={18} />
-                              </button>
-                            </>
-                          )}
-                          <button 
-                            onClick={() => {
-                              // Limpa nomes acumulados
-                              const cleanName = item.nome_automacao.split(' (')[0];
-                              onStartAutomation?.({
-                                name: cleanName,
-                                ...item.params,
-                                user_id: currentUser?.id
-                              });
-                            }}
-                            className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
-                            title="Executar agora com mesmos filtros"
-                          >
-                            <Play size={18} />
-                          </button>
-                          <button 
-                            onClick={() => onReRun?.(item)}
-                            className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
-                            title="Ajustar Filtros e Rodar"
-                          >
-                            <Settings size={18} />
-                          </button>
-                          <button 
-                            onClick={() => setDeleteItem(item)}
-                            className="p-2.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                            title="Excluir"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                       </div>
+                    <td colSpan={4} className="p-0 border-none relative overflow-visible">
+                      <PulseHighlight isHighlighted={String(highlightId) === String(item.id)}>
+                        <table className="w-full text-sm text-left border-separate border-spacing-0">
+                          <tbody>
+                            <tr>
+                              <td className="px-6 py-4 w-[35%]">
+                                <div className="flex items-center gap-4">
+                                  <div className={cn(
+                                    "w-10 h-10 rounded-xl flex items-center justify-center shadow-sm transition-all group-hover:scale-110",
+                                    item.status === 'completed' ? "bg-green-50 text-green-600" : 
+                                    item.status === 'running' ? "bg-blue-50 text-blue-600" : "bg-red-50 text-red-600"
+                                  )}>
+                                    {item.status === 'completed' ? <FileSpreadsheet size={18} /> : 
+                                     item.status === 'running' ? <Activity size={18} /> : <AlertCircle size={18} />}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="font-bold text-slate-700 leading-none mb-1 truncate">{item.nome_automacao}</p>
+                                    <p className="text-[10px] text-slate-400 font-medium">#{item.id}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 w-[20%]">
+                                 <span className={cn(
+                                   "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                                   item.status === 'completed' ? "bg-green-100 text-green-700" :
+                                   item.status === 'running' ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"
+                                 )}>
+                                   {item.status === 'completed' ? 'Concluído' :
+                                    item.status === 'running' ? 'Em andamento' : 'Falhou'}
+                                 </span>
+                              </td>
+                              <td className="px-6 py-4 w-[20%]">
+                                 <div className="flex flex-col">
+                                    <p className="text-xs font-bold text-slate-600">{new Date(item.data).toLocaleDateString('pt-BR')}</p>
+                                    <p className="text-[10px] text-slate-400 font-medium">{new Date(item.data).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
+                                 </div>
+                              </td>
+                              <td className="px-6 py-4 text-right w-[25%] pr-8">
+                                  <div className="flex items-center justify-end gap-1">
+                                    {item.path_backup && (
+                                      <>
+                                        <a 
+                                          href={`/api/download?path=${encodeURIComponent(item.path_backup)}`}
+                                          download
+                                          className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
+                                          title="Download do Backup"
+                                        >
+                                          <Download size={18} />
+                                        </a>
+                                        <button 
+                                          onClick={() => handleReveal(item.path_backup)}
+                                          className="p-2.5 text-slate-400 hover:text-amber-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
+                                          title="Ver na Pasta"
+                                        >
+                                          <FolderOpen size={18} />
+                                        </button>
+                                      </>
+                                    )}
+                                    <button 
+                                      onClick={() => {
+                                        const cleanName = item.nome_automacao.split(' (')[0];
+                                        onStartAutomation?.({
+                                          name: cleanName,
+                                          ...item.params,
+                                          user_id: currentUser?.id
+                                        });
+                                      }}
+                                      className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
+                                      title="Executar agora com mesmos filtros"
+                                    >
+                                      <Play size={18} />
+                                    </button>
+                                    <button 
+                                      onClick={() => onReRun?.(item)}
+                                      className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
+                                      title="Ajustar Filtros e Rodar"
+                                    >
+                                      <Settings size={18} />
+                                    </button>
+                                    <button 
+                                      onClick={() => setDeleteItem(item)}
+                                      className="p-2.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                                      title="Excluir"
+                                    >
+                                      <Trash2 size={18} />
+                                    </button>
+                                 </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </PulseHighlight>
                     </td>
                   </motion.tr>
                 ))}

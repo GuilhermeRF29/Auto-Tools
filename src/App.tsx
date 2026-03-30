@@ -55,6 +55,7 @@ export default function App() {
 
   // === Estado de Tarefas (global — persiste entre views) ===
   const [runningTasks, setRunningTasks] = useState<RunningTask[]>([]);
+  const [historyItems, setHistoryItems] = useState<any[]>([]);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [reRunData, setReRunData] = useState<any | null>(null);
 
@@ -198,6 +199,18 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, []);
+
+  /** Busca o histórico resumido para a barra de pesquisa global. */
+  useEffect(() => {
+    if (user?.id) {
+      fetch(`/api/relatorios-history?limit=100&user_id=${user.id}`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setHistoryItems(data);
+        })
+        .catch(err => console.error("Erro ao carregar histórico para busca:", err));
+    }
+  }, [user, currentView]); // Recarrega ao trocar de view para manter atualizado
 
   // === Refs ===
   /** Ref para o menu de perfil (detecta clique fora para fechar) */
@@ -789,6 +802,7 @@ export default function App() {
               onClose={() => setIsSearchOpen(false)} 
               onSelect={setCurrentView} 
               onDeepSelect={handleDeepSelect}
+              historyItems={historyItems}
             />
             <div className="max-w-6xl mx-auto">
               <AnimatePresence mode="wait">
@@ -814,6 +828,7 @@ export default function App() {
                       currentUser={user}
                       onStartAutomation={startAutomation}
                       setView={setCurrentView}
+                      highlightId={highlightId}
                     />
                   )}
                   {currentView === 'reports' && (
