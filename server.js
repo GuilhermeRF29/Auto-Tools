@@ -102,17 +102,27 @@ app.post('/api/run-automation', async (req, res) => {
     // Passamos os parâmetros em Base64 via CLI para evitar problemas com caracteres e stdin
     const paramsBase64 = Buffer.from(JSON.stringify({ ...params, user_id: user_id || 1 })).toString('base64');
 
-    const child = spawn(`"${PYTHON_PATH}"`, [`"${scriptPath}"`, paramsBase64], { 
-        shell: true,
-        cwd: __dirname 
+    const child = spawn(PYTHON_PATH, [scriptPath, paramsBase64], { 
+        cwd: __dirname,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     });
     job.process = child;
 
+    // Função auxiliar para persistir no banco sem problemas de escape
+    const persistHistory = (uid, n, p, f, pathB, s, jid) => {
+        const safeUid = (uid === 'undefined' || !uid) ? 'None' : uid;
+        const pStr = JSON.stringify(p || {});
+        // Tratamos o jid como 'None' se for nulo/vazio para o Python entender como NoneType
+        const safeJid = (!jid || jid === '') ? 'None' : jid;
+
+        const pyCmd = `import sys; from core.banco import salvar_historico_relatorio; salvar_historico_relatorio(int(sys.argv[1]) if sys.argv[1] != 'None' else None, sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7] if sys.argv[7] != 'None' else None)`;
+        
+        const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, safeUid.toString(), n, pStr, f || '', pathB || '', s, safeJid], { cwd: __dirname });
+        childPy.stderr.on('data', (d) => console.error(`[DB_EXEC_ERROR] ${d}`));
+    };
+
     // Registro Imediato no Banco (Histórico de 'Em andamento')
-    const paramsStr = JSON.stringify(params || {}).replace(/"/g, '\\"');
-    const safeUid = (user_id === 'undefined' || !user_id) ? 'None' : user_id;
-    const startCmd = `import sys, json; from core import banco; banco.salvar_historico_relatorio(${safeUid}, "${name}", "${paramsStr}", "", "", "running")`;
-    exec(`"${PYTHON_PATH}" -c "${startCmd}"`, { cwd: __dirname });
+    persistHistory(user_id, name, params, "", "", "running", jobId);
 
     child.stdout.on('data', (data) => {
         const text = data.toString();
@@ -156,6 +166,7 @@ app.post('/api/run-automation', async (req, res) => {
         
         let pathBackupSalvar = "";
         let nomeArquivoSalvar = "Nenhum arquivo gerado";
+        let jaPersitiuHistorico = false;
 
         if (job.status === 'failed') {
             job.message = job.message || "Erro na execução da automação.";
@@ -163,47 +174,62 @@ app.post('/api/run-automation', async (req, res) => {
             job.progress = 100;
             job.message = "Concluído com sucesso!";
             
-            // Tenta capturar arquivo de backup se existir
             try {
                 const lines = job.output.split('\n');
                 let resultObj = null;
                 for (let i = lines.length - 1; i >= 0; i--) {
                     const line = lines[i].trim();
-                    if (line.startsWith('{') && line.includes('arquivo_principal')) {
-                        try { resultObj = JSON.parse(line); break; } catch (e) {}
+                    const jsonMatch = line.match(/{.*"arquivo_principal".*}/);
+                    if (jsonMatch) {
+                        try { resultObj = JSON.parse(jsonMatch[0]); break; } catch (e) {}
                     }
                 }
 
-                if (resultObj && resultObj.arquivo_principal && fs.existsSync(resultObj.arquivo_principal)) {
-                    const arquivoOriginal = resultObj.arquivo_principal;
-                    nomeArquivoSalvar = path.basename(arquivoOriginal);
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                    const nomeBackup = `${timestamp}_${nomeArquivoSalvar}`;
-                    const caminhoBackup = path.join(BACKUP_DIR, nomeBackup);
+                if (resultObj) {
+                    const arquivosParaBackup = Array.isArray(resultObj.arquivos_saida) 
+                        ? resultObj.arquivos_saida 
+                        : [resultObj.arquivo_principal].filter(Boolean);
 
-                    if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
-                    fs.copyFileSync(arquivoOriginal, caminhoBackup);
-                    pathBackupSalvar = caminhoBackup.replace(/\\/g, '/');
-                    console.log(`[BACKUP] Arquivo salvo: ${nomeBackup}`);
+                    for (let i = 0; i < arquivosParaBackup.length; i++) {
+                        const arquivoOriginal = arquivosParaBackup[i];
+                        if (fs.existsSync(arquivoOriginal)) {
+                            const nomeBase = path.basename(arquivoOriginal);
+                            const timestamp = Date.now();
+                            const nomeBackup = `${timestamp}_${nomeBase}`;
+                            const caminhoBackup = path.join(BACKUP_DIR, nomeBackup);
+
+                            fs.copyFileSync(arquivoOriginal, caminhoBackup);
+                            const pathSalvar = caminhoBackup.replace(/\\/g, '/');
+                            const nomeAtividade = `${job.name} (${nomeBase})`;
+
+                            // O primeiro arquivo atualiza a linha 'running' (usando jobId)
+                            // Os demais arquivos entram como novas linhas (jobId = null)
+                            const idPersistencia = (i === 0) ? jobId : null;
+                            
+                            persistHistory(job.user_id, nomeAtividade, job.params, nomeBase, pathSalvar, 'completed', idPersistencia);
+                            console.log(`[BACKUP] Registro ${i+1} persistido: ${nomeBase}`);
+                        }
+                    }
+                    jaPersitiuHistorico = true;
                 }
             } catch (err) {
                 console.error(`[BACKEND] Erro no backup: ${err.message}`);
             }
         }
 
-        // REGISTRO OBRIGATÓRIO NO HISTÓRICO (BD) - Independente de sucesso/falha
-        try {
-            const paramsStr = JSON.stringify(job.params || {}).replace(/"/g, '\\"');
-            const safeUid = (job.user_id === 'undefined' || !job.user_id) ? 'None' : job.user_id;
-            const cmd = `import sys, json; from core import banco; banco.salvar_historico_relatorio(${safeUid}, "${job.name}", "${paramsStr}", "${nomeArquivoSalvar}", "${pathBackupSalvar}", "${job.status}")`;
-            exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname });
-            console.log(`[HISTORY] Registro persistido no banco de dados para o job ${jobId}`);
-        } catch (e) {
-            console.error(`[HISTORY_ERROR] Falha ao persistir no BD: ${e.message}`);
+        // Persiste o estado no banco se ainda não foi feito no loop de backup acima
+        if (!jaPersitiuHistorico) {
+            try {
+                persistHistory(job.user_id, job.name, job.params, nomeArquivoSalvar, pathBackupSalvar, job.status, jobId);
+                console.log(`[HISTORY] Registro persistido no banco de dados para o job ${jobId}`);
+            } catch (e) {
+                console.error(`[HISTORY_ERROR] Falha ao persistir no BD: ${e.message}`);
+            }
         }
 
+        // SEMPRE envia o evento SSE final para o frontend (corrige barra que ficava girando)
+        const lastLine = job.output.trim().split('\n').pop() || "";
         job.events.forEach(res => {
-            const lastLine = job.output.trim().split('\n').pop() || "";
             res.write(`data: ${JSON.stringify({ progress: job.progress, message: job.message, status: job.status, result: lastLine })}\n\n`);
             res.end();
         });
@@ -271,25 +297,24 @@ app.post('/api/clean-backups', (req, res) => {
 // LOGIN: Autenticar usuário
 app.post('/api/login', (req, res) => {
     const { usuario, senha } = req.body;
-    const safeUser = usuario.replace(/'/g, "\\'");
-    const safePass = senha.replace(/'/g, "\\'");
+    const pyCmd = `import sys, json; from core.banco import login_principal; print(json.dumps(login_principal(sys.argv[1], sys.argv[2])))`;
 
-    // Usar json.dumps para evitar erro de aspas no parse do JS
-    const cmd = `import sys, json; from core import banco; print(json.dumps(banco.login_principal('${safeUser}', '${safePass}')))`;
-    exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`[AUTH] Login error: ${error.message} \nStderr: ${stderr}`);
-            return res.status(500).json({
-                error: 'Erro no servidor Python',
-                details: error.message,
-                stderr: stderr
-            });
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, usuario, senha], { cwd: __dirname });
+    
+    let stdoutData = '';
+    let stderrData = '';
+
+    childPy.stdout.on('data', (d) => stdoutData += d.toString());
+    childPy.stderr.on('data', (d) => stderrData += d.toString());
+
+    childPy.on('close', (code) => {
+        if (code !== 0) {
+            console.error(`[AUTH_ERROR] Login code ${code}: ${stderrData}`);
+            return res.status(500).json({ error: 'Erro no servidor de autenticação' });
         }
-        const result = stdout.trim();
         try {
-            const userArray = JSON.parse(result); // Agora vem como [id, nome]
+            const userArray = JSON.parse(stdoutData.trim());
             const [id, nome] = userArray;
-
             if (id !== null) {
                 res.json({ success: true, user: { id, nome, usuario: usuario } });
             } else {
@@ -304,35 +329,31 @@ app.post('/api/login', (req, res) => {
 // LOGIN: Criar novo usuário
 app.post('/api/register', (req, res) => {
     const { usuario, senha, nome } = req.body;
-    const safeUser = usuario.replace(/'/g, "\\'");
-    const safePass = senha.replace(/'/g, "\\'");
-    const safeName = (nome || '').replace(/'/g, "\\'");
+    const pyCmd = `import sys, json; from core.banco import cadastrar_usuario_principal; print(json.dumps(cadastrar_usuario_principal(sys.argv[1], sys.argv[2], sys.argv[3])))`;
 
-    const cmd = `import sys, json; from core import banco; print(json.dumps(banco.cadastrar_usuario_principal('${safeName}', '${safeUser}', '${safePass}')))`;
-    exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`[AUTH] Register error: ${error.message} \nStderr: ${stderr}`);
-            return res.status(500).json({
-                error: 'Erro ao cadastrar via Python',
-                details: error.message,
-                stderr: stderr
-            });
-        }
-        const result = stdout.trim();
-        if (result === 'true') { // json.dumps(True) é 'true' em minúsculo
-            res.json({ success: true });
-        } else {
-            res.json({ success: false, error: 'Usuário já existe ou erro interno no banco' });
-        }
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, nome || '', usuario, senha], { cwd: __dirname });
+    
+    let stdoutData = '';
+    childPy.stdout.on('data', (d) => stdoutData += d.toString());
+
+    childPy.on('close', (code) => {
+        if (code !== 0) return res.status(500).json({ error: 'Erro ao cadastrar' });
+        if (stdoutData.trim() === 'true') res.json({ success: true });
+        else res.json({ success: false, error: 'Usuário já existe ou erro interno no banco' });
     });
 });
 
 app.get('/api/onibus', (req, res) => {
-    const cmd = `import sys; from core import banco; print(banco.listar_onibus())`;
-    exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
-        if (error) return res.status(500).json({ error: 'Erro ao listar' });
+    const pyCmd = `import sys; from core.banco import listar_onibus; print(listar_onibus())`;
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd], { cwd: __dirname });
+    
+    let stdoutData = '';
+    childPy.stdout.on('data', (d) => stdoutData += d.toString());
+
+    childPy.on('close', (code) => {
+        if (code !== 0) return res.status(500).json({ error: 'Erro ao listar' });
         try {
-            const raw = stdout.trim().replace(/\(/g, '[').replace(/\)/g, ']').replace(/'/g, '"');
+            const raw = stdoutData.trim().replace(/\(/g, '[').replace(/\)/g, ']').replace(/'/g, '"');
             res.json(JSON.parse(raw));
         } catch (e) {
             res.json([]);
@@ -342,9 +363,11 @@ app.get('/api/onibus', (req, res) => {
 
 app.post('/api/onibus', (req, res) => {
     const { nome, capacidade } = req.body;
-    const cmd = `from core.banco import salvar_onibus; salvar_onibus('${nome}', ${capacidade}); print('ok')`;
-    exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
-        if (error) return res.status(500).json({ error: 'Erro ao salvar ônibus' });
+    const pyCmd = `import sys; from core.banco import salvar_onibus; salvar_onibus(sys.argv[1], int(sys.argv[2])); print('ok')`;
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, nome, capacidade.toString()], { cwd: __dirname });
+
+    childPy.on('close', (code) => {
+        if (code !== 0) return res.status(500).json({ error: 'Erro ao salvar ônibus' });
         res.json({ success: true });
     });
 });
@@ -352,21 +375,29 @@ app.post('/api/onibus', (req, res) => {
 // VAULT: Listar credenciais
 app.get('/api/credentials/:user_id', (req, res) => {
     const { user_id } = req.params;
-    const cmd = `import sys, json; from core import banco; print(json.dumps(banco.listar_credenciais(${user_id})))`;
-    exec(`"${PYTHON_PATH}" -c "${cmd}"`, (error, stdout, stderr) => {
-        if (error) return res.status(500).json({ error: 'Erro ao buscar credenciais' });
-        res.json(JSON.parse(stdout.trim()));
+    const pyCmd = `import sys, json; from core.banco import listar_credenciais; print(json.dumps(listar_credenciais(int(sys.argv[1]))))`;
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, user_id], { cwd: __dirname });
+    
+    let stdoutData = '';
+    childPy.stdout.on('data', (d) => stdoutData += d.toString());
+
+    childPy.on('close', (code) => {
+        if (code !== 0) return res.status(500).json({ error: 'Erro ao buscar credenciais' });
+        res.json(JSON.parse(stdoutData.trim()));
     });
 });
 
 // VAULT: Salvar credencial
 app.post('/api/credentials', (req, res) => {
     const { user_id, servico, login, senha, eh_personalizado, url } = req.body;
-    const isCustom = eh_personalizado ? 'True' : 'False';
-    const safeUrl = (url || '').replace(/'/g, "\\'");
-    const cmd = `import sys; from core import banco; banco.adicionar_credencial_site(${user_id}, '${servico}', '${login}', '${senha}', ${isCustom}, '${safeUrl}'); print('ok')`;
-    exec(`"${PYTHON_PATH}" -c "${cmd}"`, (error, stdout, stderr) => {
-        if (error) return res.status(500).json({ error: 'Erro ao salvar credencial' });
+    const pyCmd = `import sys; from core.banco import adicionar_credencial_site; adicionar_credencial_site(int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5] == 'True', sys.argv[6]); print('ok')`;
+    
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, 
+        user_id.toString(), servico, login, senha, eh_personalizado ? 'True' : 'False', url || ''
+    ], { cwd: __dirname });
+
+    childPy.on('close', (code) => {
+        if (code !== 0) return res.status(500).json({ error: 'Erro ao salvar credencial' });
         res.json({ success: true });
     });
 });
@@ -375,10 +406,12 @@ app.post('/api/credentials', (req, res) => {
 app.delete('/api/credentials/:id', (req, res) => {
     const { id } = req.params;
     const { type } = req.query;
-    const isCustom = type === 'custom' ? 'True' : 'False';
-    const cmd = `from core import banco; banco.excluir_credencial(${id}, ${isCustom}); print('ok')`;
-    exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
-        if (error) return res.status(500).json({ error: 'Erro ao excluir' });
+    const pyCmd = `import sys; from core.banco import excluir_credencial; excluir_credencial(int(sys.argv[1]), sys.argv[2] == 'True'); print('ok')`;
+    
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, id, type === 'custom' ? 'True' : 'False'], { cwd: __dirname });
+
+    childPy.on('close', (code) => {
+        if (code !== 0) return res.status(500).json({ error: 'Erro ao excluir' });
         res.json({ success: true });
     });
 });
@@ -389,16 +422,53 @@ app.get('/api/relatorios-history', (req, res) => {
     const { user_id } = req.query;
     // IMPORTANTE: Trata as strings vazias ou o literal "undefined" como None no Python
     const safeUserId = (user_id === 'undefined' || !user_id) ? 'None' : user_id;
-    const cmd = `import sys, json; from core import banco; res = banco.listar_historico_relatorios(limit=${limit}, user_id=${safeUserId}); print(json.dumps(res))`;
+    const pyCmd = `import sys, json; from core.banco import listar_historico_relatorios; res = listar_historico_relatorios(limit=int(sys.argv[1]), user_id=int(sys.argv[2]) if sys.argv[2] != 'None' else None); print(json.dumps(res))`;
+
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, limit.toString(), safeUserId.toString()], { cwd: __dirname });
     
-    exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
-        if (error) return res.status(500).json({ error: 'Erro ao buscar histórico' });
+    let stdoutData = '';
+    let stderrData = '';
+
+    childPy.stdout.on('data', (d) => stdoutData += d.toString());
+    childPy.stderr.on('data', (d) => stderrData += d.toString());
+
+    childPy.on('close', (code) => {
+        if (code !== 0) {
+            console.error(`[HISTORY_FETCH_ERROR] Code ${code}: ${stderrData}`);
+            return res.status(500).json({ error: 'Erro ao buscar histórico' });
+        }
         try {
-            const data = JSON.parse(stdout.trim());
+            const data = JSON.parse(stdoutData.trim());
             res.json(data);
         } catch (e) {
-            res.status(500).json({ error: 'Erro no parse do histórico', details: stdout });
+            res.status(500).json({ error: 'Erro no parse do histórico', details: stdoutData });
         }
+    });
+});
+
+// HISTORY: Excluir registro do histórico (opcionalmente deletando o arquivo físico)
+app.delete('/api/relatorios-history/:id', (req, res) => {
+    const { id } = req.params;
+    const { deleteFile, path: filePath } = req.query;
+
+    console.log(`[HISTORY_DELETE] Solicitado: id=${id}, deleteFile=${deleteFile}`);
+
+    // Se o usuário pediu para deletar o arquivo físico
+    if (deleteFile === 'true' && filePath && fs.existsSync(filePath)) {
+        try {
+            fs.unlinkSync(filePath);
+            console.log(`[FILE_DELETE] Arquivo removido: ${filePath}`);
+        } catch (e) {
+            console.warn(`[FILE_DELETE_ERROR] Não foi possível deletar arquivo: ${e.message}`);
+        }
+    }
+
+    const pyCmd = `import sys; from core.banco import excluir_historico_id; res = excluir_historico_id(int(sys.argv[1])); print('ok' if res else 'error')`;
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, id], { cwd: __dirname });
+
+    childPy.on('close', (code) => {
+        if (code !== 0) return res.status(500).json({ error: 'Erro ao excluir do banco' });
+        res.json({ success: true });
     });
 });
 
@@ -428,20 +498,21 @@ app.get('/api/revelar-arquivo', (req, res) => {
 // CALCULATOR: Calcular elasticidade pax
 app.post('/api/calculate-pax', (req, res) => {
     const { preco_atual, preco_novo, pax_atual, qtd_viagens, capacidade, km_rodado, pedagio, taxa_embarque } = req.body;
+    const pyCmd = `import sys, json; from automacoes.paxcalc import calculadora_elasticidade_pax; res = calculadora_elasticidade_pax(*map(float, sys.argv[1:])); print(json.dumps(res))`;
 
-    // Comando Python chamando a função do paxcalc.py
-    const cmd = `import sys, json; from automacoes.paxcalc import calculadora_elasticidade_pax; res = calculadora_elasticidade_pax(${preco_atual}, ${preco_novo}, ${pax_atual}, ${qtd_viagens}, ${capacidade}, ${km_rodado}, ${pedagio}, ${taxa_embarque}); print(json.dumps(res))`;
+    const childPy = spawn(PYTHON_PATH, ["-c", pyCmd, 
+        preco_atual, preco_novo, pax_atual, qtd_viagens, capacidade, km_rodado, pedagio, taxa_embarque
+    ], { cwd: __dirname });
+    
+    let stdoutData = '';
+    childPy.stdout.on('data', (d) => stdoutData += d.toString());
 
-    exec(`"${PYTHON_PATH}" -c "${cmd}"`, { cwd: __dirname, encoding: 'utf8' }, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`[CALC] Error: ${error.message} \nStderr: ${stderr}`);
-            return res.status(500).json({ error: 'Erro no cálculo via Python', details: error.message });
-        }
+    childPy.on('close', (code) => {
+        if (code !== 0) return res.status(500).json({ error: 'Erro no cálculo' });
         try {
-            const result = JSON.parse(stdout.trim());
-            res.json({ success: true, result });
+            res.json({ success: true, result: JSON.parse(stdoutData.trim()) });
         } catch (e) {
-            res.status(500).json({ error: 'Erro ao processar resultado do cálculo', details: stdout });
+            res.status(500).json({ error: 'Erro no parse do cálculo' });
         }
     });
 });

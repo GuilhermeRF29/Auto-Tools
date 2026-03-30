@@ -82,7 +82,15 @@ def configurar_banco():
                         arquivo_nome TEXT,
                         arquivo_path_backup TEXT,
                         status TEXT,
+                        job_id TEXT UNIQUE,
                         FOREIGN KEY (user_id) REFERENCES usuarios(id))''')
+    
+    # Migração segura: Adiciona job_id se não existir
+    try:
+        cursor.execute("ALTER TABLE relatorios_history ADD COLUMN job_id TEXT")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_job_id ON relatorios_history(job_id)")
+    except sqlite3.OperationalError:
+        pass
 
     conexao.commit()
     conexao.close()
@@ -261,17 +269,29 @@ def buscar_credencial_site(user_id, servico):
 
 # --- FUNÇÕES DE HISTÓRICO DE RELATÓRIOS ---
 
-def salvar_historico_relatorio(user_id, nome_automacao, parametros, arquivo_nome, path_backup, status="completed"):
-    """Salva um registro no histórico de relatórios."""
+def salvar_historico_relatorio(user_id, nome_automacao, parametros, arquivo_nome, path_backup, status="completed", job_id=None):
+    """Salva ou atualiza um registro no histórico de relatórios."""
     import json
     conexao = sqlite3.connect(DB_PATH)
     cursor = conexao.cursor()
-    # Se já vier como string (do Node), não precisa de dumps denovo
     params_str = parametros if isinstance(parametros, str) else json.dumps(parametros)
+    
+    # Se houver job_id, tenta atualizar primeiro
+    if job_id and job_id.strip() != "":
+        cursor.execute("SELECT id FROM relatorios_history WHERE job_id = ?", (job_id,))
+        exists = cursor.fetchone()
+        if exists:
+            cursor.execute('''UPDATE relatorios_history 
+                              SET status = ?, arquivo_nome = ?, arquivo_path_backup = ?, nome_automacao = ?, data_execucao = datetime('now', 'localtime')
+                              WHERE job_id = ?''', (status, arquivo_nome, path_backup, nome_automacao, job_id))
+            conexao.commit()
+            conexao.close()
+            return
+
     cursor.execute('''INSERT INTO relatorios_history 
-                      (user_id, nome_automacao, parametros_json, arquivo_nome, arquivo_path_backup, status)
-                      VALUES (?, ?, ?, ?, ?, ?)''', 
-                   (user_id, nome_automacao, params_str, arquivo_nome, path_backup, status))
+                      (user_id, nome_automacao, parametros_json, arquivo_nome, arquivo_path_backup, status, job_id, data_execucao)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))''', 
+                   (user_id, nome_automacao, params_str, arquivo_nome, path_backup, status, job_id if job_id and job_id.strip() != "" else None))
     conexao.commit()
     conexao.close()
 
@@ -331,5 +351,14 @@ def excluir_historico_antigo(dias=30):
     conexao.commit()
     conexao.close()
     return arquivos_para_remover
+
+def excluir_historico_id(record_id):
+    """Remove um registro específico do histórico pelo ID."""
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    cursor.execute("DELETE FROM relatorios_history WHERE id = ?", (record_id,))
+    conexao.commit()
+    conexao.close()
+    return True
 
 

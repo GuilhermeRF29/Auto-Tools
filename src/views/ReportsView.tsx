@@ -23,12 +23,21 @@ import PulseHighlight from '../components/PulseHighlight';
 import CustomDropdown from '../components/CustomDropdown';
 import CustomDatePicker from '../components/CustomDatePicker';
 
-const ReportsView = ({ highlightId: hId, reRunData: rrData, onReRunUsed: rrUsed, currentUser }: { highlightId?: string | null, reRunData?: any, onReRunUsed?: () => void, currentUser?: any }) => {
+interface ReportsViewProps {
+  highlightId?: string | null;
+  reRunData?: any;
+  onReRunUsed?: () => void;
+  currentUser?: any;
+  runningTasks: RunningTask[];
+  onStartAutomation: (payload: any) => Promise<string | null>;
+  onCancelTask: (id: string) => void;
+}
+
+const ReportsView = ({ highlightId: hId, reRunData: rrData, onReRunUsed: rrUsed, currentUser, runningTasks, onStartAutomation, onCancelTask }: ReportsViewProps) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedReport, setSelectedReport] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [runningTasks, setRunningTasks] = useState<RunningTask[]>([]);
 
   // Configurações do modal
   const [configAcao, setConfigAcao] = useState('completo');
@@ -80,12 +89,11 @@ const ReportsView = ({ highlightId: hId, reRunData: rrData, onReRunUsed: rrUsed,
   };
 
   /**
-   * Envia o payload de execução para o backend e inicia a escuta SSE.
-   * O backend retorna um jobId que é usado para rastrear o progresso.
+   * Envia o payload de execução para o App.tsx via callback.
+   * O gerenciamento de SSE e estado é feito globalmente.
    */
   const handleExecute = async () => {
     setIsExecuting(true);
-    const repName = selectedReport || 'Relatório Desconhecido';
 
     const payload = {
       name: selectedReport,
@@ -100,77 +108,15 @@ const ReportsView = ({ highlightId: hId, reRunData: rrData, onReRunUsed: rrUsed,
       data_fim: dataFinal?.toISOString() || null
     };
 
-    try {
-      const response = await fetch('/api/run-automation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+    const jobId = await onStartAutomation(payload);
 
-      const { jobId } = await response.json();
-
-      // Adiciona a tarefa na fila local
-      const newTask: RunningTask = { id: jobId, name: repName, progress: 0, status: 'running', startTime: new Date() };
-      setRunningTasks(prev => [newTask, ...prev]);
-
+    if (jobId) {
       setShowSuccess(true);
-      setIsExecuting(false);
-
-      // Escuta o progresso via Server-Sent Events (SSE)
-      const eventSource = new EventSource(`/api/automation-progress/${jobId}`);
-
-      eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-
-        setRunningTasks(prev => prev.map(t => {
-          if (t.id === jobId) {
-            return {
-              ...t,
-              progress: data.progress,
-              status: data.status,
-              message: data.message
-            };
-          }
-          return t;
-        }));
-
-        if (data.status === 'completed' || data.status === 'failed') {
-          eventSource.close();
-
-          // Auto-download do arquivo gerado se concluído com sucesso
-          if (data.status === 'completed' && data.result) {
-            try {
-              const resObj = JSON.parse(data.result);
-              const path = resObj.arquivo_principal;
-              if (path) {
-                const link = document.createElement('a');
-                link.href = `/api/download?path=${encodeURIComponent(path)}`;
-                link.setAttribute('download', '');
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-              }
-            } catch (e) {
-              console.error("Erro ao parsear resultado final", e);
-            }
-          }
-
-          // Auto-remover da fila depois de 10 segundos
-          setTimeout(() => {
-            setRunningTasks(prev => prev.filter(t => t.id !== jobId));
-          }, 10000);
-        }
-      };
-
-      eventSource.onerror = () => {
-        eventSource.close();
-      };
-
-    } catch (e) {
-      console.error("Falha ao iniciar automação", e);
-      setIsExecuting(false);
-      alert("Erro ao conectar com o servidor.");
+    } else {
+      alert('Erro ao conectar com o servidor.');
     }
+
+    setIsExecuting(false);
 
     setTimeout(() => {
       setIsModalOpen(false);
@@ -178,24 +124,9 @@ const ReportsView = ({ highlightId: hId, reRunData: rrData, onReRunUsed: rrUsed,
     }, 2500);
   };
 
-  /** Cancela uma tarefa em execução via API. */
+  /** Cancela uma tarefa em execução via callback global. */
   const handleCancelTask = async (id: string) => {
-    try {
-      await fetch(`/api/cancel-automation/${id}`, { method: 'POST' });
-
-      setRunningTasks(prev => prev.map(t => {
-        if (t.id === id) {
-          return { ...t, status: 'cancelled', message: 'Cancelamento solicitado...' };
-        }
-        return t;
-      }));
-
-      setTimeout(() => {
-        setRunningTasks(prev => prev.filter(t => t.id !== id));
-      }, 5000);
-    } catch (e) {
-      console.error("Erro ao cancelar tarefa", e);
-    }
+    onCancelTask(id);
   };
 
   // Lógica de re-execução (quando vem do Dashboard ou Histórico via "Play")

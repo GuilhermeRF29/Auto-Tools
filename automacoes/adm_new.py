@@ -291,6 +291,8 @@ def executar_adm(
         pasta_final.mkdir(parents=True, exist_ok=True)
         destino_final = pasta_final / origem_arquivo.name
         shutil.copy2(str(origem_arquivo), str(destino_final))
+        if callback_progresso:
+            callback_progresso(1.0, "Arquivo enviado com sucesso!")
         return {
             "arquivo_principal": str(destino_final),
             "arquivos_saida": [str(destino_final)],
@@ -430,6 +432,8 @@ def executar_adm(
                         arquivos_saida.append(str(destino_tmp))
                     pasta_final = destino_envio
 
+                if callback_progresso:
+                    callback_progresso(1.0, "Download concluído com sucesso!")
                 return {
                     "arquivo_principal": arquivos_saida[0] if arquivos_saida else None,
                     "arquivos_saida": arquivos_saida,
@@ -469,14 +473,18 @@ def executar_adm(
 
             if modo_execucao == "completo":
                 if callback_progresso:
-                    callback_progresso(0.98, "Baixando base do ano passado...")
+                    callback_progresso(0.95, "Baixando base do ano passado...")
                 origem_nova = Path(r"\\172.16.98.12\Relatórios Power BI\Forecast\Forecast - Antigo")
                 destino_novo = destino_envio or destino_padrao
                 destino_novo.mkdir(parents=True, exist_ok=True)
                 buscar_e_mover_arquivo_ano_passado(origem_nova, destino_novo)
 
+            if callback_progresso:
+                callback_progresso(1.0, "Processo ADM concluído com sucesso!")
             return resultado_consolidacao
 
+        if callback_progresso:
+            callback_progresso(1.0, "Nenhuma ação executada.")
         return {
             "arquivo_principal": None,
             "arquivos_saida": [],

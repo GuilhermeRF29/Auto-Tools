@@ -10,7 +10,7 @@
  *
  * Todas as views e componentes são importados de modules separados.
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Home, FileText, Lock, Search, User,
   CheckCircle, Loader2, Calculator, LogOut,
@@ -53,10 +53,151 @@ export default function App() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
-  // === Estado de Tarefas (global) ===
+  // === Estado de Tarefas (global — persiste entre views) ===
   const [runningTasks, setRunningTasks] = useState<RunningTask[]>([]);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [reRunData, setReRunData] = useState<any | null>(null);
+
+  /** Timeout de segurança: se nenhuma atualização chegar em 15 min, marca como falha. */
+  const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+  const lastActivityRef = useRef<Map<string, number>>(new Map());
+  const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
+
+  // ============================
+  //  TASK MANAGEMENT (Global)
+  // ============================
+
+  /** Inicia uma automação e conecta ao SSE para atualizações em tempo real. */
+  const startAutomation = useCallback(async (payload: any): Promise<string | null> => {
+    try {
+      const response = await fetch('/api/run-automation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const { jobId } = await response.json();
+      const repName = payload.name || 'Automação';
+
+      // Adiciona a tarefa na fila
+      const newTask: RunningTask = { id: jobId, name: repName, progress: 0, status: 'running', startTime: new Date() };
+      setRunningTasks(prev => [newTask, ...prev]);
+      lastActivityRef.current.set(jobId, Date.now());
+
+      // Escuta o progresso via SSE
+      const eventSource = new EventSource(`/api/automation-progress/${jobId}`);
+      eventSourcesRef.current.set(jobId, eventSource);
+
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        lastActivityRef.current.set(jobId, Date.now());
+
+        setRunningTasks(prev => prev.map(t => {
+          if (t.id === jobId) {
+            return {
+              ...t,
+              progress: data.progress,
+              status: data.status,
+              message: data.message
+            };
+          }
+          return t;
+        }));
+
+        if (data.status === 'completed' || data.status === 'failed') {
+          eventSource.close();
+          eventSourcesRef.current.delete(jobId);
+          lastActivityRef.current.delete(jobId);
+
+          // Auto-download do arquivo gerado se concluído com sucesso
+          if (data.status === 'completed' && data.result) {
+            try {
+              const resObj = JSON.parse(data.result);
+              const filePath = resObj.arquivo_principal;
+              if (filePath) {
+                const link = document.createElement('a');
+                link.href = `/api/download?path=${encodeURIComponent(filePath)}`;
+                link.setAttribute('download', '');
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }
+            } catch (e) {
+              console.error('Erro ao parsear resultado final', e);
+            }
+          }
+
+          // Auto-remover da fila depois de 10 segundos
+          setTimeout(() => {
+            setRunningTasks(prev => prev.filter(t => t.id !== jobId));
+          }, 10000);
+        }
+      };
+
+      eventSource.onerror = () => {
+        eventSource.close();
+        eventSourcesRef.current.delete(jobId);
+      };
+
+      return jobId;
+    } catch (e) {
+      console.error('Falha ao iniciar automação', e);
+      return null;
+    }
+  }, []);
+
+  /** Cancela uma tarefa em execução via API. */
+  const cancelAutomation = useCallback(async (id: string) => {
+    try {
+      await fetch(`/api/cancel-automation/${id}`, { method: 'POST' });
+
+      // Fecha o EventSource associado
+      const es = eventSourcesRef.current.get(id);
+      if (es) { es.close(); eventSourcesRef.current.delete(id); }
+      lastActivityRef.current.delete(id);
+
+      setRunningTasks(prev => prev.map(t => {
+        if (t.id === id) {
+          return { ...t, status: 'cancelled', message: 'Cancelamento solicitado...' };
+        }
+        return t;
+      }));
+
+      setTimeout(() => {
+        setRunningTasks(prev => prev.filter(t => t.id !== id));
+      }, 5000);
+    } catch (e) {
+      console.error('Erro ao cancelar tarefa', e);
+    }
+  }, []);
+
+  /** Timer de inatividade: verifica a cada 60s se algum job parou de responder. */
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      lastActivityRef.current.forEach((lastTime, jobId) => {
+        if (now - lastTime > INACTIVITY_TIMEOUT_MS) {
+          console.warn(`[TIMEOUT] Job ${jobId} sem atualização por ${INACTIVITY_TIMEOUT_MS / 60000} min. Marcando como falha.`);
+          const es = eventSourcesRef.current.get(jobId);
+          if (es) { es.close(); eventSourcesRef.current.delete(jobId); }
+          lastActivityRef.current.delete(jobId);
+
+          setRunningTasks(prev => prev.map(t => {
+            if (t.id === jobId && t.status === 'running') {
+              return { ...t, status: 'failed', message: 'Tempo limite excedido — sem resposta do servidor.' };
+            }
+            return t;
+          }));
+
+          setTimeout(() => {
+            setRunningTasks(prev => prev.filter(t => t.id !== jobId));
+          }, 15000);
+        }
+      });
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // === Refs ===
   /** Ref para o menu de perfil (detecta clique fora para fechar) */
@@ -573,6 +714,74 @@ export default function App() {
             </div>
           </header>
 
+          {/* Widget flutuante global de progresso (visível em qualquer view) */}
+          {runningTasks.length > 0 && currentView !== 'reports' && (
+            <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-500">
+              <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200 p-4 w-80 max-h-[320px] overflow-y-auto custom-scrollbar">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Loader2 size={16} className="text-blue-600 animate-spin" />
+                    </div>
+                    <span className="text-xs font-black text-slate-600 uppercase tracking-widest">
+                      {runningTasks.filter(t => t.status === 'running').length} em execução
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setCurrentView('reports')}
+                    className="text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-blue-800 transition-colors px-2 py-1 rounded-lg hover:bg-blue-50"
+                  >
+                    Ver tudo
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {runningTasks.map(task => (
+                    <div key={task.id} className={`rounded-xl p-3 border relative overflow-hidden transition-all
+                      ${task.status === 'completed' ? 'border-green-100 bg-green-50/50' : 
+                        task.status === 'failed' || task.status === 'cancelled' ? 'border-red-100 bg-red-50/50' : 
+                        'border-blue-100 bg-blue-50/30'}`}
+                    >
+                      {/* Barra de progresso sutil no fundo */}
+                      <div
+                        className={`absolute top-0 left-0 bottom-0 z-0 transition-all duration-700 ease-out opacity-15
+                          ${task.status === 'completed' ? 'bg-green-500' : 
+                            task.status === 'failed' || task.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-500'}`}
+                        style={{ width: `${task.progress}%` }}
+                      />
+                      <div className="relative z-10 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 text-white transition-colors
+                            ${task.status === 'completed' ? 'bg-green-500' : 
+                              task.status === 'failed' || task.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-600'}`}
+                          >
+                            {task.status === 'completed' ? <CheckCircle size={12} /> :
+                              task.status === 'failed' || task.status === 'cancelled' ? <X size={12} /> :
+                              <Loader2 size={12} className="animate-spin" />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-bold text-slate-700 truncate">{task.name}</p>
+                            <p className="text-[10px] font-bold text-slate-400 truncate">
+                              {task.message || `${Math.round(task.progress)}%`}
+                            </p>
+                          </div>
+                        </div>
+                        {task.status === 'running' && (
+                          <button
+                            onClick={() => cancelAutomation(task.id)}
+                            className="p-1 text-slate-300 hover:text-red-500 transition-colors flex-shrink-0"
+                            title="Cancelar"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Área de conteúdo com animação de transição */}
           <main className="flex-1 overflow-y-auto p-4 sm:p-8 custom-scrollbar relative z-0">
             <CommandPalette 
@@ -595,12 +804,16 @@ export default function App() {
                       setView={setCurrentView} 
                       onReRun={handleReRunFromDashboard} 
                       currentUser={user}
+                      tasksCount={runningTasks.length}
+                      onStartAutomation={startAutomation}
                     />
                   )}
                   {currentView === 'history' && (
                     <HistoryView 
                       onReRun={handleReRunFromDashboard} 
                       currentUser={user}
+                      onStartAutomation={startAutomation}
+                      setView={setCurrentView}
                     />
                   )}
                   {currentView === 'reports' && (
@@ -609,6 +822,9 @@ export default function App() {
                       reRunData={reRunData} 
                       onReRunUsed={() => setReRunData(null)} 
                       currentUser={user}
+                      runningTasks={runningTasks}
+                      onStartAutomation={startAutomation}
+                      onCancelTask={cancelAutomation}
                     />
                   )}
                   {currentView === 'vault' && <VaultView currentUser={user} />}

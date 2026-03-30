@@ -7,17 +7,27 @@
 import { useState, useEffect } from 'react';
 import {
   Search, FileSpreadsheet, Activity, AlertCircle, Loader2,
-  RotateCcw, Download, Settings, Play, Layers, ChevronRight
+  RotateCcw, Download, Settings, Play, Layers, ChevronRight, FolderOpen,
+  Trash2, ArrowLeft, AlertTriangle
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
 import Card from '../components/Card';
 import Button from '../components/Button';
+import Modal from '../components/Modal';
+import type { View } from '../types';
 
-const HistoryView = ({ onReRun, currentUser }: { onReRun?: (item: any) => void, currentUser?: any }) => {
+const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView }: { 
+  onReRun?: (item: any) => void, 
+  onStartAutomation?: (payload: any) => Promise<string | null>,
+  currentUser?: any,
+  setView?: (v: View) => void
+}) => {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [deleteItem, setDeleteItem] = useState<any | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   /** Busca o histórico completo (até 500 registros) do banco. */
   const fetchFullHistory = async () => {
@@ -56,13 +66,40 @@ const HistoryView = ({ onReRun, currentUser }: { onReRun?: (item: any) => void, 
     item.nome_automacao.toLowerCase().includes(search.toLowerCase()) ||
     (item.arquivo_nome && item.arquivo_nome.toLowerCase().includes(search.toLowerCase()))
   );
+  
+  /** Executa a exclusão via API. */
+  const handleDelete = async (withFile: boolean) => {
+    if (!deleteItem) return;
+    setIsDeleting(true);
+    try {
+      const url = `/api/relatorios-history/${deleteItem.id}?deleteFile=${withFile}&path=${encodeURIComponent(deleteItem.path_backup || '')}`;
+      const resp = await fetch(url, { method: 'DELETE' });
+      if (resp.ok) {
+        setDeleteItem(null);
+        fetchFullHistory(); // Recarrega a lista
+      }
+    } catch (e) {
+      console.error("Erro ao excluir:", e);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-slate-800 tracking-tight">Histórico Completo</h2>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Todos os registros salvos nos últimos 30 dias</p>
+        <div className="flex items-center gap-4">
+          <button 
+             onClick={() => setView?.('dashboard')}
+             className="p-3 bg-white border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-200 rounded-2xl transition-all shadow-sm"
+             title="Voltar ao Dashboard"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight">Histórico Completo</h2>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Todos os registros salvos nos últimos 30 dias</p>
+          </div>
         </div>
         
         <div className="flex items-center gap-4">
@@ -146,7 +183,7 @@ const HistoryView = ({ onReRun, currentUser }: { onReRun?: (item: any) => void, 
                        </div>
                     </td>
                     <td className="px-6 py-4 text-right">
-                       <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1">
                           {item.path_backup && (
                             <>
                               <a 
@@ -162,16 +199,38 @@ const HistoryView = ({ onReRun, currentUser }: { onReRun?: (item: any) => void, 
                                 className="p-2.5 text-slate-400 hover:text-amber-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
                                 title="Ver na Pasta"
                               >
-                                <Settings size={18} />
+                                <FolderOpen size={18} />
                               </button>
                             </>
                           )}
                           <button 
-                            onClick={() => onReRun?.(item)}
-                            className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
-                            title="Repetir Automação"
+                            onClick={() => {
+                              // Limpa nomes acumulados
+                              const cleanName = item.nome_automacao.split(' (')[0];
+                              onStartAutomation?.({
+                                name: cleanName,
+                                ...item.params,
+                                user_id: currentUser?.id
+                              });
+                            }}
+                            className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
+                            title="Executar agora com mesmos filtros"
                           >
                             <Play size={18} />
+                          </button>
+                          <button 
+                            onClick={() => onReRun?.(item)}
+                            className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-xl transition-all hover:shadow-sm"
+                            title="Ajustar Filtros e Rodar"
+                          >
+                            <Settings size={18} />
+                          </button>
+                          <button 
+                            onClick={() => setDeleteItem(item)}
+                            className="p-2.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                            title="Excluir"
+                          >
+                            <Trash2 size={18} />
                           </button>
                        </div>
                     </td>
@@ -182,6 +241,59 @@ const HistoryView = ({ onReRun, currentUser }: { onReRun?: (item: any) => void, 
           )}
         </div>
       </Card>
+
+      {/* Modal de Confirmação de Exclusão */}
+      <Modal
+        isOpen={!!deleteItem}
+        onClose={() => !isDeleting && setDeleteItem(null)}
+        title="Confirmar Exclusão"
+        footer={
+          <div className="flex flex-col sm:flex-row gap-2 w-full">
+            <Button 
+               variant="secondary" 
+               className="flex-1 rounded-xl"
+               onClick={() => setDeleteItem(null)}
+               disabled={isDeleting}
+            >
+              Cancelar
+            </Button>
+            <Button 
+               variant="primary" 
+               className="flex-1 bg-slate-800 hover:bg-slate-900 rounded-xl text-[10px] font-black uppercase"
+               onClick={() => handleDelete(false)}
+               loading={isDeleting}
+            >
+              Apenas Registro
+            </Button>
+            <Button 
+               variant="primary" 
+               className="flex-1 bg-red-600 hover:bg-red-700 rounded-xl text-[10px] font-black uppercase"
+               onClick={() => handleDelete(true)}
+               loading={isDeleting}
+            >
+              Registro e Arquivo
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center flex-shrink-0">
+            <AlertTriangle className="text-red-600" size={24} />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-slate-800 mb-1">Como deseja excluir este item?</p>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Você pode remover apenas a linha do histórico ou apagar também o arquivo original do seu computador para economizar espaço.
+            </p>
+            {deleteItem?.arquivo_nome && (
+              <div className="mt-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Arquivo alvo:</p>
+                <p className="text-[11px] font-bold text-slate-700 truncate">{deleteItem.arquivo_nome}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };
