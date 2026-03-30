@@ -71,6 +71,19 @@ def configurar_banco():
                         id INTEGER PRIMARY KEY AUTOINCREMENT, 
                         nome TEXT UNIQUE, 
                         capacidade INTEGER)''')
+
+    # NOVA TABELA: HISTÓRICO DE RELATÓRIOS E BACKUPS
+    cursor.execute('''CREATE TABLE IF NOT EXISTS relatorios_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER,
+                        nome_automacao TEXT,
+                        data_execucao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        parametros_json TEXT, -- Salva o JSON dos filtros usados
+                        arquivo_nome TEXT,
+                        arquivo_path_backup TEXT,
+                        status TEXT,
+                        FOREIGN KEY (user_id) REFERENCES usuarios(id))''')
+
     conexao.commit()
     conexao.close()
 
@@ -244,5 +257,79 @@ def buscar_credencial_site(user_id, servico):
     except Exception as e:
         print(f"[DB_ERROR] {e}")
     return None, None  # Retornar dois valores nulos se falhar
+
+
+# --- FUNÇÕES DE HISTÓRICO DE RELATÓRIOS ---
+
+def salvar_historico_relatorio(user_id, nome_automacao, parametros, arquivo_nome, path_backup, status="completed"):
+    """Salva um registro no histórico de relatórios."""
+    import json
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    # Se já vier como string (do Node), não precisa de dumps denovo
+    params_str = parametros if isinstance(parametros, str) else json.dumps(parametros)
+    cursor.execute('''INSERT INTO relatorios_history 
+                      (user_id, nome_automacao, parametros_json, arquivo_nome, arquivo_path_backup, status)
+                      VALUES (?, ?, ?, ?, ?, ?)''', 
+                   (user_id, nome_automacao, params_str, arquivo_nome, path_backup, status))
+    conexao.commit()
+    conexao.close()
+
+def listar_historico_relatorios(limit=None, user_id=None):
+    """Lista os últimos relatórios do histórico, opcionalmente filtrando por usuário."""
+    import json
+    import sqlite3
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    
+    query = "SELECT id, nome_automacao, data_execucao, parametros_json, arquivo_nome, arquivo_path_backup, status FROM relatorios_history"
+    params_query = []
+    
+    if user_id:
+        query += " WHERE user_id = ?"
+        params_query.append(user_id)
+        
+    query += " ORDER BY data_execucao DESC"
+    
+    if limit:
+        query += " LIMIT ?"
+        params_query.append(limit)
+        
+    cursor.execute(query, params_query)
+    rows = cursor.fetchall()
+    conexao.close()
+    
+    resultado = []
+    for r in rows:
+        try:
+            params = json.loads(r[3]) if r[3] else {}
+        except:
+            params = {}
+            
+        resultado.append({
+            "id": r[0],
+            "nome_automacao": r[1],
+            "data": r[2],
+            "params": params,
+            "arquivo_nome": r[4],
+            "path_backup": r[5],
+            "status": r[6]
+        })
+    return resultado
+
+def excluir_historico_antigo(dias=30):
+    """Remove registros e prepara para deleção de arquivos físicos com mais de X dias."""
+    import sqlite3
+    conexao = sqlite3.connect(DB_PATH)
+    cursor = conexao.cursor()
+    # Busca arquivos que devem ser deletados fisicamente
+    cursor.execute(f"SELECT arquivo_path_backup FROM relatorios_history WHERE data_execucao < date('now', '-{dias} days')")
+    arquivos_para_remover = [r[0] for r in cursor.fetchall() if r[0]]
+    
+    # Remove do banco
+    cursor.execute(f"DELETE FROM relatorios_history WHERE data_execucao < date('now', '-{dias} days')")
+    conexao.commit()
+    conexao.close()
+    return arquivos_para_remover
 
 

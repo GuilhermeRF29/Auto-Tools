@@ -1,3 +1,12 @@
+# === Auto Tools — Projeto ===
+node_modules/
+server_debug.log
+*.db
+backups_sistema/
+backup_pyside/
+token.json
+.env
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

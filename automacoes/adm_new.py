@@ -316,7 +316,7 @@ def executar_adm(
             resultado = gerar_intervalos_mensais(data_inicio, data_final)
             opcoes = Options()
             opcoes.add_argument("--window-size=1920,1080")
-            # opcoes.add_argument("--headless")
+            opcoes.add_argument("--headless")
 
             if callback_progresso:
                 callback_progresso(0.1, "Abrindo Navegador Invisível...")

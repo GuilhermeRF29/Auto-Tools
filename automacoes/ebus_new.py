@@ -677,10 +677,15 @@ def executar_ebus(
 if __name__ == '__main__':
     import json
     import sys
+    import base64
 
+    # Ler parâmetros de CLI (Base64 via argv) ou fallback para STDIN
     try:
-        line = sys.stdin.readline()
-        params = json.loads(line) if line else {}
+        if len(sys.argv) > 1:
+            params = json.loads(base64.b64decode(sys.argv[1]))
+        else:
+            line = sys.stdin.readline()
+            params = json.loads(line) if line else {}
     except:
         params = {}
 
