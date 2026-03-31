@@ -5,7 +5,7 @@
  */
 
 /** Identificador das views/telas disponíveis na navegação principal. */
-export type View = 'dashboard' | 'reports' | 'vault' | 'calculator' | 'settings' | 'history';
+export type View = 'dashboard' | 'presentations' | 'reports' | 'vault' | 'calculator' | 'settings' | 'history';
 
 /** Variante visual de proposta (legado, mantido para compatibilidade). */
 export type Proposal = 'A' | 'B';

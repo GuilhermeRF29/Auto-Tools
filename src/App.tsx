@@ -14,7 +14,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Home, FileText, Lock, Search, User,
   CheckCircle, Loader2, Calculator, LogOut,
-  X, Settings, Menu
+  X, Settings, Menu, BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import logoApp from '../logo_app.png';
@@ -30,6 +30,7 @@ import CommandPalette from './components/CommandPalette';
 
 // --- Views ---
 import DashboardView from './views/DashboardView';
+import ApresentacoesView from './views/ApresentacoesView';
 import HistoryView from './views/HistoryView';
 import ReportsView from './views/ReportsView';
 import VaultView from './views/VaultView';
@@ -636,8 +637,9 @@ export default function App() {
 
   /** Itens de navegação da sidebar. */
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: Home },
+    { id: 'dashboard', label: 'Inicio', icon: Home },
     { id: 'reports', label: 'Relatórios', icon: FileText },
+    { id: 'presentations', label: 'Dashboards', icon: BarChart3 },
     { id: 'vault', label: 'Cofre de Senhas', icon: Lock },
     { id: 'calculator', label: 'Calculadora', icon: Calculator },
   ];
@@ -981,6 +983,7 @@ export default function App() {
                       successAnimationIntensity={successAnimationIntensity}
                     />
                   )}
+                  {currentView === 'presentations' && <ApresentacoesView />}
                   {currentView === 'vault' && <VaultView currentUser={user} />}
                   {currentView === 'calculator' && <CalculatorView />}
                   {currentView === 'settings' && (

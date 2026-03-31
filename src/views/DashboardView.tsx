@@ -6,8 +6,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   Play, Download, CheckCircle, ShieldCheck, FileSpreadsheet,
-  Key, AlertCircle, Loader2, ChevronRight, Lock,
-  Calculator, Settings, Activity, Layers, Zap, FolderOpen
+  AlertCircle, Loader2, ChevronRight, Lock,
+  Settings, Activity, Layers, Zap, FolderOpen, BarChart3
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -22,7 +22,6 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
   currentUser?: any, 
   tasksCount?: number 
 }) => {
-  const [isRunning, setIsRunning] = useState(false);
   const [tab, setTab] = useState<'files' | 'history'>('files');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,24 +50,6 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
     fetchHistory();
   }, [tasksCount]); // Recarrega sempre que o número de tarefas mudas (início/fim)
 
-  /** Execução rápida de relatório de vendas (atalho do dashboard). */
-  const handleQuickRun = async () => {
-    if (!currentUser?.id) return;
-    setIsRunning(true);
-    try {
-      await fetch('/api/run-automation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'Relatório de Vendas', user_id: currentUser.id })
-      });
-      setIsRunning(false);
-      setTimeout(fetchHistory, 2000);
-    } catch (error) {
-      console.error(error);
-      setIsRunning(false);
-    }
-  };
-
   /** Abre o Windows Explorer na pasta do arquivo. */
   const handleReveal = async (path: string) => {
     try {
@@ -91,59 +72,26 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
     <div className="space-y-6 animate-in fade-in duration-300">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
          <div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tight">Visão Geral</h2>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Status e atividades recentes</p>
+          <h2 className="text-2xl font-black text-slate-800 tracking-tight">Inicio</h2>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Resumo operacional e acesso a dashboards</p>
          </div>
       </div>
 
-      {/* Ações Rápidas */}
+      {/* Dashboards e Apresentacoes */}
       <section>
-        <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 ml-1">Ações Rápidas</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 ml-1">Dashboards e Apresentacoes</h3>
+        <div className="grid grid-cols-1 gap-4">
           <Card
-            onClick={handleQuickRun}
-            className="p-5 hover:border-blue-300 transition-all bg-gradient-to-br from-white to-slate-50/50"
+            onClick={() => setView('presentations')}
+            className="p-5 hover:border-cyan-300 transition-all bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-900 text-white"
           >
             <div className="flex items-start justify-between">
               <div>
-                <h4 className="font-black text-slate-800 group-hover:text-blue-600 transition-colors">Relatório de Vendas</h4>
-                <p className="text-[10px] text-slate-500 mt-1 font-bold uppercase tracking-tight">Baixar últimos 7 dias</p>
+                <h4 className="font-black text-white group-hover:text-cyan-100 transition-colors">Revenue Application</h4>
+                <p className="text-[10px] text-cyan-100/85 mt-1 font-bold uppercase tracking-tight">Abrir dashboard com filtro de datas e visao completa</p>
               </div>
-              <div className={cn(
-                "p-3 rounded-2xl transition-all",
-                isRunning ? 'bg-blue-100 text-blue-600' : 'bg-slate-50 text-slate-400 group-hover:bg-blue-600 group-hover:text-white group-hover:scale-110 shadow-sm'
-              )}>
-                {isRunning ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} />}
-              </div>
-            </div>
-          </Card>
-
-          <Card
-            onClick={() => setView('calculator')}
-            className="p-5 hover:border-blue-300 transition-all bg-gradient-to-br from-white to-slate-50/50"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h4 className="font-black text-slate-800 group-hover:text-blue-600 transition-colors">Nova Cotação</h4>
-                <p className="text-[10px] text-slate-500 mt-1 font-bold uppercase tracking-tight">Calculadora de passagens</p>
-              </div>
-              <div className="p-3 rounded-2xl bg-slate-50 text-slate-400 group-hover:bg-blue-600 group-hover:text-white group-hover:scale-110 transition-all shadow-sm">
-                <Calculator size={20} />
-              </div>
-            </div>
-          </Card>
-
-          <Card
-            onClick={() => setView('vault')}
-            className="p-5 hover:border-blue-300 transition-all bg-gradient-to-br from-white to-slate-50/50"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h4 className="font-black text-slate-800 group-hover:text-blue-600 transition-colors">Acessar Cofre</h4>
-                <p className="text-[10px] text-slate-500 mt-1 font-bold uppercase tracking-tight">Gerenciar credenciais</p>
-              </div>
-              <div className="p-3 rounded-2xl bg-slate-50 text-slate-400 group-hover:bg-blue-600 group-hover:text-white group-hover:scale-110 transition-all shadow-sm">
-                <Key size={20} />
+              <div className="p-3 rounded-2xl transition-all bg-white/15 text-white group-hover:bg-cyan-400 group-hover:text-slate-950 group-hover:scale-110 shadow-sm">
+                <BarChart3 size={20} />
               </div>
             </div>
           </Card>
