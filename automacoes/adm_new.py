@@ -89,7 +89,10 @@ def consolidar_varios_arquivos(
     total_arquivos = len(arquivos_excel)
     for index, arquivo in enumerate(arquivos_excel, 1):
         if callback_progresso:
-            callback_progresso(0.80 + (0.05 * (index / total_arquivos)), f"Lendo e padronizando arquivo {index} de {total_arquivos}...")
+            callback_progresso(
+                0.80 + (0.05 * (index / total_arquivos)),
+                f"Lendo e padronizando arquivo {index}/{total_arquivos}: {arquivo.name}",
+            )
         print(f"Inspecionando: {arquivo.name}")
         xls = pd.ExcelFile(arquivo)
         for nome_aba in xls.sheet_names:
@@ -292,7 +295,7 @@ def executar_adm(
         destino_final = pasta_final / origem_arquivo.name
         shutil.copy2(str(origem_arquivo), str(destino_final))
         if callback_progresso:
-            callback_progresso(1.0, "Arquivo enviado com sucesso!")
+            callback_progresso(1.0, f"Arquivo enviado: {destino_final.name}")
         return {
             "arquivo_principal": str(destino_final),
             "arquivos_saida": [str(destino_final)],
@@ -389,8 +392,12 @@ def executar_adm(
                     ]
 
                     if arquivos_validos:
+                        arquivo_detectado = max(arquivos_validos, key=os.path.getmtime)
                         if callback_progresso:
-                            callback_progresso(porc + 0.06, f"Lote {idx+1}/{total_blocos} - Arquivo detectado (espera: {tempo_espera}s).")
+                            callback_progresso(
+                                porc + 0.06,
+                                f"Lote {idx+1}/{total_blocos} - Arquivo detectado: {arquivo_detectado.name} (espera: {int(tempo_espera)}s).",
+                            )
                         time.sleep(1)
                         break
 
@@ -416,7 +423,14 @@ def executar_adm(
                 callback_progresso(0.75, "Organizando arquivos baixados...")
 
             for i, arquivo in enumerate(arquivos_encontrados, 1):
-                renomear_arquivo(arquivo, pasta_trabalho, i)
+                arquivo_renomeado = renomear_arquivo(arquivo, pasta_trabalho, i)
+                if callback_progresso:
+                    total_encontrados = len(arquivos_encontrados)
+                    progresso = 0.75 + (0.03 * (i / max(total_encontrados, 1)))
+                    callback_progresso(
+                        progresso,
+                        f"Arquivo renomeado ({i}/{total_encontrados}): {arquivo.name} -> {arquivo_renomeado.name}",
+                    )
 
             if modo_execucao == "download":
                 arquivos_temp = sorted(pasta_trabalho.glob("Temp_Relatorio_*"))
@@ -426,10 +440,16 @@ def executar_adm(
                 if destino_envio:
                     destino_envio.mkdir(parents=True, exist_ok=True)
                     arquivos_saida = []
-                    for arquivo_tmp in arquivos_temp:
+                    total_temp = len(arquivos_temp)
+                    for idx_tmp, arquivo_tmp in enumerate(arquivos_temp, 1):
                         destino_tmp = destino_envio / arquivo_tmp.name
                         shutil.copy2(str(arquivo_tmp), str(destino_tmp))
                         arquivos_saida.append(str(destino_tmp))
+                        if callback_progresso:
+                            callback_progresso(
+                                0.93 + (0.05 * (idx_tmp / max(total_temp, 1))),
+                                f"Arquivo copiado para saída ({idx_tmp}/{total_temp}): {destino_tmp.name}",
+                            )
                     pasta_final = destino_envio
 
                 if callback_progresso:
@@ -448,6 +468,8 @@ def executar_adm(
             nome_temp = f"Temp_Relatorio_manual{origem_manual.suffix}"
             destino_temp = pasta_trabalho / nome_temp
             shutil.copy2(str(origem_manual), str(destino_temp))
+            if callback_progresso:
+                callback_progresso(0.78, f"Arquivo manual localizado para tratamento: {origem_manual.name}")
 
         if precisa_tratamento:
             data_execucao = datetime.now().strftime("%d-%m-%Y")

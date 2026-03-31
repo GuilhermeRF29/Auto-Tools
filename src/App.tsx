@@ -16,12 +16,12 @@ import {
   CheckCircle, Loader2, Calculator, LogOut,
   X, Settings, Menu
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import logoApp from '../logo_app.png';
 
 // --- Utilitários e Tipos ---
 import { cn } from './utils/cn';
-import type { View, RunningTask } from './types';
+import type { View, RunningTask, SuccessAnimationStyle, AnimationIntensity, UiSettings } from './types';
 
 // --- Componentes ---
 import BackgroundAnimation from './components/BackgroundAnimation';
@@ -34,6 +34,7 @@ import HistoryView from './views/HistoryView';
 import ReportsView from './views/ReportsView';
 import VaultView from './views/VaultView';
 import CalculatorView from './views/CalculatorView';
+import SettingsView from './views/SettingsView';
 
 
 export default function App() {
@@ -58,6 +59,12 @@ export default function App() {
   const [historyItems, setHistoryItems] = useState<any[]>([]);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [reRunData, setReRunData] = useState<any | null>(null);
+  const [animationsEnabled, setAnimationsEnabled] = useState(true);
+  const [successAnimationStyle, setSuccessAnimationStyle] = useState<SuccessAnimationStyle>('premium');
+  const [successAnimationDurationSec, setSuccessAnimationDurationSec] = useState(1.6);
+  const [successAnimationIntensity, setSuccessAnimationIntensity] = useState<AnimationIntensity>('normal');
+
+  const SETTINGS_STORAGE_PREFIX = 'autotools:settings';
 
   /** Timeout de segurança: se nenhuma atualização chegar em 15 min, marca como falha. */
   const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
@@ -81,7 +88,14 @@ export default function App() {
       const repName = payload.name || 'Automação';
 
       // Adiciona a tarefa na fila
-      const newTask: RunningTask = { id: jobId, name: repName, progress: 0, status: 'running', startTime: new Date() };
+      const newTask: RunningTask = {
+        id: jobId,
+        name: repName,
+        progress: 0,
+        progressTarget: 0,
+        status: 'running',
+        startTime: new Date()
+      };
       setRunningTasks(prev => [newTask, ...prev]);
       lastActivityRef.current.set(jobId, Date.now());
 
@@ -95,9 +109,13 @@ export default function App() {
 
         setRunningTasks(prev => prev.map(t => {
           if (t.id === jobId) {
+            const incomingProgress = Number.isFinite(data.progress) ? Number(data.progress) : (t.progressTarget ?? t.progress);
+            const clampedProgress = Math.max(0, Math.min(100, incomingProgress));
+            const isRunning = data.status === 'running';
             return {
               ...t,
-              progress: data.progress,
+              progress: isRunning ? t.progress : clampedProgress,
+              progressTarget: clampedProgress,
               status: data.status,
               message: data.message
             };
@@ -200,6 +218,48 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  /**
+   * Suavização contínua da barra de progresso.
+   * O backend envia saltos discretos, então interpolamos localmente para uma animação mais fluida.
+   */
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setRunningTasks(prev => {
+        let changed = false;
+        const next = prev.map(task => {
+          const target = typeof task.progressTarget === 'number' ? task.progressTarget : task.progress;
+
+          // Estados finais exibem o valor exato imediatamente.
+          if (task.status !== 'running') {
+            if (task.progress !== target) {
+              changed = true;
+              return { ...task, progress: target };
+            }
+            return task;
+          }
+
+          const cappedTarget = Math.max(task.progress, Math.min(99.8, target));
+          if (task.progress >= cappedTarget) return task;
+
+          const delta = cappedTarget - task.progress;
+          const step = Math.max(0.15, delta * 0.18);
+          const smoothed = Number(Math.min(cappedTarget, task.progress + step).toFixed(2));
+
+          if (smoothed !== task.progress) {
+            changed = true;
+            return { ...task, progress: smoothed };
+          }
+
+          return task;
+        });
+
+        return changed ? next : prev;
+      });
+    }, 80);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
   /** Busca o histórico resumido para a barra de pesquisa global. */
   useEffect(() => {
     if (user?.id) {
@@ -227,7 +287,8 @@ export default function App() {
   const handleDeepSelect = (view: View, id: string) => {
     setCurrentView(view);
     setHighlightId(id);
-    setTimeout(() => setHighlightId(null), 2500);
+    // Tempo aumentado para 3.5s para sincronizar com a animação de 0.5s delay + 2.5s pulse
+    setTimeout(() => setHighlightId(null), 3500);
   };
 
   /**
@@ -295,6 +356,66 @@ export default function App() {
       })
       .catch(() => setServerStatus('offline'));
   }, []);
+
+  /** Carrega preferências da UI salvas para o usuário logado. */
+  useEffect(() => {
+    if (!user?.id) return;
+    try {
+      const raw = localStorage.getItem(`${SETTINGS_STORAGE_PREFIX}:${user.id}`);
+      if (!raw) {
+        setAnimationsEnabled(true);
+        setSuccessAnimationStyle('premium');
+        setSuccessAnimationDurationSec(1.6);
+        setSuccessAnimationIntensity('normal');
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as Partial<UiSettings>;
+      setAnimationsEnabled(parsed.animationsEnabled !== false);
+
+      if (parsed.successAnimationStyle === 'premium' || parsed.successAnimationStyle === 'rapido') {
+        setSuccessAnimationStyle(parsed.successAnimationStyle);
+      } else {
+        setSuccessAnimationStyle('premium');
+      }
+
+      if (typeof parsed.successAnimationDurationSec === 'number' && Number.isFinite(parsed.successAnimationDurationSec)) {
+        const clamped = Math.min(4, Math.max(0.8, parsed.successAnimationDurationSec));
+        setSuccessAnimationDurationSec(Number(clamped.toFixed(1)));
+      } else {
+        setSuccessAnimationDurationSec(1.6);
+      }
+
+      if (parsed.successAnimationIntensity === 'suave' || parsed.successAnimationIntensity === 'normal' || parsed.successAnimationIntensity === 'intensa') {
+        setSuccessAnimationIntensity(parsed.successAnimationIntensity);
+      } else {
+        setSuccessAnimationIntensity('normal');
+      }
+    } catch {
+      setAnimationsEnabled(true);
+      setSuccessAnimationStyle('premium');
+      setSuccessAnimationDurationSec(1.6);
+      setSuccessAnimationIntensity('normal');
+    }
+  }, [user?.id]);
+
+  /** Persiste preferências da UI por usuário para reaplicar em próximos acessos. */
+  useEffect(() => {
+    if (!user?.id) return;
+    try {
+      localStorage.setItem(
+        `${SETTINGS_STORAGE_PREFIX}:${user.id}`,
+        JSON.stringify({
+          animationsEnabled,
+          successAnimationStyle,
+          successAnimationDurationSec,
+          successAnimationIntensity,
+        } satisfies UiSettings)
+      );
+    } catch (e) {
+      console.error('Falha ao persistir preferências locais', e);
+    }
+  }, [user?.id, animationsEnabled, successAnimationStyle, successAnimationDurationSec, successAnimationIntensity]);
 
   // ============================
   //  AUTENTICAÇÃO
@@ -370,9 +491,15 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="flex min-h-screen w-full items-center justify-center font-sans p-4 sm:p-10 overflow-y-auto overflow-x-hidden relative bg-slate-50">
-        <BackgroundAnimation />
-        <div className="flex w-full max-w-4xl h-auto min-h-[520px] my-auto overflow-hidden rounded-[2rem] shadow-2xl bg-white animate-in zoom-in duration-500 border border-slate-200 relative">
+      <MotionConfig reducedMotion={animationsEnabled ? 'never' : 'always'}>
+        <motion.div className={cn("flex min-h-screen w-full items-center justify-center font-sans p-4 sm:p-10 overflow-y-auto overflow-x-hidden relative bg-slate-50", !animationsEnabled && "animations-disabled")}>
+          <BackgroundAnimation />
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 30, duration: 0.6 }}
+            className="flex w-full max-w-4xl h-auto min-h-[520px] my-auto overflow-hidden rounded-[2rem] shadow-2xl bg-white border border-slate-200 relative"
+          >
 
           {/* Lado Esquerdo - Branding */}
           <div className="hidden md:flex w-1/3 bg-slate-900 relative p-8 text-white flex-col justify-between overflow-hidden">
@@ -497,8 +624,9 @@ export default function App() {
               </div>
             </div>
           </div>
-        </div>
-      </div>
+          </motion.div>
+        </motion.div>
+      </MotionConfig>
     );
   }
 
@@ -515,7 +643,8 @@ export default function App() {
   ];
 
   return (
-    <div className="flex flex-col h-screen font-sans overflow-hidden">
+    <MotionConfig reducedMotion={animationsEnabled ? 'never' : 'always'}>
+      <div className={cn("flex flex-col h-screen font-sans overflow-hidden", !animationsEnabled && "animations-disabled")}>
       {/* Estilos inline para ticker e scrollbar */}
       <style>{`
         .animate-ticker {
@@ -545,6 +674,12 @@ export default function App() {
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
           background: #cbd5e1;
+        }
+        .animations-disabled *, .animations-disabled *::before, .animations-disabled *::after {
+          animation: none !important;
+          transition-duration: 0ms !important;
+          transition-delay: 0ms !important;
+          scroll-behavior: auto !important;
         }
       `}</style>
 
@@ -696,7 +831,7 @@ export default function App() {
                         Meu Perfil
                       </button>
                       <button
-                        onClick={() => { setCurrentView('dashboard'); setIsProfileOpen(false); }}
+                        onClick={() => { setCurrentView('settings'); setIsProfileOpen(false); }}
                         className="w-full flex items-center gap-3 p-4 hover:bg-blue-50/50 rounded-2xl transition-all text-sm font-bold text-slate-600 group"
                       >
                         <div className="w-8 h-8 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-white group-hover:text-blue-600 transition-colors">
@@ -808,10 +943,10 @@ export default function App() {
               <AnimatePresence mode="wait">
                 <motion.div
                   key={currentView}
-                  initial={{ opacity: 0, y: 10 }}
+                  initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ type: 'spring', stiffness: 350, damping: 35, mass: 0.8 }}
                 >
                   {currentView === 'dashboard' && (
                     <DashboardView 
@@ -840,16 +975,33 @@ export default function App() {
                       runningTasks={runningTasks}
                       onStartAutomation={startAutomation}
                       onCancelTask={cancelAutomation}
+                      animationsEnabled={animationsEnabled}
+                      successAnimationStyle={successAnimationStyle}
+                      successAnimationDurationSec={successAnimationDurationSec}
+                      successAnimationIntensity={successAnimationIntensity}
                     />
                   )}
                   {currentView === 'vault' && <VaultView currentUser={user} />}
                   {currentView === 'calculator' && <CalculatorView />}
+                  {currentView === 'settings' && (
+                    <SettingsView
+                      animationsEnabled={animationsEnabled}
+                      onAnimationsEnabledChange={setAnimationsEnabled}
+                      successAnimationStyle={successAnimationStyle}
+                      onSuccessAnimationStyleChange={setSuccessAnimationStyle}
+                      successAnimationDurationSec={successAnimationDurationSec}
+                      onSuccessAnimationDurationSecChange={setSuccessAnimationDurationSec}
+                      successAnimationIntensity={successAnimationIntensity}
+                      onSuccessAnimationIntensityChange={setSuccessAnimationIntensity}
+                    />
+                  )}
                 </motion.div>
               </AnimatePresence>
             </div>
           </main>
         </div>
       </div>
-    </div>
+      </div>
+    </MotionConfig>
   );
 }
