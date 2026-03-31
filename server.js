@@ -64,6 +64,22 @@ app.get('/api/abrir-explorador-pastas', (req, res) => {
 
 const jobs = new Map();
 
+const resolveAutomationLabel = (job) => {
+    if (!job || !job.script) return 'AUTO';
+    if (job.script.endsWith('sr_new.py')) return 'SR Gmail/Base';
+    if (job.script.endsWith('adm_new.py')) return 'ADM Demandas';
+    if (job.script.endsWith('ebus_new.py')) return 'EBUS Revenue';
+    if (job.script.endsWith('paxcalc.py')) return 'PAX Calc';
+    return 'AUTO';
+};
+
+const formatJobMessage = (job, message) => {
+    const raw = typeof message === 'string' ? message.trim() : '';
+    if (!raw) return raw;
+    if (/^(SR|ADM|EBUS|PAX|AUTO)\s*[|:•-]/i.test(raw)) return raw;
+    return `${resolveAutomationLabel(job)} | ${raw}`;
+};
+
 app.post('/api/run-automation', async (req, res) => {
     const { name, user_id, ...params } = req.body;
     const jobId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -138,7 +154,7 @@ app.post('/api/run-automation', async (req, res) => {
                 try {
                     const data = JSON.parse(match[1]);
                     job.progress = data.p;
-                    job.message = data.m;
+                    job.message = formatJobMessage(job, data.m);
                     job.events.forEach(res => {
                         res.write(`data: ${JSON.stringify({ progress: job.progress, message: job.message, status: job.status })}\n\n`);
                     });
@@ -154,7 +170,7 @@ app.post('/api/run-automation', async (req, res) => {
         job.output += `[ERRO] ${err}\n`;
         // Enviar erro parcial se possível
         job.events.forEach(res => {
-            res.write(`data: ${JSON.stringify({ progress: job.progress, message: err.substring(0, 50), status: 'running' })}\n\n`);
+            res.write(`data: ${JSON.stringify({ progress: job.progress, message: formatJobMessage(job, err.substring(0, 80)), status: 'running' })}\n\n`);
         });
     });
 
@@ -189,6 +205,7 @@ app.post('/api/run-automation', async (req, res) => {
                     const arquivosParaBackup = Array.isArray(resultObj.arquivos_saida) 
                         ? resultObj.arquivos_saida 
                         : [resultObj.arquivo_principal].filter(Boolean);
+                    const totalArquivosBackup = Math.max(arquivosParaBackup.length, 1);
 
                     for (let i = 0; i < arquivosParaBackup.length; i++) {
                         const arquivoOriginal = arquivosParaBackup[i];
@@ -199,6 +216,12 @@ app.post('/api/run-automation', async (req, res) => {
                             const caminhoBackup = path.join(BACKUP_DIR, nomeBackup);
 
                             fs.copyFileSync(arquivoOriginal, caminhoBackup);
+                            job.progress = Math.min(99, 95 + Math.round((4 * (i + 1)) / totalArquivosBackup));
+                            job.message = formatJobMessage(job, `Arquivo renomeado para backup: ${nomeBase} -> ${nomeBackup}`);
+                            job.events.forEach(res => {
+                                res.write(`data: ${JSON.stringify({ progress: job.progress, message: job.message, status: job.status })}\n\n`);
+                            });
+
                             const pathSalvar = caminhoBackup.replace(/\\/g, '/');
                             const nomeAtividade = `${job.name} (${nomeBase})`;
 

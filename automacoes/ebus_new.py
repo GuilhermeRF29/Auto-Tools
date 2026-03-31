@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import time
 import shutil
 import calendar
+import unicodedata
 import pandas as pd # type: ignore
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -153,6 +154,80 @@ def padronizar_justificativa(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def normalizar_nome_coluna(nome_coluna: str) -> str:
+    """Normaliza nome de coluna para comparação sem acentos/espaços/caracteres especiais."""
+    nome = unicodedata.normalize('NFKD', str(nome_coluna)).encode('ascii', 'ignore').decode('ascii')
+    return ''.join(ch.lower() for ch in nome if ch.isalnum())
+
+
+def encontrar_coluna_data_aplicacao(df: pd.DataFrame):
+    """Localiza a coluna de Data Aplicação mesmo com variações de grafia."""
+    for col in df.columns:
+        normalizado = normalizar_nome_coluna(col)
+        if normalizado == 'dataaplicacao' or ('data' in normalizado and 'aplic' in normalizado):
+            return col
+    return None
+
+
+def data_aplicacao_parece_timestamp_download(df: pd.DataFrame, nome_coluna: str) -> bool:
+    """
+    Detecta o padrão problemático em que Data Aplicação vem praticamente igual para todo o arquivo
+    (ou com variação mínima de segundos), típico de timestamp de download.
+    """
+    if nome_coluna not in df.columns or df.empty:
+        return False
+
+    serie = pd.to_datetime(df[nome_coluna], errors='coerce', dayfirst=True)
+    serie_valida = serie.dropna()
+    if serie_valida.empty:
+        return False
+
+    cobertura = len(serie_valida) / max(len(df), 1)
+    if cobertura < 0.85:
+        # Se a coluna quase não converte para data, não tratamos como padrão de timestamp.
+        return False
+
+    serie_segundos = serie_valida.dt.floor('s').astype('int64') // 10**9
+    total = len(serie_segundos)
+    unicos = int(serie_segundos.nunique())
+    span_segundos = int(serie_segundos.max() - serie_segundos.min()) if total > 1 else 0
+
+    # Permite pequena variação de segundos mantendo o comportamento de "carimbo quase único".
+    if total < 200:
+        limite_unicos = max(3, int(total * 0.03))
+    else:
+        limite_unicos = max(3, int(total * 0.01))
+
+    return unicos <= limite_unicos and span_segundos <= 180
+
+
+def valor_para_chave_comparacao(valor):
+    """Padroniza valores para composição de chave de comparação de estado."""
+    if pd.isna(valor):
+        return ''
+    if isinstance(valor, pd.Timestamp):
+        return valor.floor('s').strftime('%Y-%m-%d %H:%M:%S')
+    if isinstance(valor, datetime):
+        return valor.strftime('%Y-%m-%d %H:%M:%S')
+    return str(valor).strip()
+
+
+def montar_chaves_estado(df: pd.DataFrame, colunas_comparacao):
+    """Cria chaves estáveis para casar linhas repetidas sem cruzamento cartesiano."""
+    resultado = df.copy()
+
+    if not colunas_comparacao:
+        resultado['__cmp_key'] = ''
+    else:
+        resultado['__cmp_key'] = resultado[colunas_comparacao].apply(
+            lambda row: '|'.join(valor_para_chave_comparacao(v) for v in row.values),
+            axis=1,
+        )
+
+    resultado['__cmp_idx'] = resultado.groupby('__cmp_key', dropna=False).cumcount()
+    return resultado
+
+
 
 # ==========================================
 # MOTOR DE CONCILIAÇÃO DOS ARQUIVOS EBUS
@@ -166,7 +241,8 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
     4. Processa a "Base Nova" (Histórico de Novo, Excluido, Presente).
     5. Processa a "Base Normal" (Mercado vazio, regra de volume).
     """
-    if callback_progresso: callback_progresso(0.40, f"Lendo planilha Excel bruta...")
+    nome_arquivo_origem = Path(arquivo_original).name
+    if callback_progresso: callback_progresso(0.40, f"Lendo planilha Excel bruta: {nome_arquivo_origem}")
     
     df_novo = pd.read_excel(arquivo_original, engine='xlrd')
 
@@ -269,24 +345,75 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
         df_new_comp = df_novo.copy()
         
         df_old_comp = padronizar_justificativa(df_old_comp)
+
+        colunas_comuns = [c for c in df_new_comp.columns if c in df_old_comp.columns]
+
+        # Harmoniza tipos das colunas comuns para evitar divergências artificiais na chave.
+        for col in colunas_comuns:
+            if df_old_comp[col].dtype != df_new_comp[col].dtype:
+                df_old_comp[col] = df_old_comp[col].astype(str)
+                df_new_comp[col] = df_new_comp[col].astype(str)
+
+        coluna_data_old = encontrar_coluna_data_aplicacao(df_old_comp)
+        coluna_data_new = encontrar_coluna_data_aplicacao(df_new_comp)
+
+        ignorar_data_aplicacao = False
+        coluna_data_validacao = None
+
+        if coluna_data_new and coluna_data_new in colunas_comuns:
+            coluna_data_validacao = coluna_data_new
+        elif coluna_data_old and coluna_data_old in colunas_comuns:
+            coluna_data_validacao = coluna_data_old
+
+        if coluna_data_validacao:
+            flag_old = coluna_data_old and data_aplicacao_parece_timestamp_download(df_old_comp, coluna_data_old)
+            flag_new = coluna_data_new and data_aplicacao_parece_timestamp_download(df_new_comp, coluna_data_new)
+            ignorar_data_aplicacao = bool(flag_old or flag_new)
+
+        if ignorar_data_aplicacao and coluna_data_validacao:
+            colunas_comparacao = [c for c in colunas_comuns if c != coluna_data_validacao]
+            print(f"[INFO] Modo adaptativo: '{coluna_data_validacao}' ignorada na validação de estado (padrão de timestamp de download detectado).")
+            if callback_progresso:
+                callback_progresso(0.52, f"{nome_mes} - Ajuste inteligente: Data Aplicação ignorada na validação de estado.")
+        else:
+            colunas_comparacao = colunas_comuns
+            if coluna_data_validacao and callback_progresso:
+                callback_progresso(0.52, f"{nome_mes} - Data Aplicação mantida na validação de estado.")
+
+        df_old_comp_keyed = montar_chaves_estado(df_old_comp, colunas_comparacao)
+        df_new_comp_keyed = montar_chaves_estado(df_new_comp, colunas_comparacao)
+
+        df_merge_estado = pd.merge(
+            df_old_comp_keyed,
+            df_new_comp_keyed,
+            on=['__cmp_key', '__cmp_idx'],
+            how='outer',
+            indicator=True,
+            suffixes=('_old', '_new'),
+        )
+
+        todas_colunas = list(df_new_comp.columns)
+        for col in df_old_comp.columns:
+            if col not in todas_colunas:
+                todas_colunas.append(col)
+
+        df_comparado = pd.DataFrame()
+        for col in todas_colunas:
+            col_new = f"{col}_new"
+            col_old = f"{col}_old"
+
+            if col_new in df_merge_estado.columns and col_old in df_merge_estado.columns:
+                df_comparado[col] = df_merge_estado[col_new].combine_first(df_merge_estado[col_old])
+            elif col_new in df_merge_estado.columns:
+                df_comparado[col] = df_merge_estado[col_new]
+            elif col_old in df_merge_estado.columns:
+                df_comparado[col] = df_merge_estado[col_old]
         
-        df_old_comp_filled = df_old_comp.fillna('')
-        df_new_comp_filled = df_new_comp.fillna('')
-        
-        # Garantindo que as colunas comuns tenham o mesmo tipo para o merge (evita object vs float64)
-        for col in df_old_comp_filled.columns.intersection(df_new_comp_filled.columns):
-            if df_old_comp_filled[col].dtype != df_new_comp_filled[col].dtype:
-                df_old_comp_filled[col] = df_old_comp_filled[col].astype(str)
-                df_new_comp_filled[col] = df_new_comp_filled[col].astype(str)
-        
-        df_comparado = pd.merge(df_old_comp_filled, df_new_comp_filled, how='outer', indicator=True)
-        
-        novas_mudancas = len(df_comparado[df_comparado['_merge'] == 'right_only']) + len(df_comparado[df_comparado['_merge'] == 'left_only'])
+        novas_mudancas = len(df_merge_estado[df_merge_estado['_merge'] == 'right_only']) + len(df_merge_estado[df_merge_estado['_merge'] == 'left_only'])
         
         mapa_estado = {'left_only': 'Excluido', 'right_only': 'Novo', 'both': 'Manteve'}
         
-        df_comparado['Estado'] = df_comparado['_merge'].map(mapa_estado)
-        df_comparado = df_comparado.drop(columns=['_merge'])
+        df_comparado['Estado'] = df_merge_estado['_merge'].map(mapa_estado)
         
         if not df_previously_excluded.empty:
             df_comparado = pd.concat([df_comparado, df_previously_excluded], ignore_index=True)
@@ -312,7 +439,8 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
         aplicar_formatacao_excel(arquivo_temp_estado, aba_estado)
         
         if caminho_base_nova.exists():
-            if callback_progresso: callback_progresso(0.75, "Fazendo backup da Base Nova...")
+            if callback_progresso:
+                callback_progresso(0.75, f"Fazendo backup da Base Nova: {caminho_base_nova.name}")
             
             # Mantendo histórico também para a Base Nova
             mtime_nova = os.path.getmtime(caminho_base_nova)
@@ -325,6 +453,8 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
             caminho_base_nova.unlink()
             
         shutil.move(str(arquivo_temp_estado), str(caminho_base_nova))
+        if callback_progresso:
+            callback_progresso(0.78, f"Base Nova atualizada: {caminho_base_nova.name}")
         
         # =========================================================================
         # CRIAÇÃO OU ATUALIZAÇÃO DO ARQUIVO CONSOLIDADO CSV (BASE NOVA)
@@ -382,7 +512,8 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
         aplicar_formatacao_excel(arquivo_temp_base, aba_normal)
         
         if caminho_base.exists():
-            if callback_progresso: callback_progresso(0.85, "Fazendo backup da Base...")
+            if callback_progresso:
+                callback_progresso(0.85, f"Fazendo backup da Base: {caminho_base.name}")
             
             # Obtém a data de modificação do arquivo atual para compor o nome do backup
             mtime = os.path.getmtime(caminho_base)
@@ -395,6 +526,8 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
             caminho_base.unlink()
             
         shutil.move(str(arquivo_temp_base), str(caminho_base))
+        if callback_progresso:
+            callback_progresso(0.88, f"Base principal atualizada: {caminho_base.name}")
 
     # =========================================================
     # LIMPEZA FINAL
@@ -402,7 +535,7 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
     if os.path.exists(arquivo_original):
         os.remove(arquivo_original)
     
-    if callback_progresso: callback_progresso(0.9, "Arquivos processados com sucesso!")
+    if callback_progresso: callback_progresso(0.9, f"Arquivo processado com sucesso: {nome_arquivo_origem}")
 
     return {
         "arquivo_principal": str(caminho_base),
@@ -475,7 +608,7 @@ def executar_ebus(
         destino_final = pasta_final / origem_arquivo.name
         shutil.copy2(str(origem_arquivo), str(destino_final))
         if callback_progresso:
-            callback_progresso(1.0, "Arquivo enviado com sucesso!")
+            callback_progresso(1.0, f"Arquivo enviado: {destino_final.name}")
         return {
             "arquivo_principal": str(destino_final),
             "arquivos_saida": [str(destino_final)],
@@ -583,9 +716,14 @@ def executar_ebus(
                     continue
 
                 arquivos_encontrados.sort(key=os.path.getmtime, reverse=True)
+                arquivo_encontrado = arquivos_encontrados[0]
+                if callback_progresso:
+                    callback_progresso(porcentagem + 0.08, f"Arquivo encontrado para {nome_mes}: {arquivo_encontrado.name}")
                 novo_nome = pasta_trabalho / f"RelatorioRevenue - {datetime.now().strftime('%d.%m.%Y_%H%M%S')}.xls"
-                shutil.move(str(arquivos_encontrados[0]), str(novo_nome))
+                shutil.move(str(arquivo_encontrado), str(novo_nome))
                 arquivos_baixados.append(novo_nome)
+                if callback_progresso:
+                    callback_progresso(porcentagem + 0.1, f"Arquivo renomeado: {arquivo_encontrado.name} -> {novo_nome.name}")
 
             if modo_execucao == "download":
                 arquivos_saida = [str(p) for p in arquivos_baixados]
@@ -593,10 +731,16 @@ def executar_ebus(
                 if destino_envio:
                     destino_envio.mkdir(parents=True, exist_ok=True)
                     arquivos_saida = []
-                    for item in arquivos_baixados:
+                    total_baixados = len(arquivos_baixados)
+                    for idx_item, item in enumerate(arquivos_baixados, 1):
                         destino_item = destino_envio / item.name
                         shutil.copy2(str(item), str(destino_item))
                         arquivos_saida.append(str(destino_item))
+                        if callback_progresso:
+                            callback_progresso(
+                                0.9 + (0.09 * (idx_item / max(total_baixados, 1))),
+                                f"Arquivo copiado para saída ({idx_item}/{total_baixados}): {destino_item.name}",
+                            )
                     pasta_final = destino_envio
 
                 if callback_progresso:
@@ -615,12 +759,14 @@ def executar_ebus(
             copia_manual = pasta_trabalho / f"manual_{datetime.now().strftime('%Y%m%d_%H%M%S')}{origem_manual.suffix}"
             shutil.copy2(str(origem_manual), str(copia_manual))
             arquivos_baixados = [copia_manual]
+            if callback_progresso:
+                callback_progresso(0.5, f"Arquivo manual localizado para tratamento: {origem_manual.name}")
 
         if precisa_tratamento:
             for idx, arquivo in enumerate(arquivos_baixados, 1):
                 checar_parada()
                 if callback_progresso:
-                    callback_progresso(0.55, f"Processando arquivo {idx}/{len(arquivos_baixados)}...")
+                    callback_progresso(0.55, f"Processando arquivo {idx}/{len(arquivos_baixados)}: {Path(arquivo).name}")
                 resultado_proc = processar_arquivos_relatorios(
                     arquivo,
                     pasta_trabalho,

@@ -10,6 +10,20 @@ export type View = 'dashboard' | 'reports' | 'vault' | 'calculator' | 'settings'
 /** Variante visual de proposta (legado, mantido para compatibilidade). */
 export type Proposal = 'A' | 'B';
 
+/** Estilo da animação de confirmação ao iniciar um relatório. */
+export type SuccessAnimationStyle = 'premium' | 'rapido';
+
+/** Intensidade aplicada às animações de confirmação. */
+export type AnimationIntensity = 'suave' | 'normal' | 'intensa';
+
+/** Preferências visuais persistidas por usuário no frontend. */
+export interface UiSettings {
+  animationsEnabled: boolean;
+  successAnimationStyle: SuccessAnimationStyle;
+  successAnimationDurationSec: number;
+  successAnimationIntensity: AnimationIntensity;
+}
+
 /**
  * Representa uma tarefa de automação em execução ou finalizada.
  * Utilizada para rastrear o progresso na fila de processamento (ReportsView).
@@ -21,6 +35,8 @@ export interface RunningTask {
   name: string;
   /** Progresso de 0 a 100 (atualizado via SSE do backend). */
   progress: number;
+  /** Alvo de progresso recebido do backend, usado para suavização visual no frontend. */
+  progressTarget?: number;
   /** Estado atual da tarefa. */
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   /** Data/hora em que a tarefa foi iniciada no frontend. */
