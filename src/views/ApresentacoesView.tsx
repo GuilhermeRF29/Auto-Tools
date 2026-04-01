@@ -22,6 +22,7 @@ import {
   Pie,
   PieChart,
   ResponsiveContainer,
+  Sector,
   Tooltip,
   XAxis,
   YAxis,
@@ -33,6 +34,8 @@ import CustomDatePicker from '../components/CustomDatePicker';
 
 const DEFAULT_REVENUE_BASE_DIR = 'Z:\\DASH REVENUE APPLICATION\\BASE';
 const STORAGE_KEY = 'autotools:revenueBaseDir';
+const REVENUE_CACHE_TTL_MS = 10 * 60 * 1000;
+const REVENUE_CACHE_STALE_MS = 90 * 1000;
 
 const CHART_COLORS = {
   aprovado: '#0f766e',
@@ -76,11 +79,40 @@ type RevenuePayload = {
   };
 };
 
+type RevenueCacheEntry = {
+  payload: RevenuePayload;
+  fetchedAt: number;
+};
+
+const revenuePayloadCache = new Map<string, RevenueCacheEntry>();
+
+type ValueFormatter = (value: number, name: string) => string;
+
 const toIsoDate = (date: Date) => {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+};
+
+const buildRevenueCacheKey = (startDate: Date, endDate: Date, baseDir: string) =>
+  `${toIsoDate(startDate)}|${toIsoDate(endDate)}|${(baseDir || '').trim()}`;
+
+const getRevenueCache = (key: string) => {
+  const entry = revenuePayloadCache.get(key);
+  if (!entry) return null;
+
+  const age = Date.now() - entry.fetchedAt;
+  if (age > REVENUE_CACHE_TTL_MS) {
+    revenuePayloadCache.delete(key);
+    return null;
+  }
+
+  return entry;
+};
+
+const setRevenueCache = (key: string, payload: RevenuePayload) => {
+  revenuePayloadCache.set(key, { payload, fetchedAt: Date.now() });
 };
 
 const formatCurrency = (value: number) =>
@@ -90,16 +122,38 @@ const formatInteger = (value: number) => new Intl.NumberFormat('pt-BR', { maximu
 
 const formatPercent = (value: number) => `${(value || 0).toFixed(2)}%`;
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const renderSolidActiveShape = (props: any) => {
+  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
+  return (
+    <Sector
+      cx={cx}
+      cy={cy}
+      innerRadius={innerRadius}
+      outerRadius={outerRadius}
+      startAngle={startAngle}
+      endAngle={endAngle}
+      fill={fill}
+      fillOpacity={1}
+      stroke={fill}
+      strokeWidth={1}
+    />
+  );
+};
+
+const CustomTooltip = ({ active, payload, label, valueFormatter }: { active?: boolean; payload?: any[]; label?: string; valueFormatter?: ValueFormatter }) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-xl border border-slate-200 bg-white/95 p-3 shadow-xl backdrop-blur-sm">
       <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">{label}</p>
-      {payload.map((entry: any) => (
-        <p key={entry.name} className="text-xs font-bold" style={{ color: entry.color || '#0f172a' }}>
-          {entry.name}: {typeof entry.value === 'number' ? formatInteger(entry.value) : entry.value}
-        </p>
-      ))}
+      {payload.map((entry: any) => {
+        const value = Number(entry.value || 0);
+        const display = typeof valueFormatter === 'function' ? valueFormatter(value, String(entry.name || '')) : formatInteger(value);
+        return (
+          <p key={`${entry.name}-${entry.dataKey}`} className="text-xs font-bold" style={{ color: entry.color || '#0f172a' }}>
+            {entry.name}: {display}
+          </p>
+        );
+      })}
     </div>
   );
 };
@@ -110,7 +164,7 @@ const EmptyState = ({ text }: { text: string }) => (
   </div>
 );
 
-const SectionTitle = ({ icon, title, subtitle }: { icon: ReactNode; title: string; subtitle?: string }) => (
+const SectionTitle = ({ icon, title, subtitle, rightSlot }: { icon: ReactNode; title: string; subtitle?: string; rightSlot?: ReactNode }) => (
   <div className="mb-4 flex items-start justify-between gap-3">
     <div className="flex items-center gap-3">
       <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-2 text-cyan-700 shadow-sm">{icon}</div>
@@ -119,6 +173,43 @@ const SectionTitle = ({ icon, title, subtitle }: { icon: ReactNode; title: strin
         {subtitle && <p className="text-xs font-semibold text-slate-400">{subtitle}</p>}
       </div>
     </div>
+    {rightSlot}
+  </div>
+);
+
+const ModeToggle = ({ mode, onChange }: { mode: 'numero' | 'percentual'; onChange: (next: 'numero' | 'percentual') => void }) => (
+  <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1 text-[11px] font-black">
+    <button
+      type="button"
+      onClick={() => onChange('numero')}
+      className={`rounded-lg px-2.5 py-1 transition-colors ${mode === 'numero' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-500'}`}
+    >
+      Numero
+    </button>
+    <button
+      type="button"
+      onClick={() => onChange('percentual')}
+      className={`rounded-lg px-2.5 py-1 transition-colors ${mode === 'percentual' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-500'}`}
+    >
+      %
+    </button>
+  </div>
+);
+
+const FixedLegend = ({ items }: { items: Array<{ label: string; color: string; marker?: 'dot' | 'bar' | 'line' }> }) => (
+  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-3">
+    {items.map((item) => (
+      <div key={item.label} className="flex items-center gap-2 text-xs font-black text-slate-500">
+        {item.marker === 'line' ? (
+          <span className="h-0.5 w-5 rounded-full" style={{ backgroundColor: item.color }} />
+        ) : item.marker === 'bar' ? (
+          <span className="h-2.5 w-4 rounded-sm" style={{ backgroundColor: item.color }} />
+        ) : (
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+        )}
+        {item.label}
+      </div>
+    ))}
   </div>
 );
 
@@ -134,12 +225,39 @@ const ApresentacoesView = () => {
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<RevenuePayload | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [revenueAppliedMode, setRevenueAppliedMode] = useState<'numero' | 'percentual'>('numero');
+  const [totalRevenueMode, setTotalRevenueMode] = useState<'numero' | 'percentual'>('numero');
 
   const dayWatcherRef = useRef<string>(new Date().toDateString());
+  const activeRequestRef = useRef<AbortController | null>(null);
 
-  const refreshData = useCallback(async () => {
-    setLoading(true);
+  const refreshData = useCallback(async ({ force = false }: { force?: boolean } = {}) => {
+    const requestKey = buildRevenueCacheKey(startDate, endDate, baseDir);
+    const cached = getRevenueCache(requestKey);
+
+    if (cached && !force) {
+      setPayload(cached.payload);
+      setLastRefresh(new Date(cached.fetchedAt));
+      setError(null);
+
+      const age = Date.now() - cached.fetchedAt;
+      if (age <= REVENUE_CACHE_STALE_MS) {
+        setLoading(false);
+        return;
+      }
+    }
+
+    const shouldBlockUi = force || !cached;
+    if (shouldBlockUi) {
+      setLoading(true);
+    }
     setError(null);
+
+    if (activeRequestRef.current) {
+      activeRequestRef.current.abort();
+    }
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
 
     try {
       const params = new URLSearchParams({
@@ -150,26 +268,47 @@ const ApresentacoesView = () => {
       if (baseDir.trim()) {
         params.set('baseDir', baseDir.trim());
       }
+      if (force) {
+        params.set('noCache', '1');
+      }
 
-      const response = await fetch(`/api/revenue-dashboard?${params.toString()}`);
+      const response = await fetch(`/api/revenue-dashboard?${params.toString()}`, { signal: controller.signal });
       const json = await response.json();
 
       if (!response.ok) {
         throw new Error(json?.error || 'Falha ao carregar dados de Revenue.');
       }
 
-      setPayload(json as RevenuePayload);
+      const parsed = json as RevenuePayload;
+      setRevenueCache(requestKey, parsed);
+      setPayload(parsed);
       setLastRefresh(new Date());
     } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        return;
+      }
       setError(err?.message || 'Falha desconhecida ao atualizar dashboard.');
     } finally {
-      setLoading(false);
+      if (activeRequestRef.current === controller) {
+        activeRequestRef.current = null;
+      }
+      if (shouldBlockUi) {
+        setLoading(false);
+      }
     }
   }, [startDate, endDate, baseDir]);
 
   useEffect(() => {
     refreshData();
   }, [refreshData]);
+
+  useEffect(() => {
+    return () => {
+      if (activeRequestRef.current) {
+        activeRequestRef.current.abort();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -219,6 +358,78 @@ const ApresentacoesView = () => {
     []
   );
 
+  const daySeriesDisplay = useMemo(() => {
+    if (revenueAppliedMode === 'numero') return daySeries;
+
+    return daySeries.map((item) => {
+      const total = item.total || 0;
+      const calcPct = (value: number) => (total > 0 ? Number(((value / total) * 100).toFixed(2)) : 0);
+      return {
+        ...item,
+        aprovado: calcPct(item.aprovado),
+        reprovado: calcPct(item.reprovado),
+        outros: calcPct(item.outros),
+      };
+    });
+  }, [daySeries, revenueAppliedMode]);
+
+  const totalGaugeDisplay = useMemo(() => {
+    if (totalRevenueMode === 'numero') return totalGauge;
+    const total = totalGauge.reduce((acc, item) => acc + item.value, 0);
+    return totalGauge.map((item) => ({
+      ...item,
+      value: total > 0 ? Number(((item.value / total) * 100).toFixed(2)) : 0,
+    }));
+  }, [totalGauge, totalRevenueMode]);
+
+  const revenueCanalTotal = useMemo(
+    () => porCanal.map((item) => ({ canal: item.canal, total: item.total })),
+    [porCanal]
+  );
+
+  const advpWidth = Math.max(960, advpStatus.length * 38);
+  const tmWidth = Math.max(860, evolucaoTm.length * 36);
+
+  const rotasResumo = useMemo(() => {
+    const totalContagem = rotas.reduce((acc, item) => acc + Number(item.total || 0), 0);
+    const somaPonderada = rotas.reduce((acc, item) => acc + Number(item.mediaRevenueAplicado || 0) * Number(item.total || 0), 0);
+    return {
+      totalContagem,
+      mediaGeral: totalContagem > 0 ? somaPonderada / totalContagem : 0,
+    };
+  }, [rotas]);
+
+  const aprovadosPercentual = useMemo(() => {
+    const total = Number(payload?.kpis.totalRegistros || 0);
+    const aprovados = Number(payload?.kpis.aprovados || 0);
+    return total > 0 ? (aprovados / total) * 100 : 0;
+  }, [payload?.kpis.aprovados, payload?.kpis.totalRegistros]);
+
+  const reprovadosPercentual = useMemo(() => {
+    const total = Number(payload?.kpis.totalRegistros || 0);
+    const reprovados = Number(payload?.kpis.reprovados || 0);
+    return total > 0 ? (reprovados / total) * 100 : 0;
+  }, [payload?.kpis.reprovados, payload?.kpis.totalRegistros]);
+
+  const faixaTabela = useMemo(
+    () => [...faixa].sort((a, b) => Number(b.qtdAdvp || 0) - Number(a.qtdAdvp || 0)),
+    [faixa]
+  );
+
+  const faixaResumo = useMemo(() => {
+    const totalQtd = faixa.reduce((acc, item) => acc + Number(item.qtdAdvp || 0), 0);
+    const totalPercentual = faixa.reduce((acc, item) => acc + Number(item.percentualTotal || 0), 0);
+    const somaPonderada = faixa.reduce((acc, item) => acc + Number(item.mediaRevenueAplicado || 0) * Number(item.qtdAdvp || 0), 0);
+    return {
+      totalQtd,
+      totalPercentual,
+      mediaGeral: totalQtd > 0 ? somaPonderada / totalQtd : 0,
+    };
+  }, [faixa]);
+
+  const percentualFormatter: ValueFormatter = (value) => `${value.toFixed(2)}%`;
+  const numeroFormatter: ValueFormatter = (value) => formatInteger(value);
+
   return (
     <div className="relative space-y-6 pb-8">
       <div className="pointer-events-none absolute -left-24 -top-14 h-56 w-56 rounded-full bg-cyan-300/30 blur-3xl" />
@@ -264,11 +475,17 @@ const ApresentacoesView = () => {
         </div>
       </motion.section>
 
-      <Card className="border-slate-200 bg-white/90 p-4 sm:p-5">
+      <Card className="relative z-40 overflow-visible border-slate-200 bg-white/90 p-4 sm:p-5">
         <SectionTitle
           icon={<CalendarDays size={16} />}
           title="Filtro de datas"
           subtitle="Unico filtro de negocio desta tela"
+          rightSlot={
+            <Button className="h-[44px] bg-cyan-600 px-4 hover:bg-cyan-700" onClick={() => refreshData({ force: true })} disabled={loading}>
+              <RefreshCw size={15} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          }
         />
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
@@ -294,9 +511,9 @@ const ApresentacoesView = () => {
             />
           </div>
 
-          <div className="lg:col-span-4">
+          <div className="lg:col-span-6">
             <label className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Diretorio da base</label>
-            <div className="mt-1.5 flex gap-2">
+            <div className="mt-1.5 flex items-center gap-3">
               <input
                 value={baseDirDraft}
                 onChange={(e) => setBaseDirDraft(e.target.value)}
@@ -305,23 +522,16 @@ const ApresentacoesView = () => {
               />
               <button
                 onClick={handleChooseFolder}
-                className="inline-flex h-[54px] w-[54px] items-center justify-center rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-500 transition-colors hover:border-cyan-200 hover:text-cyan-700"
+                className="inline-flex h-[54px] w-[54px] shrink-0 items-center justify-center rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-500 transition-colors hover:border-cyan-200 hover:text-cyan-700"
                 title="Selecionar pasta"
               >
                 <FolderOpen size={18} />
               </button>
+              <Button variant="secondary" className="h-[54px] min-w-[160px] border-cyan-200 px-4 text-cyan-700" onClick={handleApplyBaseDir}>
+                <Database size={16} className="mr-2" />
+                Aplicar pasta
+              </Button>
             </div>
-          </div>
-
-          <div className="flex items-end gap-2 lg:col-span-2">
-            <Button variant="secondary" className="h-[54px] w-full border-cyan-200 text-cyan-700" onClick={handleApplyBaseDir}>
-              <Database size={16} className="mr-2" />
-              Aplicar pasta
-            </Button>
-            <Button className="h-[54px] w-full bg-cyan-600 hover:bg-cyan-700" onClick={refreshData} disabled={loading}>
-              <RefreshCw size={16} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
           </div>
         </div>
 
@@ -358,8 +568,8 @@ const ApresentacoesView = () => {
             <p className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700">Aprovado</p>
             <CheckCircle2 size={16} className="text-emerald-600" />
           </div>
-          <p className="mt-2 text-3xl font-black text-slate-800">{formatInteger(payload?.kpis.aprovados || 0)}</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">Status Revenue = Aprovado</p>
+          <p className="mt-2 text-3xl font-black text-slate-800">{formatPercent(aprovadosPercentual)}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">Percentual do total de registros</p>
         </Card>
 
         <Card className="border-rose-100 bg-gradient-to-br from-rose-50 to-white p-5">
@@ -367,8 +577,8 @@ const ApresentacoesView = () => {
             <p className="text-[10px] font-black uppercase tracking-[0.14em] text-rose-700">Reprovado</p>
             <XCircle size={16} className="text-rose-600" />
           </div>
-          <p className="mt-2 text-3xl font-black text-slate-800">{formatInteger(payload?.kpis.reprovados || 0)}</p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">Status Revenue = Reprovado</p>
+          <p className="mt-2 text-3xl font-black text-slate-800">{formatPercent(reprovadosPercentual)}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">Percentual do total de registros</p>
         </Card>
 
         <Card className="border-blue-100 bg-gradient-to-br from-blue-50 to-white p-5">
@@ -376,7 +586,7 @@ const ApresentacoesView = () => {
             <p className="text-[10px] font-black uppercase tracking-[0.14em] text-blue-700">ADVP medio</p>
             <Gauge size={16} className="text-blue-600" />
           </div>
-          <p className="mt-2 text-3xl font-black text-slate-800">{(payload?.kpis.advpMedio || 0).toFixed(2)}</p>
+          <p className="mt-2 text-3xl font-black text-slate-800">{formatInteger(Math.round(payload?.kpis.advpMedio || 0))}</p>
           <p className="mt-1 text-xs font-semibold text-slate-500">Data Viagem - Data Aplicacao</p>
         </Card>
       </section>
@@ -387,17 +597,18 @@ const ApresentacoesView = () => {
             icon={<BarChart3 size={16} />}
             title="Revenue aplicado"
             subtitle="Eixo X: mes/dia | Eixo Y: aprovado e reprovado"
+            rightSlot={<ModeToggle mode={revenueAppliedMode} onChange={setRevenueAppliedMode} />}
           />
           {daySeries.length === 0 ? (
             <EmptyState text="Sem dados para o periodo atual." />
           ) : (
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={daySeries} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                <BarChart data={daySeriesDisplay} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis dataKey="dia" tick={{ fontSize: 11, fontWeight: 700 }} />
-                  <YAxis tick={{ fontSize: 11, fontWeight: 700 }} />
-                  <Tooltip content={<CustomTooltip />} />
+                  <YAxis domain={revenueAppliedMode === 'percentual' ? [0, 100] : undefined} tick={{ fontSize: 11, fontWeight: 700 }} />
+                  <Tooltip content={<CustomTooltip valueFormatter={revenueAppliedMode === 'percentual' ? percentualFormatter : numeroFormatter} />} />
                   <Legend />
                   <Bar dataKey="aprovado" name="Aprovado" stackId="status" fill={CHART_COLORS.aprovado} radius={[6, 6, 0, 0]} />
                   <Bar dataKey="reprovado" name="Reprovado" stackId="status" fill={CHART_COLORS.reprovado} radius={[6, 6, 0, 0]} />
@@ -409,7 +620,12 @@ const ApresentacoesView = () => {
         </Card>
 
         <Card className="xl:col-span-4 p-5">
-          <SectionTitle icon={<TrendingUp size={16} />} title="Total revenue aplicado" subtitle="Aprovado x Reprovado" />
+          <SectionTitle
+            icon={<TrendingUp size={16} />}
+            title="Total revenue aplicado"
+            subtitle="Aprovado x Reprovado"
+            rightSlot={<ModeToggle mode={totalRevenueMode} onChange={setTotalRevenueMode} />}
+          />
           {totalGauge.length === 0 ? (
             <EmptyState text="Sem base para o grafico." />
           ) : (
@@ -417,55 +633,36 @@ const ApresentacoesView = () => {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={totalGauge}
+                    data={totalGaugeDisplay}
                     dataKey="value"
                     nameKey="label"
                     innerRadius={78}
                     outerRadius={112}
                     paddingAngle={2}
                     stroke="none"
+                    activeShape={renderSolidActiveShape}
                   >
-                    {totalGauge.map((_, idx) => (
-                      <Cell key={`g-${idx}`} fill={pieColors[idx % pieColors.length]} />
+                    {totalGaugeDisplay.map((_, idx) => (
+                      <Cell key={`g-${idx}`} fill={pieColors[idx % pieColors.length]} fillOpacity={1} />
                     ))}
                   </Pie>
-                  <Tooltip content={<CustomTooltip />} />
+                  <Tooltip content={<CustomTooltip valueFormatter={totalRevenueMode === 'percentual' ? percentualFormatter : numeroFormatter} />} />
                   <Legend />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registros</p>
-                <p className="text-4xl font-black text-slate-800">{formatInteger(payload?.kpis.totalRegistros || 0)}</p>
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="rounded-full border border-slate-100 bg-white px-6 py-4 text-center shadow-sm">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registros</p>
+                  <p className="text-4xl font-black text-slate-800">{formatInteger(payload?.kpis.totalRegistros || 0)}</p>
+                </div>
               </div>
             </div>
           )}
         </Card>
       </section>
 
-      <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <Card className="p-5">
-          <SectionTitle icon={<Gauge size={16} />} title="ADVP" subtitle="X: ADVP | Y: Contagem | Legenda: Status Revenue" />
-          {advpStatus.length === 0 ? (
-            <EmptyState text="Sem dados de ADVP no periodo." />
-          ) : (
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={advpStatus} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="advp" tick={{ fontSize: 10, fontWeight: 700 }} interval={0} />
-                  <YAxis tick={{ fontSize: 11, fontWeight: 700 }} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend />
-                  <Bar dataKey="aprovado" name="Aprovado" fill={CHART_COLORS.aprovado} />
-                  <Bar dataKey="reprovado" name="Reprovado" fill={CHART_COLORS.reprovado} />
-                  <Bar dataKey="outros" name="Outros" fill={CHART_COLORS.outros} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
-
-        <Card className="p-5">
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+        <Card className="xl:col-span-8 p-5">
           <SectionTitle
             icon={<TrendingUp size={16} />}
             title="Evolucao TM x ADVP"
@@ -474,43 +671,147 @@ const ApresentacoesView = () => {
           {evolucaoTm.length === 0 ? (
             <EmptyState text="Sem pontos para evolucao TM x ADVP." />
           ) : (
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={evolucaoTm} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="advp" tick={{ fontSize: 10, fontWeight: 700 }} interval={0} />
-                  <YAxis tick={{ fontSize: 11, fontWeight: 700 }} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend />
-                  <Bar dataKey="total" name="Contagem" fill={CHART_COLORS.accentSoft} radius={[4, 4, 0, 0]} />
-                  <Line type="monotone" dataKey="tmRevenue" name="TM" stroke={CHART_COLORS.linePrimary} strokeWidth={2.5} dot={false} />
-                  <Line type="monotone" dataKey="minRevenue" name="Preco minimo" stroke={CHART_COLORS.lineSecondary} strokeWidth={2.5} dot={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
+            <>
+              <div className="overflow-x-auto custom-scrollbar pb-2">
+                <div className="h-[320px]" style={{ width: `${tmWidth}px` }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={evolucaoTm} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="advp" tick={{ fontSize: 10, fontWeight: 700 }} interval={0} />
+                      <YAxis tick={{ fontSize: 11, fontWeight: 700 }} />
+                      <Tooltip content={<CustomTooltip valueFormatter={numeroFormatter} />} />
+                      <Bar dataKey="total" name="Contagem" fill={CHART_COLORS.accentSoft} radius={[4, 4, 0, 0]} />
+                      <Line type="monotone" dataKey="tmRevenue" name="TM" stroke={CHART_COLORS.linePrimary} strokeWidth={2.5} dot={false} />
+                      <Line type="monotone" dataKey="minRevenue" name="Preco minimo" stroke={CHART_COLORS.lineSecondary} strokeWidth={2.5} dot={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <FixedLegend
+                items={[
+                  { label: 'Contagem', color: CHART_COLORS.accentSoft, marker: 'bar' },
+                  { label: 'TM', color: CHART_COLORS.linePrimary, marker: 'line' },
+                  { label: 'Preco minimo', color: CHART_COLORS.lineSecondary, marker: 'line' },
+                ]}
+              />
+            </>
+          )}
+        </Card>
+
+        <Card className="xl:col-span-4 p-5">
+          <SectionTitle icon={<Gauge size={16} />} title="Faixa Qtd. % R$" subtitle="Mapa Faixa, contagem, percentual e media Revenue" />
+          {faixa.length === 0 ? (
+            <EmptyState text="Sem dados para mapa de faixas." />
+          ) : (
+            <div className="max-h-[360px] overflow-auto rounded-2xl border border-slate-100 custom-scrollbar">
+              <table className="w-full border-separate border-spacing-0 text-left">
+                <thead className="sticky top-0 bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Faixa</th>
+                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Qtd</th>
+                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">% Total</th>
+                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">R$ Medio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {faixaTabela.map((item) => (
+                    <tr key={item.faixa} className="odd:bg-white even:bg-slate-50/60">
+                      <td className="px-3 py-2 text-xs font-black text-slate-700">{item.faixa}</td>
+                      <td className="px-3 py-2 text-xs font-black text-slate-700">{formatInteger(item.qtdAdvp)}</td>
+                      <td className={`px-3 py-2 text-xs font-black ${item.percentualTotal >= 30 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatPercent(item.percentualTotal)}</td>
+                      <td className="px-3 py-2 text-xs font-black text-slate-700">{formatCurrency(item.mediaRevenueAplicado)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="sticky bottom-0 bg-cyan-50">
+                  <tr>
+                    <td className="px-3 py-2 text-xs font-black uppercase tracking-wider text-cyan-700">Total</td>
+                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatInteger(faixaResumo.totalQtd)}</td>
+                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatPercent(faixaResumo.totalPercentual)}</td>
+                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatCurrency(faixaResumo.mediaGeral)}</td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
+          )}
+        </Card>
+      </section>
+
+      <section className="grid grid-cols-1 gap-5">
+        <Card className="p-5">
+          <SectionTitle icon={<Gauge size={16} />} title="ADVP" subtitle="X: ADVP | Y: Contagem | Legenda: Status Revenue" />
+          {advpStatus.length === 0 ? (
+            <EmptyState text="Sem dados de ADVP no periodo." />
+          ) : (
+            <>
+              <div className="overflow-x-auto custom-scrollbar pb-2">
+                <div className="h-[360px]" style={{ width: `${advpWidth}px` }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={advpStatus} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="advp" tick={{ fontSize: 10, fontWeight: 700 }} interval={0} />
+                      <YAxis tick={{ fontSize: 11, fontWeight: 700 }} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Bar dataKey="aprovado" name="Aprovado" fill={CHART_COLORS.aprovado} />
+                      <Bar dataKey="reprovado" name="Reprovado" fill={CHART_COLORS.reprovado} />
+                      <Bar dataKey="outros" name="Outros" fill={CHART_COLORS.outros} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <FixedLegend
+                items={[
+                  { label: 'Aprovado', color: CHART_COLORS.aprovado },
+                  { label: 'Reprovado', color: CHART_COLORS.reprovado },
+                  { label: 'Outros', color: CHART_COLORS.outros },
+                ]}
+              />
+            </>
           )}
         </Card>
       </section>
 
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
         <Card className="xl:col-span-7 p-5">
-          <SectionTitle icon={<BarChart3 size={16} />} title="Revenue por canal venda" subtitle="Legenda: Canal Venda | Valores: Contagem" />
-          {porCanal.length === 0 ? (
+          <SectionTitle icon={<BarChart3 size={16} />} title="Revenue por canal venda" subtitle="Participacao total por canal" />
+          {revenueCanalTotal.length === 0 ? (
             <EmptyState text="Sem canais no recorte selecionado." />
           ) : (
-            <div className="h-[310px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={porCanal} layout="vertical" margin={{ top: 10, right: 20, left: 40, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis type="number" tick={{ fontSize: 11, fontWeight: 700 }} />
-                  <YAxis type="category" dataKey="canal" width={140} tick={{ fontSize: 10, fontWeight: 700 }} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend />
-                  <Bar dataKey="aprovado" name="Aprovado" stackId="canal" fill={CHART_COLORS.aprovado} radius={[0, 8, 8, 0]} />
-                  <Bar dataKey="reprovado" name="Reprovado" stackId="canal" fill={CHART_COLORS.reprovado} radius={[0, 8, 8, 0]} />
-                  <Bar dataKey="outros" name="Outros" stackId="canal" fill={CHART_COLORS.outros} radius={[0, 8, 8, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="flex h-[320px] gap-4">
+              <div className="min-w-0 flex-[1.1]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={revenueCanalTotal}
+                      dataKey="total"
+                      nameKey="canal"
+                      innerRadius={72}
+                      outerRadius={112}
+                      stroke="none"
+                      activeShape={renderSolidActiveShape}
+                    >
+                      {revenueCanalTotal.map((_, idx) => (
+                        <Cell key={`canal-${idx}`} fill={pieColors[idx % pieColors.length]} fillOpacity={1} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<CustomTooltip valueFormatter={numeroFormatter} />} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="w-[240px] shrink-0 overflow-y-auto pr-1 custom-scrollbar">
+                <div className="space-y-2">
+                  {revenueCanalTotal.map((item, idx) => (
+                    <div key={item.canal} className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/70 px-2.5 py-2">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: pieColors[idx % pieColors.length] }} />
+                        <span className="truncate text-[11px] font-black text-slate-600" title={item.canal}>{item.canal}</span>
+                      </div>
+                      <span className="text-xs font-black text-slate-700">{formatInteger(item.total)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
         </Card>
@@ -520,7 +821,7 @@ const ApresentacoesView = () => {
           {aproveitamento.length === 0 ? (
             <EmptyState text="Sem distribuicao de status." />
           ) : (
-            <div className="h-[310px]">
+            <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie data={aproveitamento} dataKey="total" nameKey="status" innerRadius={68} outerRadius={108} stroke="none">
@@ -537,55 +838,8 @@ const ApresentacoesView = () => {
         </Card>
       </section>
 
-      <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <Card className="p-5">
-          <SectionTitle icon={<Gauge size={16} />} title="Faixa Qtd. % R$" subtitle="Mapa Faixa, contagem, percentual e media Revenue" />
-          {faixa.length === 0 ? (
-            <EmptyState text="Sem dados para mapa de faixas." />
-          ) : (
-            <div className="h-[320px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={faixa} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="faixa" tick={{ fontSize: 10, fontWeight: 700 }} interval={0} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 11, fontWeight: 700 }} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fontWeight: 700 }} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend />
-                  <Bar yAxisId="left" dataKey="qtdAdvp" name="Contagem ADVP" fill={CHART_COLORS.accent} radius={[5, 5, 0, 0]} />
-                  <Line yAxisId="right" type="monotone" dataKey="percentualTotal" name="% total" stroke={CHART_COLORS.linePrimary} strokeWidth={2.5} dot={{ r: 2 }} />
-                  <Line yAxisId="right" type="monotone" dataKey="mediaRevenueAplicado" name="Media Revenue" stroke={CHART_COLORS.lineSecondary} strokeWidth={2.5} dot={{ r: 2 }} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
-
-        <Card className="p-5">
-          <SectionTitle icon={<BarChart3 size={16} />} title="Justificativa" subtitle="X: Contagem de status | Y: Justificativa" />
-          {justificativas.length === 0 ? (
-            <EmptyState text="Sem justificativas no periodo." />
-          ) : (
-            <div className="h-[320px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={justificativas} layout="vertical" margin={{ top: 10, right: 20, left: 80, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis type="number" tick={{ fontSize: 11, fontWeight: 700 }} />
-                  <YAxis type="category" dataKey="justificativa" width={140} tick={{ fontSize: 10, fontWeight: 700 }} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend />
-                  <Bar dataKey="aprovado" name="Aprovado" stackId="j" fill={CHART_COLORS.aprovado} radius={[0, 8, 8, 0]} />
-                  <Bar dataKey="reprovado" name="Reprovado" stackId="j" fill={CHART_COLORS.reprovado} radius={[0, 8, 8, 0]} />
-                  <Bar dataKey="outros" name="Outros" stackId="j" fill={CHART_COLORS.outros} radius={[0, 8, 8, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </Card>
-      </section>
-
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        <Card className="xl:col-span-7 p-5">
+        <Card className="xl:col-span-8 p-5">
           <SectionTitle
             icon={<BarChart3 size={16} />}
             title="Revenue por analista x indicador"
@@ -612,12 +866,36 @@ const ApresentacoesView = () => {
           )}
         </Card>
 
-        <Card className="xl:col-span-5 p-5">
+        <Card className="xl:col-span-4 p-5">
+          <SectionTitle icon={<BarChart3 size={16} />} title="Justificativa" subtitle="Contagem por justificativa" />
+          {justificativas.length === 0 ? (
+            <EmptyState text="Sem justificativas no periodo." />
+          ) : (
+            <div className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={justificativas} layout="vertical" margin={{ top: 10, right: 16, left: 20, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis type="number" tick={{ fontSize: 11, fontWeight: 700 }} />
+                  <YAxis type="category" dataKey="justificativa" width={96} tick={{ fontSize: 10, fontWeight: 700 }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend />
+                  <Bar dataKey="aprovado" name="Aprovado" stackId="j" fill={CHART_COLORS.aprovado} radius={[0, 8, 8, 0]} />
+                  <Bar dataKey="reprovado" name="Reprovado" stackId="j" fill={CHART_COLORS.reprovado} radius={[0, 8, 8, 0]} />
+                  <Bar dataKey="outros" name="Outros" stackId="j" fill={CHART_COLORS.outros} radius={[0, 8, 8, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </Card>
+      </section>
+
+      <section className="grid grid-cols-1 gap-5">
+        <Card className="p-5">
           <SectionTitle icon={<Database size={16} />} title="Qtd. rotas aplicadas" subtitle="Rota, contagem e media de Revenue aplicado" />
           {rotas.length === 0 ? (
             <EmptyState text="Sem rotas para exibir." />
           ) : (
-            <div className="max-h-[320px] overflow-auto rounded-2xl border border-slate-100 custom-scrollbar">
+            <div className="max-h-[460px] overflow-auto rounded-2xl border border-slate-100 custom-scrollbar">
               <table className="w-full border-separate border-spacing-0 text-left">
                 <thead className="sticky top-0 bg-slate-50">
                   <tr>
@@ -629,12 +907,19 @@ const ApresentacoesView = () => {
                 <tbody>
                   {rotas.map((item) => (
                     <tr key={item.rota} className="odd:bg-white even:bg-slate-50/50">
-                      <td className="max-w-[260px] truncate px-3 py-2 text-xs font-bold text-slate-700" title={item.rota}>{item.rota}</td>
+                      <td className="px-3 py-2 text-xs font-bold leading-snug text-slate-700 whitespace-normal break-words" title={item.rota}>{item.rota}</td>
                       <td className="px-3 py-2 text-xs font-black text-slate-700">{formatInteger(item.total)}</td>
                       <td className="px-3 py-2 text-xs font-black text-slate-700">{formatCurrency(item.mediaRevenueAplicado)}</td>
                     </tr>
                   ))}
                 </tbody>
+                <tfoot className="sticky bottom-0 bg-cyan-50">
+                  <tr>
+                    <td className="px-3 py-2 text-xs font-black uppercase tracking-wider text-cyan-700">Totais</td>
+                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatInteger(rotasResumo.totalContagem)}</td>
+                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatCurrency(rotasResumo.mediaGeral)}</td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}

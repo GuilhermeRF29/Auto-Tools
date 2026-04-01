@@ -1,5 +1,6 @@
 import express from 'express';
 import { exec, spawn } from 'child_process';
+import { Worker } from 'worker_threads';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -18,6 +19,10 @@ const PYTHON_PATH = path.join(__dirname, 'backup_pyside', 'venv', 'Scripts', 'py
 const BACKUP_DIR = path.join(__dirname, 'backups_sistema');
 const DEFAULT_REVENUE_BASE_DIR = 'Z:\\DASH REVENUE APPLICATION\\BASE';
 const REVENUE_FILE_REGEX = /revenue.*\.xlsx$/i;
+const REVENUE_DASH_CACHE_TTL_MS = 5 * 60 * 1000;
+const REVENUE_DASH_WORKER_TIMEOUT_MS = 120 * 1000;
+const revenueDashboardCache = new Map();
+const revenueDashboardInFlight = new Map();
 
 const toStartOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
 const toEndOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
@@ -114,7 +119,8 @@ const calculateAdvp = (dataAplicacao, dataViagem) => {
     if (!dataAplicacao || !dataViagem) return { raw: null, star: null };
 
     const diffDays = Math.round((toStartOfDay(dataViagem).getTime() - toStartOfDay(dataAplicacao).getTime()) / 86400000);
-    const advpStar = Math.max(0, Math.abs(diffDays));
+    // ADVP negativo nao representa antecedencia; mantemos 0 para esses casos.
+    const advpStar = Math.max(0, diffDays);
     return { raw: diffDays, star: advpStar };
 };
 
@@ -170,6 +176,414 @@ const avg = (values) => {
     return sum(values) / values.length;
 };
 
+const buildRevenueDashboardCacheKey = (effectiveDir, rangeStart, rangeEnd) => (
+    `${effectiveDir}|${toISOStringDate(rangeStart)}|${toISOStringDate(rangeEnd)}`
+);
+
+const getRevenueDashboardCache = (cacheKey) => {
+    const entry = revenueDashboardCache.get(cacheKey);
+    if (!entry) return null;
+
+    if (entry.expiresAt <= Date.now()) {
+        revenueDashboardCache.delete(cacheKey);
+        return null;
+    }
+
+    return entry.payload;
+};
+
+const setRevenueDashboardCache = (cacheKey, payload) => {
+    revenueDashboardCache.set(cacheKey, {
+        payload,
+        expiresAt: Date.now() + REVENUE_DASH_CACHE_TTL_MS
+    });
+};
+
+const runRevenueDashboardWorker = ({ effectiveDir, preferredDir, rangeStart, rangeEnd }) =>
+    new Promise((resolve, reject) => {
+        let settled = false;
+        const worker = new Worker(new URL('./revenueDashboardWorker.js', import.meta.url), {
+            workerData: {
+                effectiveDir,
+                preferredDir,
+                rangeStartMs: rangeStart.getTime(),
+                rangeEndMs: rangeEnd.getTime()
+            }
+        });
+
+        const finish = (error, payload) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            if (error) {
+                reject(error);
+            } else {
+                resolve(payload);
+            }
+        };
+
+        const timeout = setTimeout(() => {
+            try {
+                worker.terminate();
+            } catch {
+                // ignora falha ao encerrar worker
+            }
+            finish(new Error('Timeout ao processar dashboard de Revenue no worker.'));
+        }, REVENUE_DASH_WORKER_TIMEOUT_MS);
+
+        worker.once('message', (message) => {
+            if (message?.error) {
+                finish(new Error(message.error));
+                return;
+            }
+            finish(null, message?.payload);
+        });
+
+        worker.once('error', (error) => finish(error));
+        worker.once('exit', (code) => {
+            if (!settled && code !== 0) {
+                finish(new Error(`Worker de Revenue finalizou com codigo ${code}.`));
+            }
+        });
+    });
+
+const buildEmptyRevenuePayload = (effectiveDir, preferredDir, rangeStart, rangeEnd, warnings = []) => ({
+    meta: {
+        baseDir: effectiveDir,
+        requestedBaseDir: preferredDir,
+        selectedPeriod: { startDate: toISOStringDate(rangeStart), endDate: toISOStringDate(rangeEnd) },
+        filesRead: 0,
+        records: 0,
+        warnings
+    },
+    kpis: {
+        totalRegistros: 0,
+        aprovados: 0,
+        reprovados: 0,
+        taxaAprovacao: 0,
+        totalRevenueAplicado: 0,
+        mediaRevenueAplicado: 0,
+        advpMedio: 0
+    },
+    series: {
+        revenueAplicadoPorDia: [],
+        totalRevenueAplicado: [],
+        advpStatus: [],
+        evolucaoTmXAdvp: [],
+        revenuePorCanal: [],
+        faixaQtdPercentual: [],
+        aproveitamentoAplicacao: [],
+        justificativa: [],
+        analistaIndicador: [],
+        rotasAplicadas: []
+    }
+});
+
+const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, rangeEnd }) => {
+    const files = collectRevenueFiles(effectiveDir);
+    if (!files.length) {
+        return buildEmptyRevenuePayload(
+            effectiveDir,
+            preferredDir,
+            rangeStart,
+            rangeEnd,
+            ['Nenhum arquivo Revenue encontrado no diretorio selecionado.']
+        );
+    }
+
+    const dedupe = new Set();
+    const rows = [];
+    const parseWarnings = [];
+
+    for (const filePath of files) {
+        try {
+            const workbook = XLSX.readFile(filePath, { cellDates: true });
+            const sheetName = pickRevenueSheet(workbook);
+            if (!sheetName) continue;
+
+            const sheet = workbook.Sheets[sheetName];
+            const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
+
+            for (const row of rawRows) {
+                const dataAplicacao = parseBrDate(row['Data Aplicação']);
+                if (!dataAplicacao) continue;
+                if (dataAplicacao < rangeStart || dataAplicacao > rangeEnd) continue;
+
+                const dataViagem = parseBrDate(row['Data Viagem']);
+                const revenueAplicado = toNumber(row['Revenue Aplicado']);
+                const statusRevenue = normalizeText(row['Status Revenue'], 'Sem Status');
+                const indicador = normalizeText(row['Indicador'], 'Sem Indicador');
+                const canalVenda = normalizeText(row['Canal Venda'], 'Sem Canal');
+                const justificativa = normalizeText(row['Justificativa'], 'Sem Justificativa');
+                const analista = normalizeText(row['Analista'], 'Sem Analista');
+                const origem = normalizeText(row['Origem'], 'Sem Origem');
+                const destino = normalizeText(row['Destino'], 'Sem Destino');
+                const numServico = normalizeText(row['Num. Serviço'] ?? row['Num. Servico'], 'Sem Servico');
+                const rota = normalizeText(row['Concatenar Origem e Destino'], `${origem} X ${destino}`);
+
+                const dedupeKey = [
+                    origem,
+                    destino,
+                    toISOStringDate(dataAplicacao),
+                    dataViagem ? toISOStringDate(dataViagem) : '',
+                    canalVenda,
+                    revenueAplicado ?? '',
+                    statusRevenue,
+                    indicador,
+                    analista,
+                    numServico,
+                    justificativa
+                ].join('|');
+
+                if (dedupe.has(dedupeKey)) continue;
+                dedupe.add(dedupeKey);
+
+                const advp = calculateAdvp(dataAplicacao, dataViagem);
+                rows.push({
+                    dataAplicacao,
+                    dataAplicacaoKey: toISOStringDate(dataAplicacao),
+                    dataAplicacaoLabel: formatDayKey(dataAplicacao),
+                    dataViagem,
+                    revenueAplicado,
+                    statusRevenue,
+                    statusBucket: classifyStatusRevenue(statusRevenue),
+                    indicador,
+                    indicadorBucket: classifyIndicador(indicador),
+                    canalVenda,
+                    justificativa,
+                    analista,
+                    rota,
+                    advpRaw: advp.raw,
+                    advpStar: advp.star,
+                    faixaMapa: buildFaixaAdvp(advp.star)
+                });
+            }
+        } catch (error) {
+            parseWarnings.push(`Falha ao ler ${path.basename(filePath)}: ${error.message || error}`);
+        }
+    }
+
+    rows.sort((a, b) => a.dataAplicacao.getTime() - b.dataAplicacao.getTime());
+
+    const dayMap = new Map();
+    const canalMap = new Map();
+    const advpMap = new Map();
+    const evolucaoMap = new Map();
+    const faixaMap = new Map();
+    const statusMap = new Map();
+    const justificativaMap = new Map();
+    const analistaMap = new Map();
+    const rotaMap = new Map();
+
+    for (const row of rows) {
+        const dayItem = dayMap.get(row.dataAplicacaoKey) || {
+            date: row.dataAplicacaoKey,
+            dia: row.dataAplicacaoLabel,
+            aprovado: 0,
+            reprovado: 0,
+            outros: 0,
+            total: 0
+        };
+        dayItem[row.statusBucket] = (dayItem[row.statusBucket] || 0) + 1;
+        dayItem.total += 1;
+        dayMap.set(row.dataAplicacaoKey, dayItem);
+
+        const canalItem = canalMap.get(row.canalVenda) || {
+            canal: row.canalVenda,
+            aprovado: 0,
+            reprovado: 0,
+            outros: 0,
+            total: 0
+        };
+        canalItem[row.statusBucket] = (canalItem[row.statusBucket] || 0) + 1;
+        canalItem.total += 1;
+        canalMap.set(row.canalVenda, canalItem);
+
+        if (Number.isFinite(row.advpStar)) {
+            const advpBucket = String(row.advpStar);
+            const advpItem = advpMap.get(advpBucket) || {
+                advp: advpBucket,
+                aprovado: 0,
+                reprovado: 0,
+                outros: 0,
+                total: 0
+            };
+            advpItem[row.statusBucket] = (advpItem[row.statusBucket] || 0) + 1;
+            advpItem.total += 1;
+            advpMap.set(advpBucket, advpItem);
+
+            const evolucaoItem = evolucaoMap.get(advpBucket) || {
+                advp: advpBucket,
+                total: 0,
+                minRevenue: Number.POSITIVE_INFINITY,
+                sumRevenue: 0,
+                qtdRevenue: 0,
+                aprovado: 0,
+                reprovado: 0
+            };
+            evolucaoItem.total += 1;
+            if (row.statusBucket === 'aprovado') evolucaoItem.aprovado += 1;
+            if (row.statusBucket === 'reprovado') evolucaoItem.reprovado += 1;
+            if (Number.isFinite(row.revenueAplicado)) {
+                evolucaoItem.minRevenue = Math.min(evolucaoItem.minRevenue, row.revenueAplicado);
+                evolucaoItem.sumRevenue += row.revenueAplicado;
+                evolucaoItem.qtdRevenue += 1;
+            }
+            evolucaoMap.set(advpBucket, evolucaoItem);
+        }
+
+        const faixaItem = faixaMap.get(row.faixaMapa) || {
+            faixa: row.faixaMapa,
+            qtdAdvp: 0,
+            sumRevenue: 0,
+            qtdRevenue: 0
+        };
+        faixaItem.qtdAdvp += 1;
+        if (Number.isFinite(row.revenueAplicado)) {
+            faixaItem.sumRevenue += row.revenueAplicado;
+            faixaItem.qtdRevenue += 1;
+        }
+        faixaMap.set(row.faixaMapa, faixaItem);
+
+        const statusItem = statusMap.get(row.statusRevenue) || { status: row.statusRevenue, total: 0 };
+        statusItem.total += 1;
+        statusMap.set(row.statusRevenue, statusItem);
+
+        const justItem = justificativaMap.get(row.justificativa) || {
+            justificativa: row.justificativa,
+            aprovado: 0,
+            reprovado: 0,
+            outros: 0,
+            total: 0
+        };
+        justItem[row.statusBucket] = (justItem[row.statusBucket] || 0) + 1;
+        justItem.total += 1;
+        justificativaMap.set(row.justificativa, justItem);
+
+        const analistaItem = analistaMap.get(row.analista) || {
+            analista: row.analista,
+            aumentou: 0,
+            diminuiu: 0,
+            igual: 0,
+            outros: 0,
+            total: 0
+        };
+        analistaItem[row.indicadorBucket] = (analistaItem[row.indicadorBucket] || 0) + 1;
+        analistaItem.total += 1;
+        analistaMap.set(row.analista, analistaItem);
+
+        const rotaItem = rotaMap.get(row.rota) || {
+            rota: row.rota,
+            total: 0,
+            sumRevenue: 0,
+            qtdRevenue: 0
+        };
+        rotaItem.total += 1;
+        if (Number.isFinite(row.revenueAplicado)) {
+            rotaItem.sumRevenue += row.revenueAplicado;
+            rotaItem.qtdRevenue += 1;
+        }
+        rotaMap.set(row.rota, rotaItem);
+    }
+
+    const totaisRevenue = rows.map(r => r.revenueAplicado).filter(Number.isFinite);
+    const advpValues = rows.map(r => r.advpStar).filter(Number.isFinite);
+    const aprovados = rows.filter(r => r.statusBucket === 'aprovado').length;
+    const reprovados = rows.filter(r => r.statusBucket === 'reprovado').length;
+
+    const revenueAplicadoPorDia = Array.from(dayMap.values())
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    const totalRevenueAplicado = [
+        { label: 'Aprovado', value: aprovados },
+        { label: 'Reprovado', value: reprovados },
+        { label: 'Outros', value: Math.max(0, rows.length - aprovados - reprovados) }
+    ].filter(item => item.value > 0);
+
+    const parseAdvpSort = (value) => Number(value);
+
+    const advpStatus = Array.from(advpMap.values())
+        .sort((a, b) => parseAdvpSort(a.advp) - parseAdvpSort(b.advp));
+
+    const evolucaoTmXAdvp = Array.from(evolucaoMap.values())
+        .map(item => ({
+            advp: item.advp,
+            minRevenue: Number.isFinite(item.minRevenue) ? Number(item.minRevenue.toFixed(2)) : 0,
+            tmRevenue: item.qtdRevenue ? Number((item.sumRevenue / item.qtdRevenue).toFixed(2)) : 0,
+            total: item.total,
+            aprovado: item.aprovado,
+            reprovado: item.reprovado
+        }))
+        .sort((a, b) => parseAdvpSort(a.advp) - parseAdvpSort(b.advp));
+
+    const revenuePorCanal = Array.from(canalMap.values())
+        .sort((a, b) => b.total - a.total);
+
+    const faixaOrder = ['0', '01 A 07', '08 A 15', '16 A 22', '23 A 30', '31 A 60', '60+'];
+    const faixaQtdPercentual = Array.from(faixaMap.values())
+        .map(item => ({
+            faixa: item.faixa,
+            qtdAdvp: item.qtdAdvp,
+            percentualTotal: rows.length ? Number(((item.qtdAdvp / rows.length) * 100).toFixed(2)) : 0,
+            mediaRevenueAplicado: item.qtdRevenue ? Number((item.sumRevenue / item.qtdRevenue).toFixed(2)) : 0
+        }))
+        .sort((a, b) => faixaOrder.indexOf(a.faixa) - faixaOrder.indexOf(b.faixa));
+
+    const aproveitamentoAplicacao = Array.from(statusMap.values())
+        .sort((a, b) => b.total - a.total);
+
+    const justificativa = Array.from(justificativaMap.values())
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 15);
+
+    const analistaIndicador = Array.from(analistaMap.values())
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 12);
+
+    const rotasAplicadas = Array.from(rotaMap.values())
+        .map(item => ({
+            rota: item.rota,
+            total: item.total,
+            mediaRevenueAplicado: item.qtdRevenue ? Number((item.sumRevenue / item.qtdRevenue).toFixed(2)) : 0
+        }))
+        .sort((a, b) => b.total - a.total);
+
+    return {
+        meta: {
+            baseDir: effectiveDir,
+            requestedBaseDir: preferredDir,
+            selectedPeriod: {
+                startDate: toISOStringDate(rangeStart),
+                endDate: toISOStringDate(rangeEnd)
+            },
+            filesRead: files.length,
+            records: rows.length,
+            warnings: parseWarnings
+        },
+        kpis: {
+            totalRegistros: rows.length,
+            aprovados,
+            reprovados,
+            taxaAprovacao: rows.length ? Number(((aprovados / rows.length) * 100).toFixed(2)) : 0,
+            totalRevenueAplicado: Number(sum(totaisRevenue).toFixed(2)),
+            mediaRevenueAplicado: Number(avg(totaisRevenue).toFixed(2)),
+            advpMedio: Number(avg(advpValues).toFixed(2))
+        },
+        series: {
+            revenueAplicadoPorDia,
+            totalRevenueAplicado,
+            advpStatus,
+            evolucaoTmXAdvp,
+            revenuePorCanal,
+            faixaQtdPercentual,
+            aproveitamentoAplicacao,
+            justificativa,
+            analistaIndicador,
+            rotasAplicadas
+        }
+    };
+};
+
 // Criar pasta de backup se não existir
 if (!fs.existsSync(BACKUP_DIR)) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -190,8 +604,9 @@ app.get('/api/status', (req, res) => {
 });
 
 // Dashboard Revenue: agrega bases tratadas por periodo para os graficos da tela de apresentacoes.
-app.get('/api/revenue-dashboard', (req, res) => {
+app.get('/api/revenue-dashboard', async (req, res) => {
     try {
+        const bypassCache = String(req.query.noCache || '').toLowerCase() === '1' || String(req.query.noCache || '').toLowerCase() === 'true';
         const requestedDir = typeof req.query.baseDir === 'string' ? req.query.baseDir.trim() : '';
         const preferredDir = requestedDir || DEFAULT_REVENUE_BASE_DIR;
         const fallbackDir = path.join(__dirname, 'backups_sistema');
@@ -228,332 +643,44 @@ app.get('/api/revenue-dashboard', (req, res) => {
             return res.status(400).json({ error: 'Data inicial maior que data final.' });
         }
 
-        const files = collectRevenueFiles(effectiveDir);
-        if (!files.length) {
-            return res.json({
-                meta: {
-                    baseDir: effectiveDir,
-                    selectedPeriod: { startDate: toISOStringDate(rangeStart), endDate: toISOStringDate(rangeEnd) },
-                    filesRead: 0,
-                    records: 0,
-                    warnings: ['Nenhum arquivo Revenue encontrado no diretorio selecionado.']
-                },
-                kpis: {
-                    totalRegistros: 0,
-                    aprovados: 0,
-                    reprovados: 0,
-                    taxaAprovacao: 0,
-                    totalRevenueAplicado: 0,
-                    mediaRevenueAplicado: 0,
-                    advpMedio: 0
-                },
-                series: {
-                    revenueAplicadoPorDia: [],
-                    totalRevenueAplicado: [],
-                    advpStatus: [],
-                    evolucaoTmXAdvp: [],
-                    revenuePorCanal: [],
-                    faixaQtdPercentual: [],
-                    aproveitamentoAplicacao: [],
-                    justificativa: [],
-                    analistaIndicador: [],
-                    rotasAplicadas: []
-                }
+        const cacheKey = buildRevenueDashboardCacheKey(effectiveDir, rangeStart, rangeEnd);
+        if (!bypassCache) {
+            const cachedPayload = getRevenueDashboardCache(cacheKey);
+            if (cachedPayload) {
+                return res.json(cachedPayload);
+            }
+
+            const inFlight = revenueDashboardInFlight.get(cacheKey);
+            if (inFlight) {
+                const sharedPayload = await inFlight;
+                return res.json(sharedPayload);
+            }
+        }
+
+        const computePromise = runRevenueDashboardWorker({
+            effectiveDir,
+            preferredDir,
+            rangeStart,
+            rangeEnd
+        }).catch((workerError) => {
+            console.error('[REVENUE_DASH_WORKER_ERROR]', workerError);
+            return buildRevenueDashboardPayload({
+                effectiveDir,
+                preferredDir,
+                rangeStart,
+                rangeEnd
             });
-        }
-
-        const dedupe = new Set();
-        const rows = [];
-        const parseWarnings = [];
-
-        for (const filePath of files) {
-            try {
-                const workbook = XLSX.readFile(filePath, { cellDates: true });
-                const sheetName = pickRevenueSheet(workbook);
-                if (!sheetName) continue;
-
-                const sheet = workbook.Sheets[sheetName];
-                const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
-
-                for (const row of rawRows) {
-                    const dataAplicacao = parseBrDate(row['Data Aplicação']);
-                    if (!dataAplicacao) continue;
-                    if (dataAplicacao < rangeStart || dataAplicacao > rangeEnd) continue;
-
-                    const dataViagem = parseBrDate(row['Data Viagem']);
-                    const revenueAplicado = toNumber(row['Revenue Aplicado']);
-                    const statusRevenue = normalizeText(row['Status Revenue'], 'Sem Status');
-                    const indicador = normalizeText(row['Indicador'], 'Sem Indicador');
-                    const canalVenda = normalizeText(row['Canal Venda'], 'Sem Canal');
-                    const justificativa = normalizeText(row['Justificativa'], 'Sem Justificativa');
-                    const analista = normalizeText(row['Analista'], 'Sem Analista');
-                    const origem = normalizeText(row['Origem'], 'Sem Origem');
-                    const destino = normalizeText(row['Destino'], 'Sem Destino');
-                    const numServico = normalizeText(row['Num. Serviço'] ?? row['Num. Servico'], 'Sem Servico');
-                    const rota = normalizeText(row['Concatenar Origem e Destino'], `${origem} X ${destino}`);
-
-                    const dedupeKey = [
-                        origem,
-                        destino,
-                        toISOStringDate(dataAplicacao),
-                        dataViagem ? toISOStringDate(dataViagem) : '',
-                        canalVenda,
-                        revenueAplicado ?? '',
-                        statusRevenue,
-                        indicador,
-                        analista,
-                        numServico,
-                        justificativa
-                    ].join('|');
-
-                    if (dedupe.has(dedupeKey)) continue;
-                    dedupe.add(dedupeKey);
-
-                    const advp = calculateAdvp(dataAplicacao, dataViagem);
-                    rows.push({
-                        dataAplicacao,
-                        dataAplicacaoKey: toISOStringDate(dataAplicacao),
-                        dataAplicacaoLabel: formatDayKey(dataAplicacao),
-                        dataViagem,
-                        revenueAplicado,
-                        statusRevenue,
-                        statusBucket: classifyStatusRevenue(statusRevenue),
-                        indicador,
-                        indicadorBucket: classifyIndicador(indicador),
-                        canalVenda,
-                        justificativa,
-                        analista,
-                        rota,
-                        advpRaw: advp.raw,
-                        advpStar: advp.star,
-                        faixaMapa: buildFaixaAdvp(advp.star)
-                    });
-                }
-            } catch (error) {
-                parseWarnings.push(`Falha ao ler ${path.basename(filePath)}: ${error.message || error}`);
-            }
-        }
-
-        rows.sort((a, b) => a.dataAplicacao.getTime() - b.dataAplicacao.getTime());
-
-        const dayMap = new Map();
-        const canalMap = new Map();
-        const advpMap = new Map();
-        const evolucaoMap = new Map();
-        const faixaMap = new Map();
-        const statusMap = new Map();
-        const justificativaMap = new Map();
-        const analistaMap = new Map();
-        const rotaMap = new Map();
-
-        for (const row of rows) {
-            const dayItem = dayMap.get(row.dataAplicacaoKey) || {
-                date: row.dataAplicacaoKey,
-                dia: row.dataAplicacaoLabel,
-                aprovado: 0,
-                reprovado: 0,
-                outros: 0,
-                total: 0
-            };
-            dayItem[row.statusBucket] = (dayItem[row.statusBucket] || 0) + 1;
-            dayItem.total += 1;
-            dayMap.set(row.dataAplicacaoKey, dayItem);
-
-            const canalItem = canalMap.get(row.canalVenda) || {
-                canal: row.canalVenda,
-                aprovado: 0,
-                reprovado: 0,
-                outros: 0,
-                total: 0
-            };
-            canalItem[row.statusBucket] = (canalItem[row.statusBucket] || 0) + 1;
-            canalItem.total += 1;
-            canalMap.set(row.canalVenda, canalItem);
-
-            if (Number.isFinite(row.advpStar)) {
-                const advpBucket = row.advpStar > 60 ? '60+' : String(row.advpStar);
-                const advpItem = advpMap.get(advpBucket) || {
-                    advp: advpBucket,
-                    aprovado: 0,
-                    reprovado: 0,
-                    outros: 0,
-                    total: 0
-                };
-                advpItem[row.statusBucket] = (advpItem[row.statusBucket] || 0) + 1;
-                advpItem.total += 1;
-                advpMap.set(advpBucket, advpItem);
-
-                const evolucaoItem = evolucaoMap.get(advpBucket) || {
-                    advp: advpBucket,
-                    total: 0,
-                    minRevenue: Number.POSITIVE_INFINITY,
-                    sumRevenue: 0,
-                    qtdRevenue: 0,
-                    aprovado: 0,
-                    reprovado: 0
-                };
-                evolucaoItem.total += 1;
-                if (row.statusBucket === 'aprovado') evolucaoItem.aprovado += 1;
-                if (row.statusBucket === 'reprovado') evolucaoItem.reprovado += 1;
-                if (Number.isFinite(row.revenueAplicado)) {
-                    evolucaoItem.minRevenue = Math.min(evolucaoItem.minRevenue, row.revenueAplicado);
-                    evolucaoItem.sumRevenue += row.revenueAplicado;
-                    evolucaoItem.qtdRevenue += 1;
-                }
-                evolucaoMap.set(advpBucket, evolucaoItem);
-            }
-
-            const faixaItem = faixaMap.get(row.faixaMapa) || {
-                faixa: row.faixaMapa,
-                qtdAdvp: 0,
-                sumRevenue: 0,
-                qtdRevenue: 0
-            };
-            faixaItem.qtdAdvp += 1;
-            if (Number.isFinite(row.revenueAplicado)) {
-                faixaItem.sumRevenue += row.revenueAplicado;
-                faixaItem.qtdRevenue += 1;
-            }
-            faixaMap.set(row.faixaMapa, faixaItem);
-
-            const statusItem = statusMap.get(row.statusRevenue) || { status: row.statusRevenue, total: 0 };
-            statusItem.total += 1;
-            statusMap.set(row.statusRevenue, statusItem);
-
-            const justItem = justificativaMap.get(row.justificativa) || {
-                justificativa: row.justificativa,
-                aprovado: 0,
-                reprovado: 0,
-                outros: 0,
-                total: 0
-            };
-            justItem[row.statusBucket] = (justItem[row.statusBucket] || 0) + 1;
-            justItem.total += 1;
-            justificativaMap.set(row.justificativa, justItem);
-
-            const analistaItem = analistaMap.get(row.analista) || {
-                analista: row.analista,
-                aumentou: 0,
-                diminuiu: 0,
-                igual: 0,
-                outros: 0,
-                total: 0
-            };
-            analistaItem[row.indicadorBucket] = (analistaItem[row.indicadorBucket] || 0) + 1;
-            analistaItem.total += 1;
-            analistaMap.set(row.analista, analistaItem);
-
-            const rotaItem = rotaMap.get(row.rota) || {
-                rota: row.rota,
-                total: 0,
-                sumRevenue: 0,
-                qtdRevenue: 0
-            };
-            rotaItem.total += 1;
-            if (Number.isFinite(row.revenueAplicado)) {
-                rotaItem.sumRevenue += row.revenueAplicado;
-                rotaItem.qtdRevenue += 1;
-            }
-            rotaMap.set(row.rota, rotaItem);
-        }
-
-        const totaisRevenue = rows.map(r => r.revenueAplicado).filter(Number.isFinite);
-        const advpValues = rows.map(r => r.advpStar).filter(Number.isFinite);
-        const aprovados = rows.filter(r => r.statusBucket === 'aprovado').length;
-        const reprovados = rows.filter(r => r.statusBucket === 'reprovado').length;
-
-        const revenueAplicadoPorDia = Array.from(dayMap.values())
-            .sort((a, b) => a.date.localeCompare(b.date));
-
-        const totalRevenueAplicado = [
-            { label: 'Aprovado', value: aprovados },
-            { label: 'Reprovado', value: reprovados },
-            { label: 'Outros', value: Math.max(0, rows.length - aprovados - reprovados) }
-        ].filter(item => item.value > 0);
-
-        const parseAdvpSort = (value) => (value === '60+' ? 61 : Number(value));
-
-        const advpStatus = Array.from(advpMap.values())
-            .sort((a, b) => parseAdvpSort(a.advp) - parseAdvpSort(b.advp));
-
-        const evolucaoTmXAdvp = Array.from(evolucaoMap.values())
-            .map(item => ({
-                advp: item.advp,
-                minRevenue: Number.isFinite(item.minRevenue) ? Number(item.minRevenue.toFixed(2)) : 0,
-                tmRevenue: item.qtdRevenue ? Number((item.sumRevenue / item.qtdRevenue).toFixed(2)) : 0,
-                total: item.total,
-                aprovado: item.aprovado,
-                reprovado: item.reprovado
-            }))
-            .sort((a, b) => parseAdvpSort(a.advp) - parseAdvpSort(b.advp));
-
-        const revenuePorCanal = Array.from(canalMap.values())
-            .sort((a, b) => b.total - a.total);
-
-        const faixaOrder = ['0', '01 A 07', '08 A 15', '16 A 22', '23 A 30', '31 A 60', '60+'];
-        const faixaQtdPercentual = Array.from(faixaMap.values())
-            .map(item => ({
-                faixa: item.faixa,
-                qtdAdvp: item.qtdAdvp,
-                percentualTotal: rows.length ? Number(((item.qtdAdvp / rows.length) * 100).toFixed(2)) : 0,
-                mediaRevenueAplicado: item.qtdRevenue ? Number((item.sumRevenue / item.qtdRevenue).toFixed(2)) : 0
-            }))
-            .sort((a, b) => faixaOrder.indexOf(a.faixa) - faixaOrder.indexOf(b.faixa));
-
-        const aproveitamentoAplicacao = Array.from(statusMap.values())
-            .sort((a, b) => b.total - a.total);
-
-        const justificativa = Array.from(justificativaMap.values())
-            .sort((a, b) => b.total - a.total)
-            .slice(0, 15);
-
-        const analistaIndicador = Array.from(analistaMap.values())
-            .sort((a, b) => b.total - a.total)
-            .slice(0, 12);
-
-        const rotasAplicadas = Array.from(rotaMap.values())
-            .map(item => ({
-                rota: item.rota,
-                total: item.total,
-                mediaRevenueAplicado: item.qtdRevenue ? Number((item.sumRevenue / item.qtdRevenue).toFixed(2)) : 0
-            }))
-            .sort((a, b) => b.total - a.total)
-            .slice(0, 15);
-
-        res.json({
-            meta: {
-                baseDir: effectiveDir,
-                requestedBaseDir: preferredDir,
-                selectedPeriod: {
-                    startDate: toISOStringDate(rangeStart),
-                    endDate: toISOStringDate(rangeEnd)
-                },
-                filesRead: files.length,
-                records: rows.length,
-                warnings: parseWarnings
-            },
-            kpis: {
-                totalRegistros: rows.length,
-                aprovados,
-                reprovados,
-                taxaAprovacao: rows.length ? Number(((aprovados / rows.length) * 100).toFixed(2)) : 0,
-                totalRevenueAplicado: Number(sum(totaisRevenue).toFixed(2)),
-                mediaRevenueAplicado: Number(avg(totaisRevenue).toFixed(2)),
-                advpMedio: Number(avg(advpValues).toFixed(2))
-            },
-            series: {
-                revenueAplicadoPorDia,
-                totalRevenueAplicado,
-                advpStatus,
-                evolucaoTmXAdvp,
-                revenuePorCanal,
-                faixaQtdPercentual,
-                aproveitamentoAplicacao,
-                justificativa,
-                analistaIndicador,
-                rotasAplicadas
-            }
         });
+
+        revenueDashboardInFlight.set(cacheKey, computePromise);
+
+        try {
+            const payload = await computePromise;
+            setRevenueDashboardCache(cacheKey, payload);
+            return res.json(payload);
+        } finally {
+            revenueDashboardInFlight.delete(cacheKey);
+        }
     } catch (error) {
         console.error('[REVENUE_DASH_ERROR]', error);
         res.status(500).json({ error: 'Erro ao gerar dashboard de Revenue.', details: String(error?.message || error) });
