@@ -8,6 +8,13 @@ const REVENUE_FILE_REGEX = /revenue.*\.xlsx$/i;
 const toStartOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
 const toEndOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
 
+const buildSafeDate = (year, month, day, hour = 0, minute = 0, second = 0) => {
+    const dt = new Date(year, month - 1, day, hour, minute, second);
+    if (Number.isNaN(dt.getTime())) return null;
+    if (dt.getFullYear() !== year || dt.getMonth() !== month - 1 || dt.getDate() !== day) return null;
+    return dt;
+};
+
 const parseBrDate = (value) => {
     if (value === null || value === undefined || value === '') return null;
 
@@ -25,18 +32,25 @@ const parseBrDate = (value) => {
     const raw = String(value).trim();
     if (!raw) return null;
 
-    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
-    if (isoMatch) {
-        const [, y, m, d, hh = '00', mm = '00', ss = '00'] = isoMatch;
-        const dt = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
-        return Number.isNaN(dt.getTime()) ? null : dt;
+    const excelSerialMatch = raw.match(/^\d+(?:\.\d+)?$/);
+    if (excelSerialMatch) {
+        const parsed = XLSX.SSF.parse_date_code(Number(raw));
+        if (parsed && parsed.y && parsed.m && parsed.d) {
+            return buildSafeDate(parsed.y, parsed.m, parsed.d, parsed.H || 0, parsed.M || 0, Math.round(parsed.S || 0));
+        }
     }
 
-    const brMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    const isoLikeMatch = raw.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:[ T](\d{1,2})(?::(\d{1,2})(?::(\d{1,2}))?)?(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i);
+    if (isoLikeMatch) {
+        const [, y, m, d, hh = '00', mm = '00', ss = '00'] = isoLikeMatch;
+        const dt = buildSafeDate(Number(y), Number(m), Number(d), Number(hh), Number(mm), Number(ss));
+        return dt;
+    }
+
+    const brMatch = raw.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
     if (brMatch) {
         const [, d, m, y, hh = '00', mm = '00', ss = '00'] = brMatch;
-        const dt = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
-        return Number.isNaN(dt.getTime()) ? null : dt;
+        return buildSafeDate(Number(y), Number(m), Number(d), Number(hh), Number(mm), Number(ss));
     }
 
     const fallback = new Date(raw);
@@ -80,6 +94,17 @@ const normalizeText = (value, fallback = 'Sem Informacao') => {
     return cleaned || fallback;
 };
 
+const normalizeRouteLabel = (origem, destino, concatenado) => {
+    const origemNormalizada = normalizeText(origem, 'Sem Origem');
+    const destinoNormalizado = normalizeText(destino, 'Sem Destino');
+
+    if (origemNormalizada !== 'Sem Origem' && destinoNormalizado !== 'Sem Destino') {
+        return `${origemNormalizada} X ${destinoNormalizado}`;
+    }
+
+    return normalizeText(concatenado, `${origemNormalizada} X ${destinoNormalizado}`);
+};
+
 const classifyStatusRevenue = (status) => {
     const normalized = normalizeText(status, 'Sem Status').toLowerCase();
     if (normalized.includes('aprov')) return 'aprovado';
@@ -98,9 +123,9 @@ const classifyIndicador = (indicador) => {
 const calculateAdvp = (dataAplicacao, dataViagem) => {
     if (!dataAplicacao || !dataViagem) return { raw: null, star: null };
 
-    const diffDays = Math.round((toStartOfDay(dataViagem).getTime() - toStartOfDay(dataAplicacao).getTime()) / 86400000);
-    const advpStar = Math.max(0, diffDays);
-    return { raw: diffDays, star: advpStar };
+    // ADVP2: Data Viagem - Data Aplicacao (mesma regra do dashboard original).
+    const advp2 = Math.round((toStartOfDay(dataViagem).getTime() - toStartOfDay(dataAplicacao).getTime()) / 86400000);
+    return { raw: advp2, star: advp2 };
 };
 
 const buildFaixaAdvp = (advpStar) => {
@@ -227,7 +252,7 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
                 const origem = normalizeText(row['Origem'], 'Sem Origem');
                 const destino = normalizeText(row['Destino'], 'Sem Destino');
                 const numServico = normalizeText(row['Num. Serviço'] ?? row['Num. Servico'], 'Sem Servico');
-                const rota = normalizeText(row['Concatenar Origem e Destino'], `${origem} X ${destino}`);
+                const rota = normalizeRouteLabel(origem, destino, row['Concatenar Origem e Destino']);
 
                 const dedupeKey = [
                     origem,
@@ -395,7 +420,7 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
     }
 
     const totaisRevenue = rows.map(r => r.revenueAplicado).filter(Number.isFinite);
-    const advpValues = rows.map(r => r.advpStar).filter(Number.isFinite);
+    const advpRawValues = rows.map(r => r.advpRaw).filter(Number.isFinite);
     const aprovados = rows.filter(r => r.statusBucket === 'aprovado').length;
     const reprovados = rows.filter(r => r.statusBucket === 'reprovado').length;
 
@@ -475,7 +500,7 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
             taxaAprovacao: rows.length ? Number(((aprovados / rows.length) * 100).toFixed(2)) : 0,
             totalRevenueAplicado: Number(sum(totaisRevenue).toFixed(2)),
             mediaRevenueAplicado: Number(avg(totaisRevenue).toFixed(2)),
-            advpMedio: Number(avg(advpValues).toFixed(2))
+            advpMedio: Number(avg(advpRawValues).toFixed(2))
         },
         series: {
             revenueAplicadoPorDia,

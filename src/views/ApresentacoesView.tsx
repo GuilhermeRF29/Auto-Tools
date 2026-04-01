@@ -196,6 +196,25 @@ const ModeToggle = ({ mode, onChange }: { mode: 'numero' | 'percentual'; onChang
   </div>
 );
 
+const GranularityToggle = ({ value, onChange }: { value: 'diario' | 'mensal'; onChange: (next: 'diario' | 'mensal') => void }) => (
+  <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1 text-[11px] font-black">
+    <button
+      type="button"
+      onClick={() => onChange('diario')}
+      className={`rounded-lg px-2.5 py-1 transition-colors ${value === 'diario' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-500'}`}
+    >
+      Diario
+    </button>
+    <button
+      type="button"
+      onClick={() => onChange('mensal')}
+      className={`rounded-lg px-2.5 py-1 transition-colors ${value === 'mensal' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-500'}`}
+    >
+      Mensal
+    </button>
+  </div>
+);
+
 const FixedLegend = ({ items }: { items: Array<{ label: string; color: string; marker?: 'dot' | 'bar' | 'line' }> }) => (
   <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-3">
     {items.map((item) => (
@@ -226,6 +245,7 @@ const ApresentacoesView = () => {
   const [payload, setPayload] = useState<RevenuePayload | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [revenueAppliedMode, setRevenueAppliedMode] = useState<'numero' | 'percentual'>('numero');
+  const [revenueAppliedGranularity, setRevenueAppliedGranularity] = useState<'diario' | 'mensal'>('diario');
   const [totalRevenueMode, setTotalRevenueMode] = useState<'numero' | 'percentual'>('numero');
 
   const dayWatcherRef = useRef<string>(new Date().toDateString());
@@ -258,6 +278,7 @@ const ApresentacoesView = () => {
     }
     const controller = new AbortController();
     activeRequestRef.current = controller;
+    const requestStartedAt = Date.now();
 
     try {
       const params = new URLSearchParams({
@@ -293,6 +314,13 @@ const ApresentacoesView = () => {
         activeRequestRef.current = null;
       }
       if (shouldBlockUi) {
+        if (force) {
+          const elapsed = Date.now() - requestStartedAt;
+          const minSpinMs = 450;
+          if (elapsed < minSpinMs) {
+            await new Promise((resolve) => window.setTimeout(resolve, minSpinMs - elapsed));
+          }
+        }
         setLoading(false);
       }
     }
@@ -358,10 +386,48 @@ const ApresentacoesView = () => {
     []
   );
 
-  const daySeriesDisplay = useMemo(() => {
-    if (revenueAppliedMode === 'numero') return daySeries;
+  const daySeriesBase = useMemo(() => {
+    if (revenueAppliedGranularity === 'mensal') {
+      const monthMap = new Map<string, { date: string; dia: string; eixoX: string; aprovado: number; reprovado: number; outros: number; total: number }>();
+      const monthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' });
 
-    return daySeries.map((item) => {
+      daySeries.forEach((item) => {
+        const monthKey = String(item.date || '').slice(0, 7);
+        if (!monthKey || monthKey.length < 7) return;
+
+        const [year, month] = monthKey.split('-');
+        const monthDate = new Date(Number(year), Number(month) - 1, 1);
+        const monthLabel = monthFormatter.format(monthDate);
+
+        const current = monthMap.get(monthKey) || {
+          date: `${monthKey}-01`,
+          dia: monthLabel,
+          eixoX: monthLabel,
+          aprovado: 0,
+          reprovado: 0,
+          outros: 0,
+          total: 0,
+        };
+
+        current.aprovado += Number(item.aprovado || 0);
+        current.reprovado += Number(item.reprovado || 0);
+        current.outros += Number(item.outros || 0);
+        current.total += Number(item.total || 0);
+        monthMap.set(monthKey, current);
+      });
+
+      return Array.from(monthMap.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([, value]) => value);
+    }
+
+    return daySeries.map((item) => ({ ...item, eixoX: item.dia }));
+  }, [daySeries, revenueAppliedGranularity]);
+
+  const daySeriesDisplay = useMemo(() => {
+    if (revenueAppliedMode === 'numero') return daySeriesBase;
+
+    return daySeriesBase.map((item) => {
       const total = item.total || 0;
       const calcPct = (value: number) => (total > 0 ? Number(((value / total) * 100).toFixed(2)) : 0);
       return {
@@ -371,7 +437,7 @@ const ApresentacoesView = () => {
         outros: calcPct(item.outros),
       };
     });
-  }, [daySeries, revenueAppliedMode]);
+  }, [daySeriesBase, revenueAppliedMode]);
 
   const totalGaugeDisplay = useMemo(() => {
     if (totalRevenueMode === 'numero') return totalGauge;
@@ -412,13 +478,30 @@ const ApresentacoesView = () => {
   }, [payload?.kpis.reprovados, payload?.kpis.totalRegistros]);
 
   const faixaTabela = useMemo(
-    () => [...faixa].sort((a, b) => Number(b.qtdAdvp || 0) - Number(a.qtdAdvp || 0)),
+    () => {
+      const orderMap = new Map<string, number>([
+        ['0', 0],
+        ['01 A 07', 1],
+        ['08 A 15', 2],
+        ['16 A 22', 3],
+        ['23 A 30', 4],
+        ['31 A 60', 5],
+        ['60+', 6],
+      ]);
+
+      return [...faixa].sort((a, b) => {
+        const rankA = orderMap.get(String(a.faixa || '').trim()) ?? Number.MAX_SAFE_INTEGER;
+        const rankB = orderMap.get(String(b.faixa || '').trim()) ?? Number.MAX_SAFE_INTEGER;
+        if (rankA !== rankB) return rankA - rankB;
+        return String(a.faixa || '').localeCompare(String(b.faixa || ''));
+      });
+    },
     [faixa]
   );
 
   const faixaResumo = useMemo(() => {
     const totalQtd = faixa.reduce((acc, item) => acc + Number(item.qtdAdvp || 0), 0);
-    const totalPercentual = faixa.reduce((acc, item) => acc + Number(item.percentualTotal || 0), 0);
+    const totalPercentual = totalQtd > 0 ? 100 : 0;
     const somaPonderada = faixa.reduce((acc, item) => acc + Number(item.mediaRevenueAplicado || 0) * Number(item.qtdAdvp || 0), 0);
     return {
       totalQtd,
@@ -596,23 +679,58 @@ const ApresentacoesView = () => {
           <SectionTitle
             icon={<BarChart3 size={16} />}
             title="Revenue aplicado"
-            subtitle="Eixo X: mes/dia | Eixo Y: aprovado e reprovado"
-            rightSlot={<ModeToggle mode={revenueAppliedMode} onChange={setRevenueAppliedMode} />}
+            subtitle={revenueAppliedGranularity === 'mensal' ? 'Visao mensal | Eixo Y: aprovado e reprovado' : 'Visao diaria | Eixo Y: aprovado e reprovado'}
+            rightSlot={
+              <div className="flex flex-wrap items-center gap-2">
+                <GranularityToggle value={revenueAppliedGranularity} onChange={setRevenueAppliedGranularity} />
+                <ModeToggle mode={revenueAppliedMode} onChange={setRevenueAppliedMode} />
+              </div>
+            }
           />
-          {daySeries.length === 0 ? (
+          {daySeriesBase.length === 0 ? (
             <EmptyState text="Sem dados para o periodo atual." />
           ) : (
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={daySeriesDisplay} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                <BarChart
+                  data={daySeriesDisplay}
+                  margin={{ top: 10, right: 20, left: 0, bottom: 10 }}
+                  barGap={revenueAppliedGranularity === 'mensal' ? -1 : 4}
+                  barCategoryGap={revenueAppliedGranularity === 'mensal' ? '70%' : '20%'}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="dia" tick={{ fontSize: 11, fontWeight: 700 }} />
+                  <XAxis dataKey="eixoX" tick={{ fontSize: 11, fontWeight: 700 }} />
                   <YAxis domain={revenueAppliedMode === 'percentual' ? [0, 100] : undefined} tick={{ fontSize: 11, fontWeight: 700 }} />
                   <Tooltip content={<CustomTooltip valueFormatter={revenueAppliedMode === 'percentual' ? percentualFormatter : numeroFormatter} />} />
                   <Legend />
-                  <Bar dataKey="aprovado" name="Aprovado" stackId="status" fill={CHART_COLORS.aprovado} radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="reprovado" name="Reprovado" stackId="status" fill={CHART_COLORS.reprovado} radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="outros" name="Outros" stackId="status" fill={CHART_COLORS.outros} radius={[6, 6, 0, 0]} />
+                  <Bar
+                    dataKey="aprovado"
+                    name="Aprovado"
+                    stackId={revenueAppliedGranularity === 'mensal' ? undefined : 'status'}
+                    barSize={revenueAppliedGranularity === 'mensal' ? 44 : undefined}
+                    maxBarSize={revenueAppliedGranularity === 'mensal' ? 44 : 56}
+                    fill={CHART_COLORS.aprovado}
+                    radius={[6, 6, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="reprovado"
+                    name="Reprovado"
+                    stackId={revenueAppliedGranularity === 'mensal' ? undefined : 'status'}
+                    barSize={revenueAppliedGranularity === 'mensal' ? 44 : undefined}
+                    maxBarSize={revenueAppliedGranularity === 'mensal' ? 44 : 56}
+                    fill={CHART_COLORS.reprovado}
+                    radius={[6, 6, 0, 0]}
+                  />
+                  {revenueAppliedGranularity !== 'mensal' && (
+                    <Bar
+                      dataKey="outros"
+                      name="Outros"
+                      stackId="status"
+                      maxBarSize={56}
+                      fill={CHART_COLORS.outros}
+                      radius={[6, 6, 0, 0]}
+                    />
+                  )}
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -620,42 +738,39 @@ const ApresentacoesView = () => {
         </Card>
 
         <Card className="xl:col-span-4 p-5">
-          <SectionTitle
-            icon={<TrendingUp size={16} />}
-            title="Total revenue aplicado"
-            subtitle="Aprovado x Reprovado"
-            rightSlot={<ModeToggle mode={totalRevenueMode} onChange={setTotalRevenueMode} />}
-          />
-          {totalGauge.length === 0 ? (
-            <EmptyState text="Sem base para o grafico." />
+          <SectionTitle icon={<Gauge size={16} />} title="Faixa Qtd. % R$" subtitle="Mapa Faixa, contagem, percentual e media Revenue" />
+          {faixa.length === 0 ? (
+            <EmptyState text="Sem dados para mapa de faixas." />
           ) : (
-            <div className="relative h-[320px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={totalGaugeDisplay}
-                    dataKey="value"
-                    nameKey="label"
-                    innerRadius={78}
-                    outerRadius={112}
-                    paddingAngle={2}
-                    stroke="none"
-                    activeShape={renderSolidActiveShape}
-                  >
-                    {totalGaugeDisplay.map((_, idx) => (
-                      <Cell key={`g-${idx}`} fill={pieColors[idx % pieColors.length]} fillOpacity={1} />
-                    ))}
-                  </Pie>
-                  <Tooltip content={<CustomTooltip valueFormatter={totalRevenueMode === 'percentual' ? percentualFormatter : numeroFormatter} />} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div className="rounded-full border border-slate-100 bg-white px-6 py-4 text-center shadow-sm">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registros</p>
-                  <p className="text-4xl font-black text-slate-800">{formatInteger(payload?.kpis.totalRegistros || 0)}</p>
-                </div>
-              </div>
+            <div className="max-h-[360px] overflow-auto rounded-2xl border border-slate-100 custom-scrollbar">
+              <table className="w-full border-separate border-spacing-0 text-left">
+                <thead className="sticky top-0 bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Faixa</th>
+                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Qtd</th>
+                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">% Total</th>
+                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">R$ Medio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {faixaTabela.map((item) => (
+                    <tr key={item.faixa} className="odd:bg-white even:bg-slate-50/60">
+                      <td className="px-3 py-2 text-xs font-black text-slate-700">{item.faixa}</td>
+                      <td className="px-3 py-2 text-xs font-black text-slate-700">{formatInteger(item.qtdAdvp)}</td>
+                      <td className={`px-3 py-2 text-xs font-black ${item.percentualTotal >= 30 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatPercent(item.percentualTotal)}</td>
+                      <td className="px-3 py-2 text-xs font-black text-slate-700">{formatCurrency(item.mediaRevenueAplicado)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="sticky bottom-0 bg-cyan-50">
+                  <tr>
+                    <td className="px-3 py-2 text-xs font-black uppercase tracking-wider text-cyan-700">Total</td>
+                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatInteger(faixaResumo.totalQtd)}</td>
+                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatPercent(faixaResumo.totalPercentual)}</td>
+                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatCurrency(faixaResumo.mediaGeral)}</td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           )}
         </Card>
@@ -699,39 +814,44 @@ const ApresentacoesView = () => {
         </Card>
 
         <Card className="xl:col-span-4 p-5">
-          <SectionTitle icon={<Gauge size={16} />} title="Faixa Qtd. % R$" subtitle="Mapa Faixa, contagem, percentual e media Revenue" />
-          {faixa.length === 0 ? (
-            <EmptyState text="Sem dados para mapa de faixas." />
+          <SectionTitle
+            icon={<TrendingUp size={16} />}
+            title="Total revenue aplicado"
+            subtitle="Aprovado x Reprovado"
+            rightSlot={<ModeToggle mode={totalRevenueMode} onChange={setTotalRevenueMode} />}
+          />
+          {totalGauge.length === 0 ? (
+            <EmptyState text="Sem base para o grafico." />
           ) : (
-            <div className="max-h-[360px] overflow-auto rounded-2xl border border-slate-100 custom-scrollbar">
-              <table className="w-full border-separate border-spacing-0 text-left">
-                <thead className="sticky top-0 bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Faixa</th>
-                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Qtd</th>
-                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">% Total</th>
-                    <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">R$ Medio</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {faixaTabela.map((item) => (
-                    <tr key={item.faixa} className="odd:bg-white even:bg-slate-50/60">
-                      <td className="px-3 py-2 text-xs font-black text-slate-700">{item.faixa}</td>
-                      <td className="px-3 py-2 text-xs font-black text-slate-700">{formatInteger(item.qtdAdvp)}</td>
-                      <td className={`px-3 py-2 text-xs font-black ${item.percentualTotal >= 30 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatPercent(item.percentualTotal)}</td>
-                      <td className="px-3 py-2 text-xs font-black text-slate-700">{formatCurrency(item.mediaRevenueAplicado)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot className="sticky bottom-0 bg-cyan-50">
-                  <tr>
-                    <td className="px-3 py-2 text-xs font-black uppercase tracking-wider text-cyan-700">Total</td>
-                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatInteger(faixaResumo.totalQtd)}</td>
-                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatPercent(faixaResumo.totalPercentual)}</td>
-                    <td className="px-3 py-2 text-xs font-black text-cyan-800">{formatCurrency(faixaResumo.mediaGeral)}</td>
-                  </tr>
-                </tfoot>
-              </table>
+            <div className="relative h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={totalGaugeDisplay}
+                    dataKey="value"
+                    nameKey="label"
+                    innerRadius={78}
+                    outerRadius={112}
+                    paddingAngle={2}
+                    stroke="none"
+                    startAngle={90}
+                    endAngle={-270}
+                    activeShape={renderSolidActiveShape}
+                  >
+                    {totalGaugeDisplay.map((_, idx) => (
+                      <Cell key={`g-${idx}`} fill={pieColors[idx % pieColors.length]} fillOpacity={1} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<CustomTooltip valueFormatter={totalRevenueMode === 'percentual' ? percentualFormatter : numeroFormatter} />} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registros</p>
+                  <p className="text-4xl font-black text-slate-800">{formatInteger(payload?.kpis.totalRegistros || 0)}</p>
+                </div>
+              </div>
             </div>
           )}
         </Card>
@@ -788,6 +908,8 @@ const ApresentacoesView = () => {
                       innerRadius={72}
                       outerRadius={112}
                       stroke="none"
+                      startAngle={90}
+                      endAngle={-270}
                       activeShape={renderSolidActiveShape}
                     >
                       {revenueCanalTotal.map((_, idx) => (
@@ -824,7 +946,7 @@ const ApresentacoesView = () => {
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={aproveitamento} dataKey="total" nameKey="status" innerRadius={68} outerRadius={108} stroke="none">
+                  <Pie data={aproveitamento} dataKey="total" nameKey="status" innerRadius={68} outerRadius={108} stroke="none" startAngle={90} endAngle={-270}>
                     {aproveitamento.map((_, idx) => (
                       <Cell key={`s-${idx}`} fill={pieColors[idx % pieColors.length]} />
                     ))}
