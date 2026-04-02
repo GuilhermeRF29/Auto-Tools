@@ -143,8 +143,8 @@ const classifyIndicador = (indicador) => {
 const calculateAdvp = (dataAplicacao, dataViagem) => {
     if (!dataAplicacao || !dataViagem) return { raw: null, star: null };
 
-    // ADVP2: Data Viagem - Data Aplicacao (mesma regra do dashboard original).
-    const advp2 = Math.round((toStartOfDay(dataViagem).getTime() - toStartOfDay(dataAplicacao).getTime()) / 86400000);
+    // ADVP2: Data Viagem - Data Aplicacao com diferenca temporal real (inclui horario) antes do arredondamento.
+    const advp2 = Math.round((dataViagem.getTime() - dataAplicacao.getTime()) / 86400000);
     return { raw: advp2, star: advp2 };
 };
 
@@ -223,7 +223,7 @@ const setRevenueDashboardCache = (cacheKey, payload) => {
     });
 };
 
-const runRevenueDashboardWorker = ({ effectiveDir, preferredDir, rangeStart, rangeEnd }) =>
+const runRevenueDashboardWorker = ({ effectiveDir, preferredDir, rangeStart, rangeEnd, includeRows = false }) =>
     new Promise((resolve, reject) => {
         let settled = false;
         const worker = new Worker(new URL('./revenueDashboardWorker.js', import.meta.url), {
@@ -231,7 +231,8 @@ const runRevenueDashboardWorker = ({ effectiveDir, preferredDir, rangeStart, ran
                 effectiveDir,
                 preferredDir,
                 rangeStartMs: rangeStart.getTime(),
-                rangeEndMs: rangeEnd.getTime()
+                rangeEndMs: rangeEnd.getTime(),
+                includeRows
             }
         });
 
@@ -271,7 +272,7 @@ const runRevenueDashboardWorker = ({ effectiveDir, preferredDir, rangeStart, ran
         });
     });
 
-const buildEmptyRevenuePayload = (effectiveDir, preferredDir, rangeStart, rangeEnd, warnings = []) => ({
+const buildEmptyRevenuePayload = (effectiveDir, preferredDir, rangeStart, rangeEnd, warnings = [], includeRows = false) => ({
     meta: {
         baseDir: effectiveDir,
         requestedBaseDir: preferredDir,
@@ -300,10 +301,19 @@ const buildEmptyRevenuePayload = (effectiveDir, preferredDir, rangeStart, rangeE
         justificativa: [],
         analistaIndicador: [],
         rotasAplicadas: []
-    }
+    },
+    ...(includeRows ? { treatedRows: [] } : {})
 });
 
-const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, rangeEnd }) => {
+const formatExportDate = (value) => {
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) return '';
+    const day = String(value.getDate()).padStart(2, '0');
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const year = String(value.getFullYear());
+    return `${day}/${month}/${year}`;
+};
+
+const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, rangeEnd, includeRows = false }) => {
     const files = collectRevenueFiles(effectiveDir);
     if (!files.length) {
         return buildEmptyRevenuePayload(
@@ -311,7 +321,8 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
             preferredDir,
             rangeStart,
             rangeEnd,
-            ['Nenhum arquivo Revenue encontrado no diretorio selecionado.']
+            ['Nenhum arquivo Revenue encontrado no diretorio selecionado.'],
+            includeRows
         );
     }
 
@@ -376,6 +387,9 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
                     canalVenda,
                     justificativa,
                     analista,
+                    origem,
+                    destino,
+                    numServico,
                     rota,
                     advpRaw: advp.raw,
                     advpStar: advp.star,
@@ -572,7 +586,7 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
         }))
         .sort((a, b) => b.total - a.total);
 
-    return {
+    const basePayload = {
         meta: {
             baseDir: effectiveDir,
             requestedBaseDir: preferredDir,
@@ -605,6 +619,50 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
             analistaIndicador,
             rotasAplicadas
         }
+    };
+
+    if (!includeRows) return basePayload;
+
+    const treatedRows = rows.map((row) => {
+        const advpTimeDiff = row.dataViagem instanceof Date
+            ? (row.dataViagem.getTime() - row.dataAplicacao.getTime()) / 86400000
+            : null;
+        const advpRoundByTime = Number.isFinite(advpTimeDiff) ? Math.round(advpTimeDiff) : null;
+        const advpFloorByTime = Number.isFinite(advpTimeDiff) ? Math.floor(advpTimeDiff) : null;
+        const advpCeilByTime = Number.isFinite(advpTimeDiff) ? Math.ceil(advpTimeDiff) : null;
+
+        return {
+            DataAplicacao: formatExportDate(row.dataAplicacao),
+            DataViagem: formatExportDate(row.dataViagem),
+            ADVP_Bruto: Number.isFinite(row.advpRaw) ? row.advpRaw : null,
+            ADVP_UsadoMapaFaixa: Number.isFinite(row.advpStar) ? row.advpStar : null,
+            FaixaMapa: row.faixaMapa,
+            ADVP_DiasExatoComHora: Number.isFinite(advpTimeDiff) ? Number(advpTimeDiff.toFixed(5)) : null,
+            ADVP_RoundPorHora: Number.isFinite(advpRoundByTime) ? advpRoundByTime : null,
+            ADVP_FloorPorHora: Number.isFinite(advpFloorByTime) ? advpFloorByTime : null,
+            ADVP_CeilPorHora: Number.isFinite(advpCeilByTime) ? advpCeilByTime : null,
+            Faixa_RoundPorHora: buildFaixaAdvp(advpRoundByTime),
+            Faixa_FloorPorHora: buildFaixaAdvp(advpFloorByTime),
+            Faixa_CeilPorHora: buildFaixaAdvp(advpCeilByTime),
+            RevenueAplicado: Number.isFinite(row.revenueAplicado) ? Number(row.revenueAplicado.toFixed(2)) : null,
+            StatusRevenue: row.statusRevenue,
+            StatusBucket: row.statusBucket,
+            Indicador: row.indicador,
+            IndicadorBucket: row.indicadorBucket,
+            CanalVenda: row.canalVenda,
+            Justificativa: row.justificativa,
+            Analista: row.analista,
+            Origem: row.origem,
+            Destino: row.destino,
+            NumeroServico: row.numServico,
+            RotaPadronizada: row.rota,
+            DataAplicacaoISO: row.dataAplicacaoKey
+        };
+    });
+
+    return {
+        ...basePayload,
+        treatedRows
     };
 };
 
@@ -708,6 +766,157 @@ app.get('/api/revenue-dashboard', async (req, res) => {
     } catch (error) {
         console.error('[REVENUE_DASH_ERROR]', error);
         res.status(500).json({ error: 'Erro ao gerar dashboard de Revenue.', details: String(error?.message || error) });
+    }
+});
+
+app.get('/api/revenue-dashboard-export', async (req, res) => {
+    try {
+        const requestedDir = typeof req.query.baseDir === 'string' ? req.query.baseDir.trim() : '';
+        const preferredDir = requestedDir || DEFAULT_REVENUE_BASE_DIR;
+        const fallbackDir = path.join(__dirname, 'backups_sistema');
+
+        let effectiveDir = preferredDir;
+        if (!fs.existsSync(effectiveDir) && !requestedDir && fs.existsSync(fallbackDir)) {
+            effectiveDir = fallbackDir;
+        }
+
+        if (!fs.existsSync(effectiveDir)) {
+            return res.status(400).json({
+                error: 'Diretorio de base Revenue nao encontrado.',
+                details: { requestedDir: preferredDir }
+            });
+        }
+
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        const startParam = typeof req.query.startDate === 'string' ? req.query.startDate : null;
+        const endParam = typeof req.query.endDate === 'string' ? req.query.endDate : null;
+
+        const parsedStart = startParam ? parseBrDate(startParam) : monthStart;
+        const parsedEnd = endParam ? parseBrDate(endParam) : now;
+
+        if (!parsedStart || !parsedEnd) {
+            return res.status(400).json({ error: 'Periodo invalido. Use datas validas para inicio e fim.' });
+        }
+
+        const rangeStart = toStartOfDay(parsedStart);
+        const rangeEnd = toEndOfDay(parsedEnd);
+
+        if (rangeStart.getTime() > rangeEnd.getTime()) {
+            return res.status(400).json({ error: 'Data inicial maior que data final.' });
+        }
+
+        const payloadWithRows = await runRevenueDashboardWorker({
+            effectiveDir,
+            preferredDir,
+            rangeStart,
+            rangeEnd,
+            includeRows: true
+        }).catch((workerError) => {
+            console.error('[REVENUE_DASH_EXPORT_WORKER_ERROR]', workerError);
+            return buildRevenueDashboardPayload({
+                effectiveDir,
+                preferredDir,
+                rangeStart,
+                rangeEnd,
+                includeRows: true
+            });
+        });
+
+        const treatedRows = Array.isArray(payloadWithRows?.treatedRows) ? payloadWithRows.treatedRows : [];
+        const workbook = XLSX.utils.book_new();
+        const faixaOrder = ['0', '01 A 07', '08 A 15', '16 A 22', '23 A 30', '31 A 60', '60+'];
+
+        const buildFaixaScenarioRows = (scenarioName, resolver) => {
+            const counters = new Map(faixaOrder.map((bucket) => [bucket, 0]));
+            let total = 0;
+
+            for (const row of treatedRows) {
+                const advpBruto = Number(row?.ADVP_Bruto);
+                const advpScenario = resolver(advpBruto);
+                const faixa = buildFaixaAdvp(advpScenario);
+                counters.set(faixa, Number(counters.get(faixa) || 0) + 1);
+                total += 1;
+            }
+
+            return faixaOrder.map((bucket) => {
+                const qtd = Number(counters.get(bucket) || 0);
+                return {
+                    Cenario: scenarioName,
+                    Faixa: bucket,
+                    Qtd: qtd,
+                    Percentual: total > 0 ? Number(((qtd / total) * 100).toFixed(2)) : 0
+                };
+            });
+        };
+
+        const diagnosticoRows = [
+            ...buildFaixaScenarioRows('Atual (ADVP bruto)', (advp) => (Number.isFinite(advp) ? advp : null)),
+            ...buildFaixaScenarioRows('Inclusivo (+1 se ADVP >= 0)', (advp) => (Number.isFinite(advp) ? (advp >= 0 ? advp + 1 : advp) : null)),
+            ...buildFaixaScenarioRows('Absoluto (|ADVP|)', (advp) => (Number.isFinite(advp) ? Math.abs(advp) : null)),
+            ...buildFaixaScenarioRows('Ceil por hora (coluna auditoria)', (_advp) => null).map((item) => {
+                const matching = treatedRows.filter((row) => row?.Faixa_CeilPorHora === item.Faixa).length;
+                return {
+                    Cenario: 'Ceil por hora (coluna auditoria)',
+                    Faixa: item.Faixa,
+                    Qtd: matching,
+                    Percentual: treatedRows.length > 0 ? Number(((matching / treatedRows.length) * 100).toFixed(2)) : 0
+                };
+            })
+        ];
+
+        const resumoRows = [
+            { Campo: 'Base ativa', Valor: payloadWithRows?.meta?.baseDir || effectiveDir },
+            { Campo: 'Periodo inicio', Valor: payloadWithRows?.meta?.selectedPeriod?.startDate || toISOStringDate(rangeStart) },
+            { Campo: 'Periodo fim', Valor: payloadWithRows?.meta?.selectedPeriod?.endDate || toISOStringDate(rangeEnd) },
+            { Campo: 'Arquivos lidos', Valor: Number(payloadWithRows?.meta?.filesRead || 0) },
+            { Campo: 'Registros', Valor: Number(payloadWithRows?.kpis?.totalRegistros || 0) },
+            { Campo: 'Aprovados', Valor: Number(payloadWithRows?.kpis?.aprovados || 0) },
+            { Campo: 'Reprovados', Valor: Number(payloadWithRows?.kpis?.reprovados || 0) },
+            { Campo: 'Taxa aprovacao (%)', Valor: Number(payloadWithRows?.kpis?.taxaAprovacao || 0) },
+            { Campo: 'ADVP medio', Valor: Number(payloadWithRows?.kpis?.advpMedio || 0) },
+        ];
+
+        const faixaRows = Array.isArray(payloadWithRows?.series?.faixaQtdPercentual)
+            ? payloadWithRows.series.faixaQtdPercentual.map((item) => ({
+                Faixa: item.faixa,
+                Qtd: Number(item.qtdAdvp || 0),
+                PercentualTotal: Number(item.percentualTotal || 0),
+                MediaRevenueAplicado: Number(item.mediaRevenueAplicado || 0)
+            }))
+            : [];
+
+        const wsResumo = XLSX.utils.json_to_sheet(resumoRows);
+        const wsFaixa = XLSX.utils.json_to_sheet(faixaRows);
+        const wsDiagnostico = XLSX.utils.json_to_sheet(diagnosticoRows);
+        const wsDados = XLSX.utils.json_to_sheet(treatedRows);
+
+        wsResumo['!cols'] = [{ wch: 28 }, { wch: 40 }];
+        wsFaixa['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 16 }, { wch: 18 }];
+        wsDiagnostico['!cols'] = [{ wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 12 }];
+        wsDados['!cols'] = [
+            { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 10 },
+            { wch: 16 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 14 },
+            { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 14 },
+            { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 16 },
+            { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 12 }
+        ];
+
+        XLSX.utils.book_append_sheet(workbook, wsResumo, 'Resumo');
+        XLSX.utils.book_append_sheet(workbook, wsFaixa, 'Mapa Faixa');
+        XLSX.utils.book_append_sheet(workbook, wsDiagnostico, 'Diagnostico Faixa');
+        XLSX.utils.book_append_sheet(workbook, wsDados, 'Dados Tratados');
+
+        const filename = `revenue_tratado_${toISOStringDate(rangeStart)}_${toISOStringDate(rangeEnd)}.xlsx`;
+        const fileBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        return res.send(fileBuffer);
+    } catch (error) {
+        console.error('[REVENUE_DASH_EXPORT_ERROR]', error);
+        return res.status(500).json({ error: 'Erro ao exportar dados tratados de Revenue.', details: String(error?.message || error) });
     }
 });
 

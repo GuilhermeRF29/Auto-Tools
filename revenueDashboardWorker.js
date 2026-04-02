@@ -123,8 +123,8 @@ const classifyIndicador = (indicador) => {
 const calculateAdvp = (dataAplicacao, dataViagem) => {
     if (!dataAplicacao || !dataViagem) return { raw: null, star: null };
 
-    // ADVP2: Data Viagem - Data Aplicacao (mesma regra do dashboard original).
-    const advp2 = Math.round((toStartOfDay(dataViagem).getTime() - toStartOfDay(dataAplicacao).getTime()) / 86400000);
+    // ADVP2: Data Viagem - Data Aplicacao com diferenca temporal real (inclui horario) antes do arredondamento.
+    const advp2 = Math.round((dataViagem.getTime() - dataAplicacao.getTime()) / 86400000);
     return { raw: advp2, star: advp2 };
 };
 
@@ -180,7 +180,7 @@ const avg = (values) => {
     return sum(values) / values.length;
 };
 
-const buildEmptyRevenuePayload = (effectiveDir, preferredDir, rangeStart, rangeEnd, warnings = []) => ({
+const buildEmptyRevenuePayload = (effectiveDir, preferredDir, rangeStart, rangeEnd, warnings = [], includeRows = false) => ({
     meta: {
         baseDir: effectiveDir,
         requestedBaseDir: preferredDir,
@@ -209,10 +209,19 @@ const buildEmptyRevenuePayload = (effectiveDir, preferredDir, rangeStart, rangeE
         justificativa: [],
         analistaIndicador: [],
         rotasAplicadas: []
-    }
+    },
+    ...(includeRows ? { treatedRows: [] } : {})
 });
 
-const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, rangeEnd }) => {
+const formatExportDate = (value) => {
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) return '';
+    const day = String(value.getDate()).padStart(2, '0');
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const year = String(value.getFullYear());
+    return `${day}/${month}/${year}`;
+};
+
+const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, rangeEnd, includeRows = false }) => {
     const files = collectRevenueFiles(effectiveDir);
     if (!files.length) {
         return buildEmptyRevenuePayload(
@@ -220,7 +229,8 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
             preferredDir,
             rangeStart,
             rangeEnd,
-            ['Nenhum arquivo Revenue encontrado no diretorio selecionado.']
+            ['Nenhum arquivo Revenue encontrado no diretorio selecionado.'],
+            includeRows
         );
     }
 
@@ -285,6 +295,9 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
                     canalVenda,
                     justificativa,
                     analista,
+                    origem,
+                    destino,
+                    numServico,
                     rota,
                     advpRaw: advp.raw,
                     advpStar: advp.star,
@@ -481,7 +494,7 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
         }))
         .sort((a, b) => b.total - a.total);
 
-    return {
+    const basePayload = {
         meta: {
             baseDir: effectiveDir,
             requestedBaseDir: preferredDir,
@@ -515,6 +528,50 @@ const buildRevenueDashboardPayload = ({ effectiveDir, preferredDir, rangeStart, 
             rotasAplicadas
         }
     };
+
+    if (!includeRows) return basePayload;
+
+    const treatedRows = rows.map((row) => {
+        const advpTimeDiff = row.dataViagem instanceof Date
+            ? (row.dataViagem.getTime() - row.dataAplicacao.getTime()) / 86400000
+            : null;
+        const advpRoundByTime = Number.isFinite(advpTimeDiff) ? Math.round(advpTimeDiff) : null;
+        const advpFloorByTime = Number.isFinite(advpTimeDiff) ? Math.floor(advpTimeDiff) : null;
+        const advpCeilByTime = Number.isFinite(advpTimeDiff) ? Math.ceil(advpTimeDiff) : null;
+
+        return {
+            DataAplicacao: formatExportDate(row.dataAplicacao),
+            DataViagem: formatExportDate(row.dataViagem),
+            ADVP_Bruto: Number.isFinite(row.advpRaw) ? row.advpRaw : null,
+            ADVP_UsadoMapaFaixa: Number.isFinite(row.advpStar) ? row.advpStar : null,
+            FaixaMapa: row.faixaMapa,
+            ADVP_DiasExatoComHora: Number.isFinite(advpTimeDiff) ? Number(advpTimeDiff.toFixed(5)) : null,
+            ADVP_RoundPorHora: Number.isFinite(advpRoundByTime) ? advpRoundByTime : null,
+            ADVP_FloorPorHora: Number.isFinite(advpFloorByTime) ? advpFloorByTime : null,
+            ADVP_CeilPorHora: Number.isFinite(advpCeilByTime) ? advpCeilByTime : null,
+            Faixa_RoundPorHora: buildFaixaAdvp(advpRoundByTime),
+            Faixa_FloorPorHora: buildFaixaAdvp(advpFloorByTime),
+            Faixa_CeilPorHora: buildFaixaAdvp(advpCeilByTime),
+            RevenueAplicado: Number.isFinite(row.revenueAplicado) ? Number(row.revenueAplicado.toFixed(2)) : null,
+            StatusRevenue: row.statusRevenue,
+            StatusBucket: row.statusBucket,
+            Indicador: row.indicador,
+            IndicadorBucket: row.indicadorBucket,
+            CanalVenda: row.canalVenda,
+            Justificativa: row.justificativa,
+            Analista: row.analista,
+            Origem: row.origem,
+            Destino: row.destino,
+            NumeroServico: row.numServico,
+            RotaPadronizada: row.rota,
+            DataAplicacaoISO: row.dataAplicacaoKey
+        };
+    });
+
+    return {
+        ...basePayload,
+        treatedRows
+    };
 };
 
 const main = () => {
@@ -539,7 +596,8 @@ const main = () => {
             effectiveDir,
             preferredDir,
             rangeStart,
-            rangeEnd
+            rangeEnd,
+            includeRows: Boolean(workerData?.includeRows)
         });
 
         parentPort?.postMessage({ payload });

@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Database,
+  Download,
   FolderOpen,
   Gauge,
   RefreshCw,
@@ -244,6 +245,7 @@ const ApresentacoesView = () => {
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<RevenuePayload | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [revenueAppliedMode, setRevenueAppliedMode] = useState<'numero' | 'percentual'>('numero');
   const [revenueAppliedGranularity, setRevenueAppliedGranularity] = useState<'diario' | 'mensal'>('diario');
   const [totalRevenueMode, setTotalRevenueMode] = useState<'numero' | 'percentual'>('numero');
@@ -369,6 +371,42 @@ const ApresentacoesView = () => {
       // Silencioso: usuario ainda pode informar o diretorio manualmente.
     }
   };
+
+  const handleDownloadTreatedData = useCallback(async () => {
+    if (exporting) return;
+
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({
+        startDate: toIsoDate(startDate),
+        endDate: toIsoDate(endDate),
+        baseDir,
+      });
+
+      const response = await fetch(`/api/revenue-dashboard-export?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error('Falha ao gerar exportacao.');
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get('content-disposition') || '';
+      const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+      const filename = filenameMatch?.[1] || `revenue_tratado_${toIsoDate(startDate)}_${toIsoDate(endDate)}.xlsx`;
+
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setError('Nao foi possivel exportar os dados tratados em Excel.');
+    } finally {
+      setExporting(false);
+    }
+  }, [baseDir, endDate, exporting, startDate]);
 
   const daySeries = payload?.series.revenueAplicadoPorDia || [];
   const totalGauge = payload?.series.totalRevenueAplicado || [];
@@ -564,10 +602,21 @@ const ApresentacoesView = () => {
           title="Filtro de datas"
           subtitle="Unico filtro de negocio desta tela"
           rightSlot={
-            <Button className="h-[44px] bg-cyan-600 px-4 hover:bg-cyan-700" onClick={() => refreshData({ force: true })} disabled={loading}>
-              <RefreshCw size={15} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                className="h-[44px] border-cyan-200 px-4 text-cyan-700 hover:bg-cyan-50"
+                onClick={handleDownloadTreatedData}
+                disabled={loading || exporting}
+              >
+                <Download size={15} className={`mr-2 ${exporting ? 'animate-pulse' : ''}`} />
+                {exporting ? 'Gerando...' : 'Baixar dados'}
+              </Button>
+              <Button className="h-[44px] bg-cyan-600 px-4 hover:bg-cyan-700" onClick={() => refreshData({ force: true })} disabled={loading || exporting}>
+                <RefreshCw size={15} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
           }
         />
 
