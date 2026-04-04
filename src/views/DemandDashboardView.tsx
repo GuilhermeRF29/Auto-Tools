@@ -5,12 +5,24 @@ import {
   CalendarDays,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Database,
   Filter,
   FolderOpen,
   Minus,
   Plus,
   RefreshCw,
+  Download,
+  AlertCircle,
+  Clock,
+  RotateCcw,
+  Maximize2,
+  Calendar,
+  X,
+  Target,
+  BarChart4,
+  LayoutDashboard,
+  Search,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import Card from '../components/Card';
@@ -24,6 +36,7 @@ const WEEK_BUCKETS = ['0 a 07', '08 a 14', '15 a 21', '22 a 30', '31 a 59', '60+
 const HYBRID_BUCKETS = ['08 a 14', '15 a 21', '22 a 30', '31 a 59', '60+'] as const;
 const META_BY_BUCKET: Record<string, number> = {
   TOTAL: 0.4,
+  '0 a 07': 0.5,
   '08 a 14': 0.4,
   '15 a 21': 0.3,
   '22 a 30': 0.2,
@@ -211,6 +224,7 @@ const DemandDashboardView = () => {
   const [selectedMarkets, setSelectedMarkets] = useState<Set<string>>(new Set());
   const [expandedMarkets, setExpandedMarkets] = useState<Set<string>>(new Set());
   const [refreshAt, setRefreshAt] = useState<Date | null>(null);
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
   const lastObservationRef = useRef<string>('');
 
@@ -297,6 +311,18 @@ const DemandDashboardView = () => {
     [payload?.meta.observationDates],
   );
 
+  const requestSort = (key: string) => {
+    setSortConfig((prev) => {
+      if (prev?.key === key && prev.direction === 'asc') return { key, direction: 'desc' };
+      return { key, direction: 'asc' };
+    });
+  };
+
+  const getSortIcon = (key: string) => {
+    if (sortConfig?.key !== key) return <ChevronDown size={12} className="ml-1 opacity-20" />;
+    return sortConfig.direction === 'asc' ? <ChevronUp size={12} className="ml-1 text-blue-400" /> : <ChevronDown size={12} className="ml-1 text-blue-400" />;
+  };
+
   const travelOptions = payload?.travelDateOptions || [];
   const travelOptionSet = useMemo(() => new Set(travelOptions.map((item) => item.date)), [travelOptions]);
 
@@ -334,12 +360,22 @@ const DemandDashboardView = () => {
     });
   }, [payload?.historyRows, payload?.meta.selectedObservationDate, payload?.meta.historyObservationDate, selectedMarkets, selectedTravelDates]);
 
-  const totals = useMemo(() => aggregateRows(filteredRows), [filteredRows]);
+  const marketFilteredRows = useMemo(() => {
+    const rows = payload?.rows || [];
+    return rows.filter((row) => selectedMarkets.has(row.mercado));
+  }, [payload?.rows, selectedMarkets]);
+
+  const marketFilteredHistoryRows = useMemo(() => {
+    const rows = payload?.historyRows || [];
+    return rows.filter((row) => selectedMarkets.has(row.mercado));
+  }, [payload?.historyRows, selectedMarkets]);
+
+  const totals = useMemo(() => aggregateRows(marketFilteredRows), [marketFilteredRows]);
   const apvTotal = safeRatio(totals) || 0;
 
-  const apv7 = useMemo(() => safeRatio(aggregateRows(filteredRows.filter((row) => row.advp >= -1 && row.advp <= 7))) || 0, [filteredRows]);
-  const apv14 = useMemo(() => safeRatio(aggregateRows(filteredRows.filter((row) => row.advp >= 8 && row.advp <= 14))) || 0, [filteredRows]);
-  const apv21 = useMemo(() => safeRatio(aggregateRows(filteredRows.filter((row) => row.advp >= 15 && row.advp <= 21))) || 0, [filteredRows]);
+  const apv7 = useMemo(() => safeRatio(aggregateRows(marketFilteredRows.filter((row) => row.advp >= -1 && row.advp <= 7))) || 0, [marketFilteredRows]);
+  const apv14 = useMemo(() => safeRatio(aggregateRows(marketFilteredRows.filter((row) => row.advp >= 8 && row.advp <= 14))) || 0, [marketFilteredRows]);
+  const apv21 = useMemo(() => safeRatio(aggregateRows(marketFilteredRows.filter((row) => row.advp >= 15 && row.advp <= 21))) || 0, [marketFilteredRows]);
 
   const weekTable = useMemo(() => {
     const table = new Map<string, {
@@ -349,7 +385,7 @@ const DemandDashboardView = () => {
       companies: Map<string, { company: string; buckets: Record<string, Agg>; total: Agg }>;
     }>();
 
-    filteredRows.forEach((row) => {
+    marketFilteredRows.forEach((row) => {
       const bucket = bucketFromAdvp(row.advp);
       if (!bucket) return;
 
@@ -381,6 +417,18 @@ const DemandDashboardView = () => {
 
     const rows = Array.from(table.values()).sort((a, b) => {
       const selectedOrder = Array.from(selectedMarkets);
+      if (sortConfig?.key === 'market') {
+        const cmp = a.market.localeCompare(b.market);
+        return sortConfig.direction === 'asc' ? cmp : -cmp;
+      }
+      if (sortConfig?.key === 'total') {
+        const cmp = safeRatio(a.total) - safeRatio(b.total);
+        return sortConfig.direction === 'asc' ? cmp : -cmp;
+      }
+      if (sortConfig && WEEK_BUCKETS.includes(sortConfig.key)) {
+        const cmp = safeRatio(a.buckets[sortConfig.key]) - safeRatio(b.buckets[sortConfig.key]);
+        return sortConfig.direction === 'asc' ? cmp : -cmp;
+      }
       return selectedOrder.indexOf(a.market) - selectedOrder.indexOf(b.market);
     });
 
@@ -461,12 +509,12 @@ const DemandDashboardView = () => {
   const hybridTable = useMemo(() => {
     const markets = Array.from(selectedMarkets);
 
-    const rows = markets.map((market) => {
+    const rowsData = markets.map((market) => {
       const dayAgg = new Map<string, Agg>();
       const bucketAgg: Record<string, Agg> = Object.fromEntries(HYBRID_BUCKETS.map((bucket) => [bucket, emptyAgg()]));
       const totalAgg = emptyAgg();
 
-      filteredRows.forEach((row) => {
+      marketFilteredRows.forEach((row) => {
         if (row.mercado !== market) return;
 
         if (row.advp >= -1 && row.advp <= 7 && selectedTravelDates.has(row.travelDate)) {
@@ -482,6 +530,23 @@ const DemandDashboardView = () => {
       });
 
       return { market, dayAgg, bucketAgg, totalAgg };
+    });
+
+    const rows = rowsData.sort((a, b) => {
+      if (sortConfig?.key === 'market') {
+        const cmp = String(a.market).localeCompare(String(b.market));
+        return sortConfig.direction === 'asc' ? cmp : -cmp;
+      }
+      if (sortConfig?.key === 'total') {
+        const cmp = safeRatio(a.totalAgg) - safeRatio(b.totalAgg);
+        return sortConfig.direction === 'asc' ? cmp : -cmp;
+      }
+      if (sortConfig && HYBRID_BUCKETS.includes(sortConfig.key as any)) {
+        const cmp = safeRatio(a.bucketAgg[sortConfig.key]) - safeRatio(b.bucketAgg[sortConfig.key]);
+        return sortConfig.direction === 'asc' ? cmp : -cmp;
+      }
+      const selectedOrder = Array.from(selectedMarkets);
+      return selectedOrder.indexOf(a.market) - selectedOrder.indexOf(b.market);
     });
 
     const totalDayAgg = new Map<string, Agg>();
@@ -505,13 +570,30 @@ const DemandDashboardView = () => {
     });
 
     const historyBucketAgg: Record<string, Agg> = Object.fromEntries(HYBRID_BUCKETS.map((bucket) => [bucket, emptyAgg()]));
+    const historyDayAgg = new Map<string, Agg>();
     const historyTotal = emptyAgg();
 
-    filteredHistoryRows.forEach((row) => {
+    const selectedObserved = payload?.meta.selectedObservationDate ? new Date(`${payload.meta.selectedObservationDate}T00:00:00`) : null;
+    const historyObserved = payload?.meta.historyObservationDate ? new Date(`${payload.meta.historyObservationDate}T00:00:00`) : null;
+
+    marketFilteredHistoryRows.forEach((row) => {
+      // Buckets
       const bucket = bucketFromAdvp(row.advp);
       if (bucket && HYBRID_BUCKETS.includes(bucket as any)) {
         addAgg(historyBucketAgg[bucket], row);
         addAgg(historyTotal, row);
+      }
+
+      // Days (mapped by offset)
+      if (historyObserved && selectedObserved) {
+        const rowDate = new Date(`${row.travelDate}T00:00:00`);
+        const offset = Math.round((rowDate.getTime() - historyObserved.getTime()) / 86400000);
+        if (offset >= -1 && offset <= 6) {
+          const mappedDate = new Date(selectedObserved.getFullYear(), selectedObserved.getMonth(), selectedObserved.getDate() + offset);
+          const mappedIso = mappedDate.toISOString().slice(0, 10);
+          if (!historyDayAgg.has(mappedIso)) historyDayAgg.set(mappedIso, emptyAgg());
+          addAgg(historyDayAgg.get(mappedIso)!, row);
+        }
       }
     });
 
@@ -521,9 +603,10 @@ const DemandDashboardView = () => {
       totalBucketAgg,
       totalAgg,
       historyBucketAgg,
+      historyDayAgg,
       historyTotal,
     };
-  }, [filteredRows, filteredHistoryRows, selectedMarkets, selectedTravelDates]);
+  }, [filteredRows, marketFilteredHistoryRows, marketFilteredRows, selectedMarkets, selectedTravelDates, payload?.meta.selectedObservationDate, payload?.meta.historyObservationDate]);
 
   const toggleMarket = (market: string) => {
     setSelectedMarkets((prev) => {
@@ -587,7 +670,7 @@ const DemandDashboardView = () => {
             </div>
             <div className="rounded-2xl border border-white/15 bg-white/10 p-3">
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100">Registros</p>
-              <p className="mt-1 text-2xl font-black">{formatInt(payload?.meta.records || 0)}</p>
+              <p className="mt-1 text-2xl font-black">{formatInt(marketFilteredRows.length)}</p>
             </div>
             <div className="rounded-2xl border border-white/15 bg-white/10 p-3">
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100">Obs selecionada</p>
@@ -903,43 +986,58 @@ const DemandDashboardView = () => {
             <p className="text-xs font-semibold text-slate-400">Com total, historico ano anterior, atual e meta</p>
           </div>
         </div>
-
         <div className="overflow-x-auto custom-scrollbar">
           <table className="w-full min-w-[1450px] border-separate border-spacing-0 text-xs">
             <thead>
               <tr className="bg-slate-900 text-white">
-                <th className="sticky left-0 z-20 min-w-[290px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Mercado</th>
+                <th className="sticky left-0 z-20 min-w-[290px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider cursor-pointer hover:bg-slate-800" onClick={() => requestSort('market')}>
+                  <div className="flex items-center">
+                    Mercado {getSortIcon('market')}
+                  </div>
+                </th>
                 {hybridColumns.dayColumns.map((item) => (
                   <th key={`hybrid-day-${item.date}`} className="min-w-[90px] px-2 py-2 text-center text-[10px] font-black uppercase tracking-wider">
                     <div>{formatDate(item.date)}</div>
                     <div className="text-[9px] text-slate-300">{item.offset >= 0 ? `D+${item.offset}` : `D${item.offset}`}</div>
                   </th>
                 ))}
-                <th className="min-w-[96px] border-l-2 border-dashed border-rose-300 px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider">Total</th>
                 {hybridColumns.bucketColumns.map((bucket) => (
-                  <th key={`hybrid-week-${bucket}`} className="min-w-[96px] border-l-2 border-dashed border-rose-300 px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider">{bucket}</th>
+                  <th 
+                    key={`hybrid-week-${bucket}`} 
+                    className="min-w-[96px] border-l-2 border-red-600 px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider cursor-pointer hover:bg-slate-800"
+                    onClick={() => requestSort(bucket)}
+                  >
+                    <div className="flex items-center justify-center">
+                      {bucket} {getSortIcon(bucket)}
+                    </div>
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {hybridTable.rows.map((line) => (
-                <tr key={`hybrid-${line.market}`}>
-                  <td className="sticky left-0 z-10 bg-white px-3 py-2 font-black text-slate-700">{line.market}</td>
+                <tr key={line.market} className="border-b border-slate-100/50 transition-colors hover:bg-slate-50">
+                  <td className="sticky left-0 z-20 bg-white/95 px-3 py-2 text-[11px] font-black text-slate-700 backdrop-blur-sm group-hover:bg-slate-50">
+                    <div className="flex items-center justify-between">
+                      <span className="truncate">{line.market}</span>
+                    </div>
+                  </td>
                   {hybridColumns.dayColumns.map((column) => {
                     const ratio = safeRatio(line.dayAgg.get(column.date));
                     return (
-                      <td key={`${line.market}-${column.date}`} style={{ backgroundColor: heatColor(ratio) }} className="px-2 py-2 text-center font-bold text-slate-700">
+                      <td key={column.date} style={{ backgroundColor: heatColor(ratio) }} className="px-2 py-2 text-center text-[11px] font-bold text-slate-800">
                         {formatPercent(ratio)}
                       </td>
                     );
                   })}
-                  <td style={{ backgroundColor: heatColor(safeRatio(line.totalAgg)) }} className="border-l-2 border-dashed border-rose-300 px-2 py-2 text-center font-black text-slate-800">
-                    {formatPercent(safeRatio(line.totalAgg))}
-                  </td>
-                  {hybridColumns.bucketColumns.map((bucket) => {
+                  {hybridColumns.bucketColumns.map((bucket, idx) => {
                     const ratio = safeRatio(line.bucketAgg[bucket]);
                     return (
-                      <td key={`${line.market}-${bucket}`} style={{ backgroundColor: heatColor(ratio) }} className="border-l-2 border-dashed border-rose-300 px-2 py-2 text-center font-black text-slate-800">
+                      <td 
+                        key={`${line.market}-${bucket}`} 
+                        style={{ backgroundColor: heatColor(ratio) }}
+                        className={cn("px-2 py-2 text-center font-black text-slate-800", idx === 0 ? "border-l-2 border-red-600" : "border-l border-slate-100/30")}
+                      >
                         {formatPercent(ratio)}
                       </td>
                     );
@@ -947,7 +1045,7 @@ const DemandDashboardView = () => {
                 </tr>
               ))}
             </tbody>
-            <tfoot>
+            <tfoot className="border-t-2 border-slate-200">
               <tr className="bg-slate-900 text-white">
                 <td className="sticky left-0 z-20 bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Total</td>
                 {hybridColumns.dayColumns.map((column) => (
@@ -955,48 +1053,70 @@ const DemandDashboardView = () => {
                     {formatPercent(safeRatio(hybridTable.totalDayAgg.get(column.date)))}
                   </td>
                 ))}
-                <td className="border-l-2 border-dashed border-slate-600 px-2 py-2 text-center text-[11px] font-black">{formatPercent(safeRatio(hybridTable.totalAgg))}</td>
-                {hybridColumns.bucketColumns.map((bucket) => (
-                  <td key={`hybrid-total-bucket-${bucket}`} className="border-l-2 border-dashed border-slate-600 px-2 py-2 text-center text-[11px] font-black">
+                {hybridColumns.bucketColumns.map((bucket, idx) => (
+                  <td key={`hybrid-total-bucket-${bucket}`} className={cn("px-2 py-2 text-center text-[11px] font-black", idx === 0 ? "border-l-2 border-red-600" : "border-l border-slate-700")}>
                     {formatPercent(safeRatio(hybridTable.totalBucketAgg[bucket]))}
                   </td>
                 ))}
               </tr>
 
-              <tr className="bg-slate-100 text-slate-700">
+              <tr className="bg-slate-100/80 text-slate-700">
                 <td className="sticky left-0 z-20 bg-slate-100 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Historico</td>
-                {hybridColumns.dayColumns.map((column) => (
-                  <td key={`hist-empty-${column.date}`} className="px-2 py-2 text-center text-[11px] font-black">-</td>
-                ))}
-                <td className="border-l-2 border-dashed border-rose-300 px-2 py-2 text-center text-[11px] font-black">{formatPercent(safeRatio(hybridTable.historyTotal))}</td>
-                {hybridColumns.bucketColumns.map((bucket) => (
-                  <td key={`hist-bucket-${bucket}`} className="border-l-2 border-dashed border-rose-300 px-2 py-2 text-center text-[11px] font-black">
-                    {formatPercent(safeRatio(hybridTable.historyBucketAgg[bucket]))}
-                  </td>
-                ))}
+                {hybridColumns.dayColumns.map((column) => {
+                  const item = dailyColumns.find(d => d.date === column.date);
+                  const isVisible = item && item.offset >= 6;
+                  const ratio = isVisible ? safeRatio(hybridTable.historyDayAgg.get(column.date)) : 0;
+                  return (
+                    <td key={`hist-day-${column.date}`} className="px-2 py-2 text-center text-[11px] font-bold">
+                      {isVisible ? formatPercent(ratio) : '-'}
+                    </td>
+                  );
+                })}
+                {hybridColumns.bucketColumns.map((bucket, idx) => {
+                  const ratio = safeRatio(hybridTable.historyBucketAgg[bucket]);
+                  return (
+                    <td key={`hist-bucket-${bucket}`} className={cn("px-2 py-2 text-center text-[11px] font-black", idx === 0 ? "border-l-2 border-red-600" : "border-l border-slate-300")}>
+                      {formatPercent(ratio)}
+                    </td>
+                  );
+                })}
               </tr>
 
-              <tr className="bg-cyan-50 text-cyan-900">
+              <tr className="bg-cyan-50/80 text-cyan-900 border-t border-cyan-100">
                 <td className="sticky left-0 z-20 bg-cyan-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Atual</td>
-                {hybridColumns.dayColumns.map((column) => (
-                  <td key={`atual-empty-${column.date}`} className="px-2 py-2 text-center text-[11px] font-black">-</td>
-                ))}
-                <td className="border-l-2 border-dashed border-rose-300 px-2 py-2 text-center text-[11px] font-black">{formatPercent(safeRatio(hybridTable.totalAgg))}</td>
-                {hybridColumns.bucketColumns.map((bucket) => (
-                  <td key={`atual-bucket-${bucket}`} className="border-l-2 border-dashed border-rose-300 px-2 py-2 text-center text-[11px] font-black">
-                    {formatPercent(safeRatio(hybridTable.totalBucketAgg[bucket]))}
-                  </td>
-                ))}
+                {hybridColumns.dayColumns.map((column) => {
+                  const item = dailyColumns.find(d => d.date === column.date);
+                  const isVisible = item && item.offset >= 6;
+                  const ratio = isVisible ? safeRatio(hybridTable.totalDayAgg.get(column.date)) : 0;
+                  return (
+                    <td key={`atual-day-${column.date}`} className="px-2 py-2 text-center text-[11px] font-bold">
+                      {isVisible ? formatPercent(ratio) : '-'}
+                    </td>
+                  );
+                })}
+                {hybridColumns.bucketColumns.map((bucket, idx) => {
+                  const ratio = safeRatio(hybridTable.totalBucketAgg[bucket]);
+                  return (
+                    <td key={`atual-bucket-${bucket}`} className={cn("px-2 py-2 text-center text-[11px] font-black", idx === 0 ? "border-l-2 border-red-600" : "border-l border-cyan-200")}>
+                      {formatPercent(ratio)}
+                    </td>
+                  );
+                })}
               </tr>
 
-              <tr className="bg-amber-50 text-amber-900">
+              <tr className="bg-amber-50/80 text-amber-900 border-t border-amber-100">
                 <td className="sticky left-0 z-20 bg-amber-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Meta</td>
-                {hybridColumns.dayColumns.map((column) => (
-                  <td key={`meta-empty-${column.date}`} className="px-2 py-2 text-center text-[11px] font-black">-</td>
-                ))}
-                <td className="border-l-2 border-dashed border-rose-300 px-2 py-2 text-center text-[11px] font-black">{formatPercent(META_BY_BUCKET.TOTAL)}</td>
-                {hybridColumns.bucketColumns.map((bucket) => (
-                  <td key={`meta-bucket-${bucket}`} className="border-l-2 border-dashed border-rose-300 px-2 py-2 text-center text-[11px] font-black">
+                {hybridColumns.dayColumns.map((column) => {
+                  const item = dailyColumns.find(d => d.date === column.date);
+                  const isVisible = item && item.offset >= 6;
+                  return (
+                    <td key={`meta-day-${column.date}`} className="px-2 py-2 text-center text-[11px] font-bold">
+                      {isVisible ? formatPercent(0.5) : '-'}
+                    </td>
+                  );
+                })}
+                {hybridColumns.bucketColumns.map((bucket, idx) => (
+                  <td key={`meta-bucket-${bucket}`} className={cn("px-2 py-2 text-center text-[11px] font-black", idx === 0 ? "border-l-2 border-red-600" : "border-l border-amber-200")}>
                     {formatPercent(META_BY_BUCKET[bucket] || 0)}
                   </td>
                 ))}
