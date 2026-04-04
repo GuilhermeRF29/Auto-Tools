@@ -370,12 +370,42 @@ const DemandDashboardView = () => {
     return rows.filter((row) => selectedMarkets.has(row.mercado));
   }, [payload?.historyRows, selectedMarkets]);
 
+  const travelDatesSorted = useMemo(() => {
+    const dates = Array.from(new Set(marketFilteredRows.map((r) => r.travelDate)));
+    return dates.sort();
+  }, [marketFilteredRows]);
+
+  const minTravelDate = travelDatesSorted[0];
+  const maxTravelDate = travelDatesSorted[travelDatesSorted.length - 1];
+
   const totals = useMemo(() => aggregateRows(marketFilteredRows), [marketFilteredRows]);
   const apvTotal = safeRatio(totals) || 0;
 
-  const apv7 = useMemo(() => safeRatio(aggregateRows(marketFilteredRows.filter((row) => row.advp >= -1 && row.advp <= 7))) || 0, [marketFilteredRows]);
-  const apv14 = useMemo(() => safeRatio(aggregateRows(marketFilteredRows.filter((row) => row.advp >= 8 && row.advp <= 14))) || 0, [marketFilteredRows]);
-  const apv21 = useMemo(() => safeRatio(aggregateRows(marketFilteredRows.filter((row) => row.advp >= 15 && row.advp <= 21))) || 0, [marketFilteredRows]);
+  const apv7 = useMemo(() => {
+    if (!minTravelDate) return 0;
+    const start = new Date(`${minTravelDate}T00:00:00`);
+    const end = new Date(start.getTime() + 6 * 86400000);
+    const endIso = end.toISOString().slice(0, 10);
+    return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= minTravelDate && r.travelDate <= endIso))) || 0;
+  }, [marketFilteredRows, minTravelDate]);
+
+  const apv14 = useMemo(() => {
+    if (!minTravelDate) return 0;
+    const start = new Date(new Date(`${minTravelDate}T00:00:00`).getTime() + 7 * 86400000);
+    const end = new Date(start.getTime() + 6 * 86400000);
+    const startIso = start.toISOString().slice(0, 10);
+    const endIso = end.toISOString().slice(0, 10);
+    return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
+  }, [marketFilteredRows, minTravelDate]);
+
+  const apv21 = useMemo(() => {
+    if (!maxTravelDate) return 0;
+    const end = new Date(`${maxTravelDate}T00:00:00`);
+    const start = new Date(end.getTime() - 6 * 86400000);
+    const startIso = start.toISOString().slice(0, 10);
+    const endIso = end.toISOString().slice(0, 10);
+    return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
+  }, [marketFilteredRows, maxTravelDate]);
 
   const weekTable = useMemo(() => {
     const table = new Map<string, {
