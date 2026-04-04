@@ -7,7 +7,7 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Play, Download, CheckCircle, ShieldCheck, FileSpreadsheet,
   AlertCircle, Loader2, ChevronRight, Lock,
-  Settings, Activity, Layers, Zap, FolderOpen, BarChart3
+  Settings, Activity, Layers, Zap, FolderOpen, BarChart3, TrendingUp
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -80,7 +80,7 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
       {/* Dashboards e Apresentacoes */}
       <section>
         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 ml-1">Dashboards e Apresentacoes</h3>
-        <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Card
             onClick={() => setView('presentations')}
             className="p-5 hover:border-cyan-300 transition-all bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-900 text-white"
@@ -92,6 +92,21 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
               </div>
               <div className="p-3 rounded-2xl transition-all bg-white/15 text-white group-hover:bg-cyan-400 group-hover:text-slate-950 group-hover:scale-110 shadow-sm">
                 <BarChart3 size={20} />
+              </div>
+            </div>
+          </Card>
+
+          <Card
+            onClick={() => setView('demand')}
+            className="p-5 hover:border-emerald-300 transition-all bg-gradient-to-br from-slate-900 via-emerald-900 to-cyan-900 text-white"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className="font-black text-white group-hover:text-emerald-100 transition-colors">Dashboard de Demanda</h4>
+                <p className="text-[10px] text-emerald-100/90 mt-1 font-bold uppercase tracking-tight">Abrir APV por mercado, ADVP e janela D-1 ate D60</p>
+              </div>
+              <div className="p-3 rounded-2xl transition-all bg-white/15 text-white group-hover:bg-emerald-400 group-hover:text-slate-950 group-hover:scale-110 shadow-sm">
+                <TrendingUp size={20} />
               </div>
             </div>
           </Card>

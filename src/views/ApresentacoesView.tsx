@@ -342,6 +342,10 @@ const ApresentacoesView = () => {
 
   useEffect(() => {
     const interval = window.setInterval(() => {
+      if (activeRequestRef.current) {
+        return;
+      }
+
       const currentDay = new Date().toDateString();
       if (dayWatcherRef.current !== currentDay) {
         dayWatcherRef.current = currentDay;
@@ -496,12 +500,12 @@ const ApresentacoesView = () => {
 
   const rotasResumo = useMemo(() => {
     const totalContagem = rotas.reduce((acc, item) => acc + Number(item.total || 0), 0);
-    const somaPonderada = rotas.reduce((acc, item) => acc + Number(item.mediaRevenueAplicado || 0) * Number(item.total || 0), 0);
+    const mediaGlobal = Number(payload?.kpis?.mediaRevenueAplicado || 0);
     return {
       totalContagem,
-      mediaGeral: totalContagem > 0 ? somaPonderada / totalContagem : 0,
+      mediaGeral: totalContagem > 0 ? mediaGlobal : 0,
     };
-  }, [rotas]);
+  }, [payload?.kpis?.mediaRevenueAplicado, rotas]);
 
   const aprovadosPercentual = useMemo(() => {
     const total = Number(payload?.kpis.totalRegistros || 0);
@@ -540,13 +544,13 @@ const ApresentacoesView = () => {
   const faixaResumo = useMemo(() => {
     const totalQtd = faixa.reduce((acc, item) => acc + Number(item.qtdAdvp || 0), 0);
     const totalPercentual = totalQtd > 0 ? 100 : 0;
-    const somaPonderada = faixa.reduce((acc, item) => acc + Number(item.mediaRevenueAplicado || 0) * Number(item.qtdAdvp || 0), 0);
+    const mediaGlobal = Number(payload?.kpis?.mediaRevenueAplicado || 0);
     return {
       totalQtd,
       totalPercentual,
-      mediaGeral: totalQtd > 0 ? somaPonderada / totalQtd : 0,
+      mediaGeral: totalQtd > 0 ? mediaGlobal : 0,
     };
-  }, [faixa]);
+  }, [faixa, payload?.kpis?.mediaRevenueAplicado]);
 
   const percentualFormatter: ValueFormatter = (value) => `${value.toFixed(2)}%`;
   const numeroFormatter: ValueFormatter = (value) => formatInteger(value);

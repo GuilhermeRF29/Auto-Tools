@@ -13,58 +13,11 @@ import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 from core.banco import BASE_DIR, ASSETS_DIR
-
-
-# Importar Google só quando necessário ou agora, mas já demos o feedback
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+from core.google_auth import obter_servico_gmail
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Side
 
-
-# ==========================================
-# CONFIGURAÇÕES GMAIL
-# ==========================================
-SCOPES = [
-    'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/userinfo.email',
-    'openid'
-]
-
-def obter_servico_gmail():
-    """Realiza a autenticação e retorna o serviço da API do Gmail."""
-    # O token.json fica na pasta do executável (para persistir entre as execuções)
-    TOKEN_PATH = BASE_DIR / "token.json"
-    # O credentials.json foi embutido no .exe, então buscamos nos ASSETS
-    CREDS_PATH = ASSETS_DIR / "credentials.json"
-
-    creds = None
-    if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not CREDS_PATH.exists():
-                raise FileNotFoundError(f"Arquivo credentials.json não encontrado em: {CREDS_PATH}")
-            
-            flow = InstalledAppFlow.from_client_secrets_file(str(CREDS_PATH), SCOPES)
-            creds = flow.run_local_server(
-                port=0, 
-                success_message='Autenticação OK! Pode fechar esta aba e voltar ao Python.'
-            )
-        with open(TOKEN_PATH, 'w') as token:
-            token.write(creds.to_json())
-
-    service = build('gmail', 'v1', credentials=creds)
-    info_service = build('oauth2', 'v2', credentials=creds)
-    user_info = info_service.userinfo().get().execute()
-    
-    return service, user_info.get('email')
 
 def baixar_anexos_especificos(service, pasta_alvo, nomes_procurados, data_inicio=None, data_fim=None, callback_progresso=None):
     """
@@ -154,7 +107,9 @@ def baixar_anexos_especificos(service, pasta_alvo, nomes_procurados, data_inicio
 # TRATAMENTO DE DADOS
 # ==========================================
 
-def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho_base_principal=None, datas_filtro=None):
+def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho_base_principal=None, datas_filtro=None, callback_progresso=None):
+    if callback_progresso:
+        callback_progresso(0.60, "Iniciando leitura dos pacotes locais e preparação de consolidação pandas...")
     print("Iniciando leitura e tratamento dos dados...")
 
     dfs = []
@@ -185,11 +140,14 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
         print(f"[DATA] Base Share carregada: {len(df2)} linhas.")
 
     if not dfs:
+        if callback_progresso: callback_progresso(0.65, "[Aviso] Nenhum dado localizado nos arquivos de entrada.")
         print("[AVISO] Nenhum dado encontrado para as bases especificadas.")
         return
 
     df_consolidado = pd.concat(dfs, ignore_index=True)
-
+    if callback_progresso:
+        callback_progresso(0.65, f"Arquivos unificados com sucesso. Total bruto: {len(df_consolidado)} registros. Aplicando regras de negócio e validações...")
+    
     # FILTRO DE DATAS
     if datas_filtro:
         df_consolidado['DATA'] = pd.to_datetime(df_consolidado['DATA'], errors='coerce')
@@ -274,6 +232,8 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
     df_consolidado['DATA'] = df_consolidado['DATA'].dt.date
 
     # 4. EXPORTAÇÃO E FORMATAÇÃO (EVITANDO DUPLICATAS)
+    if callback_progresso:
+        callback_progresso(0.75, "Sanitização de caracteres completada. Verificando dados históricos e identificando eventuais duplicatas de viagem...")
     print("Verificando duplicatas e preparando salvamento...")
     ordem_colunas = ['DATA', 'Nº Mês', 'MÊS', 'EMPRESA', 'ORIGEM', 'DESTINO', 'SERVIÇO', 'HORÁRIO', 'PAX', 'SEMANA', 'IPV', 'GRUPO', 'MODALIDADE', 'Ano']
     
@@ -328,9 +288,11 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
         df_final = df_final[~df_final_temp['KEY'].isin(chaves_existentes)].copy()
         
         if df_final.empty:
+            if callback_progresso: callback_progresso(0.85, "Nenhum dado novo encontrado. Toda a massa processada já se encontrava na base histórica.")
             print("[INFO] Todos os dados processados ja constam na base principal. Nada a adicionar.")
             return
         else:
+            if callback_progresso: callback_progresso(0.85, f"Sucesso! Mapeadas {len(df_final)} novas viagens de ônibus inéditas para inclusão!")
             print(f"[INFO] Adicionando {len(df_final)} novas linhas ineditas...")
             
     except Exception as e:
@@ -346,6 +308,8 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
     estilo_borda = Side(border_style="thin", color="000000")
     borda_fina = Border(top=estilo_borda, left=estilo_borda, right=estilo_borda, bottom=estilo_borda)
     alinhamento_centro = Alignment(horizontal='center', vertical='center')
+
+    if callback_progresso: callback_progresso(0.92, "Descarregando células limpas no documento Excel (Aplicando Borders e Formatadores de Data)...")
 
     for row_idx, row_data in enumerate(df_final.values, start=start_row):
         for col_idx, value in enumerate(row_data, start=1):
@@ -383,7 +347,7 @@ def executar_sr(
 ):
     """Executa SR com suporte a modos modulares sem quebrar compatibilidade."""
     if callback_progresso:
-        callback_progresso(0.01, "Inicializando Robô SR...")
+        callback_progresso(0.01, f"Robô SR Acionado ({modo_execucao}): Construindo trilhas lógicas e mapeando diretórios...")
 
     modos_validos = {
         "completo",
@@ -573,10 +537,11 @@ def executar_sr(
                 caminho_share=None,
                 caminho_base_principal=str(arquivo_saida_principal),
                 datas_filtro=montar_lista_datas_base(),
+                callback_progresso=callback_progresso
             )
 
             if callback_progresso:
-                callback_progresso(1.0, "Concluído com sucesso!")
+                callback_progresso(1.0, f"Módulo SR Finalizado: Estrutura lógica exportada para a pasta padrão sem pendências.")
 
             return {
                 "arquivo_principal": str(arquivo_saida_principal),
@@ -611,10 +576,11 @@ def executar_sr(
                 caminho_share=arquivos_locais.get("Share - Mercado RIO"),
                 caminho_base_principal=str(arquivo_saida_principal),
                 datas_filtro=montar_lista_datas_base(),
+                callback_progresso=callback_progresso
             )
 
             if callback_progresso:
-                callback_progresso(1.0, "Concluído com sucesso!")
+                callback_progresso(1.0, f"Módulo SR Finalizado: Os arquivos locais foram limpos, unificados e sincronizados na base RIO X SP.")
 
             return {
                 "arquivo_principal": str(arquivo_saida_principal),
@@ -694,7 +660,7 @@ def executar_sr(
             }
 
         if callback_progresso:
-            callback_progresso(0.6, "Iniciando processamento da base...")
+            callback_progresso(0.6, "Iniciando processamento interno de normalização (Lendo anexos em memória)...")
 
         preparar_base_saida()
         tratar_e_consolidar_bases(
@@ -702,10 +668,11 @@ def executar_sr(
             caminho_share=arquivos.get("Share - Mercado RIO"),
             caminho_base_principal=str(arquivo_saida_principal),
             datas_filtro=montar_lista_datas_base(),
+            callback_progresso=callback_progresso
         )
 
         if callback_progresso:
-            callback_progresso(1.0, "Concluído com sucesso!")
+            callback_progresso(1.0, "Fim da Operação 100%: Pipeline Gmail -> Tratamento -> Base Histórica transacionado!")
 
         return {
             "arquivo_principal": str(arquivo_saida_principal),
