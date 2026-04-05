@@ -248,15 +248,37 @@ const DemandDashboardView = () => {
   const [expandedMarkets, setExpandedMarkets] = useState<Set<string>>(new Set());
   const [refreshAt, setRefreshAt] = useState<Date | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
-  const tableRef = useRef<HTMLDivElement>(null);
+  const [showRemovedDatesTable, setShowRemovedDatesTable] = useState(false);
+  const tableRef = useRef<HTMLTableElement>(null);
 
   const lastObservationRef = useRef<string>('');
   const stats = payload?.meta?.stats || {};
 
   const handleExportImage = async () => {
     if (!tableRef.current) return;
+    const exportRoot = document.createElement('div');
+    const tableClone = tableRef.current.cloneNode(true) as HTMLTableElement;
+
+    exportRoot.style.position = 'fixed';
+    exportRoot.style.left = '-10000px';
+    exportRoot.style.top = '-10000px';
+    exportRoot.style.padding = '20px';
+    exportRoot.style.background = '#ffffff';
+    exportRoot.style.width = 'max-content';
+    exportRoot.style.maxWidth = 'none';
+
+    tableClone.style.minWidth = '0';
+    tableClone.style.width = 'max-content';
+
+    exportRoot.appendChild(tableClone);
+    document.body.appendChild(exportRoot);
+
     try {
-      const dataUrl = await toPng(tableRef.current, { cacheBust: true, backgroundColor: '#f9fafb' });
+      const dataUrl = await toPng(exportRoot, {
+        cacheBust: true,
+        backgroundColor: '#ffffff',
+        pixelRatio: 2,
+      });
       const link = document.createElement('a');
       link.download = `tabela_demanda_${payload?.meta?.selectedObservationDate}.png`;
       link.href = dataUrl;
@@ -264,6 +286,8 @@ const DemandDashboardView = () => {
     } catch (err) {
       console.error('Erro ao exportar imagem:', err);
       alert('Infelizmente não conseguimos gerar a imagem desta vez. Tente novamente.');
+    } finally {
+      document.body.removeChild(exportRoot);
     }
   };
 
@@ -486,11 +510,11 @@ const DemandDashboardView = () => {
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       if (sortConfig?.key === 'total') {
-        const cmp = safeRatio(a.total) - safeRatio(b.total);
+        const cmp = (safeRatio(a.total) || 0) - (safeRatio(b.total) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       if (sortConfig && WEEK_BUCKETS.includes(sortConfig.key)) {
-        const cmp = safeRatio(a.buckets[sortConfig.key]) - safeRatio(b.buckets[sortConfig.key]);
+        const cmp = (safeRatio(a.buckets[sortConfig.key]) || 0) - (safeRatio(b.buckets[sortConfig.key]) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       return selectedOrder.indexOf(a.market) - selectedOrder.indexOf(b.market);
@@ -513,7 +537,7 @@ const DemandDashboardView = () => {
       totalByBucket,
       grandTotal,
     };
-  }, [filteredRows, selectedMarkets]);
+  }, [marketFilteredRows, selectedMarkets, sortConfig]);
 
   const visibleTravelOptions = useMemo(
     () => travelOptions.filter((item) => selectedTravelDates.has(item.date)),
@@ -525,7 +549,17 @@ const DemandDashboardView = () => {
     [travelOptions, selectedTravelDates],
   );
 
-  const dailyColumns = useMemo(() => visibleTravelOptions.sort((a, b) => a.offset - b.offset), [visibleTravelOptions]);
+  const dailyColumns = useMemo(() => [...visibleTravelOptions].sort((a, b) => a.offset - b.offset), [visibleTravelOptions]);
+
+  const removedDailyColumns = useMemo(
+    () => [...removedTravelOptions].sort((a, b) => a.offset - b.offset),
+    [removedTravelOptions],
+  );
+
+  const removedTravelDateSet = useMemo(
+    () => new Set(removedDailyColumns.map((item) => item.date)),
+    [removedDailyColumns],
+  );
 
   const dailyTable = useMemo(() => {
     const marketRows = Array.from(selectedMarkets);
@@ -561,6 +595,42 @@ const DemandDashboardView = () => {
 
     return { data, totalByDate, grandTotal };
   }, [filteredRows, selectedMarkets, selectedTravelDates]);
+
+  const removedDailyTable = useMemo(() => {
+    const sourceRows = payload?.rows || [];
+    const marketRows = Array.from(selectedMarkets);
+
+    const data = marketRows.map((market) => {
+      const byDate = new Map<string, Agg>();
+      const total = emptyAgg();
+
+      sourceRows.forEach((row) => {
+        if (row.mercado !== market) return;
+        if (!removedTravelDateSet.has(row.travelDate)) return;
+
+        if (!byDate.has(row.travelDate)) byDate.set(row.travelDate, emptyAgg());
+        addAgg(byDate.get(row.travelDate)!, row);
+        addAgg(total, row);
+      });
+
+      return { market, byDate, total };
+    });
+
+    const totalByDate = new Map<string, Agg>();
+    const grandTotal = emptyAgg();
+
+    data.forEach((line) => {
+      line.byDate.forEach((agg, date) => {
+        if (!totalByDate.has(date)) totalByDate.set(date, emptyAgg());
+        totalByDate.get(date)!.ocupacao += agg.ocupacao;
+        totalByDate.get(date)!.capacidade += agg.capacidade;
+      });
+      grandTotal.ocupacao += line.total.ocupacao;
+      grandTotal.capacidade += line.total.capacidade;
+    });
+
+    return { data, totalByDate, grandTotal };
+  }, [payload?.rows, removedTravelDateSet, selectedMarkets]);
 
   const hybridColumns = useMemo(() => {
     const dayColumns = dailyColumns.filter((item) => item.offset >= -1 && item.offset <= 6);
@@ -603,11 +673,11 @@ const DemandDashboardView = () => {
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       if (sortConfig?.key === 'total') {
-        const cmp = safeRatio(a.totalAgg) - safeRatio(b.totalAgg);
+        const cmp = (safeRatio(a.totalAgg) || 0) - (safeRatio(b.totalAgg) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       if (sortConfig && HYBRID_BUCKETS.includes(sortConfig.key as any)) {
-        const cmp = safeRatio(a.bucketAgg[sortConfig.key]) - safeRatio(b.bucketAgg[sortConfig.key]);
+        const cmp = (safeRatio(a.bucketAgg[sortConfig.key]) || 0) - (safeRatio(b.bucketAgg[sortConfig.key]) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       const selectedOrder = Array.from(selectedMarkets);
@@ -892,7 +962,17 @@ const DemandDashboardView = () => {
 
         {removedTravelOptions.length > 0 && (
           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Datas removidas da analise</p>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Datas removidas da analise</p>
+              <button
+                type="button"
+                onClick={() => setShowRemovedDatesTable((prev) => !prev)}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-cyan-200 hover:text-cyan-700"
+              >
+                <Calendar size={12} />
+                {showRemovedDatesTable ? 'Ocultar Tabela' : `Tabela Removidas (${removedTravelOptions.length})`}
+              </button>
+            </div>
             <div className="flex flex-wrap gap-2">
               {removedTravelOptions.map((item) => (
                 <span key={item.date} className="rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black text-slate-500">
@@ -920,6 +1000,66 @@ const DemandDashboardView = () => {
           </div>
         )}
       </Card>
+
+      {showRemovedDatesTable && removedDailyColumns.length > 0 && (
+        <Card className="p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-2 text-amber-700 shadow-sm">
+              <CalendarDays size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">Tabela de datas removidas</h3>
+              <p className="text-xs font-semibold text-slate-400">Mesmo formato da tabela diaria, considerando apenas datas removidas</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto custom-scrollbar">
+            <table className="w-full min-w-[1200px] border-separate border-spacing-0 text-xs">
+              <thead>
+                <tr className="bg-slate-900 text-white">
+                  <th className="sticky left-0 z-20 min-w-[290px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Mercado</th>
+                  {removedDailyColumns.map((item) => (
+                    <th key={`removed-${item.date}`} className="min-w-[96px] px-2 py-2 text-center text-[10px] font-black uppercase tracking-wider">
+                      <div>{formatDate(item.date)}</div>
+                      <div className="text-[9px] text-slate-300">{item.offset >= 0 ? `D+${item.offset}` : `D${item.offset}`}</div>
+                    </th>
+                  ))}
+                  <th className="min-w-[100px] px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {removedDailyTable.data.map((line) => (
+                  <tr key={`removed-daily-${line.market}`}>
+                    <td className="sticky left-0 z-10 bg-white px-3 py-2 font-black text-slate-700">{line.market}</td>
+                    {removedDailyColumns.map((column) => {
+                      const ratio = safeRatio(line.byDate.get(column.date));
+                      return (
+                        <td key={`${line.market}-${column.date}`} style={{ backgroundColor: heatColor(ratio) }} className="px-2 py-2 text-center font-bold text-slate-700">
+                          {formatPercent(ratio)}
+                        </td>
+                      );
+                    })}
+                    <td style={{ backgroundColor: heatColor(safeRatio(line.total)) }} className="px-2 py-2 text-center font-black text-slate-800">
+                      {formatPercent(safeRatio(line.total))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-900 text-white">
+                  <td className="sticky left-0 z-20 bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Total</td>
+                  {removedDailyColumns.map((column) => (
+                    <td key={`removed-total-${column.date}`} className="px-2 py-2 text-center text-[11px] font-black">
+                      {formatPercent(safeRatio(removedDailyTable.totalByDate.get(column.date)))}
+                    </td>
+                  ))}
+                  <td className="px-2 py-2 text-center text-[11px] font-black">{formatPercent(safeRatio(removedDailyTable.grandTotal))}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </Card>
+      )}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
         <Card className="border-cyan-100 bg-gradient-to-br from-cyan-50 to-white p-5">
@@ -1118,16 +1258,11 @@ const DemandDashboardView = () => {
                 >
                   <Camera size={16} /> Salvar como Foto
                 </button>
-                <div className="h-8 w-px bg-slate-200" />
-                <div className="flex items-center gap-1.5 rounded-xl border border-red-100 bg-red-50/50 px-3 py-1.5 shadow-sm">
-                  <div className="h-2 w-2 animate-pulse rounded-full bg-red-600" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-red-700">Ao Vivo</span>
-                </div>
             </div>
           </div>
 
-          <div className="overflow-x-auto custom-scrollbar -mx-6 px-6" ref={tableRef}>
-          <table className="w-full min-w-[1450px] border-separate border-spacing-0 text-xs">
+          <div className="overflow-x-auto custom-scrollbar -mx-6 bg-white px-6">
+          <table ref={tableRef} className="w-full min-w-[1450px] border-separate border-spacing-0 text-xs">
             <thead>
               <tr className="bg-slate-900 text-white">
                 <th className="sticky left-0 z-20 min-w-[290px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">
@@ -1152,7 +1287,7 @@ const DemandDashboardView = () => {
             <tbody>
               {hybridTable.rows.map((line) => (
                 <tr key={line.market} className="border-b border-slate-100/50 transition-colors hover:bg-slate-50">
-                  <td className="sticky left-0 z-20 bg-white/95 px-3 py-2 text-[11px] font-black text-slate-700 backdrop-blur-sm group-hover:bg-slate-50 border-r border-slate-100">
+                  <td className="sticky left-0 z-20 min-w-[290px] bg-white px-3 py-2 text-[11px] font-black text-slate-700 border-r border-slate-100 shadow-[10px_0_12px_-12px_rgba(15,23,42,0.45)]">
                     <div className="flex items-center justify-between">
                       <span className="truncate">{line.market}</span>
                     </div>
@@ -1182,7 +1317,7 @@ const DemandDashboardView = () => {
             </tbody>
             <tfoot className="border-t-2 border-slate-200">
               <tr className="bg-slate-900 text-white">
-                <td className="sticky left-0 z-20 bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Total</td>
+                <td className="sticky left-0 z-20 min-w-[290px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Total</td>
                 {hybridColumns.dayColumns.map((column, idx) => {
                   const isLastDay = idx === hybridColumns.dayColumns.length - 1;
                   const ratio = isLastDay ? safeRatio(hybridTable.total07Agg) : safeRatio(hybridTable.totalDayAgg.get(column.date));
@@ -1200,7 +1335,7 @@ const DemandDashboardView = () => {
               </tr>
 
               <tr className="bg-slate-100/80 text-slate-700">
-                <td className="sticky left-0 z-20 bg-slate-100 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Historico</td>
+                <td className="sticky left-0 z-20 min-w-[290px] bg-slate-100 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Historico</td>
                 {hybridColumns.dayColumns.map((column, idx) => {
                   const item = dailyColumns.find(d => d.date === column.date);
                   const isLastDay = idx === hybridColumns.dayColumns.length - 1;
@@ -1225,7 +1360,7 @@ const DemandDashboardView = () => {
               </tr>
 
               <tr className="bg-cyan-50/80 text-cyan-900 border-t border-cyan-100">
-                <td className="sticky left-0 z-20 bg-cyan-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Atual</td>
+                <td className="sticky left-0 z-20 min-w-[290px] bg-cyan-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Atual</td>
                 {hybridColumns.dayColumns.map((column, idx) => {
                   const item = dailyColumns.find(d => d.date === column.date);
                   const isLastDay = idx === hybridColumns.dayColumns.length - 1;
@@ -1250,7 +1385,7 @@ const DemandDashboardView = () => {
               </tr>
 
               <tr className="bg-amber-50/80 text-amber-900 border-t border-amber-100">
-                <td className="sticky left-0 z-20 bg-amber-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Meta</td>
+                <td className="sticky left-0 z-20 min-w-[290px] bg-amber-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Meta</td>
                 {hybridColumns.dayColumns.map((column, idx) => {
                   const item = dailyColumns.find(d => d.date === column.date);
                   const isLastDay = idx === hybridColumns.dayColumns.length - 1;
