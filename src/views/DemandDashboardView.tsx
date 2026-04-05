@@ -23,8 +23,10 @@ import {
   BarChart4,
   LayoutDashboard,
   Search,
+  Camera,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { toPng } from 'html-to-image';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import CustomSelect from '../components/CustomSelect';
@@ -68,6 +70,20 @@ type DemandPayload = {
     selectedObservationDate: string | null;
     historyObservationDate: string | null;
     defaultMarkets: string[];
+    stats?: {
+      totalRead: number;
+      processed: number;
+      skippedDate: number;
+      skippedEmpty: number;
+      skippedNoValues?: number;
+      skippedAdvp: number;
+      skippedDuplicated?: number;
+    };
+    marketCoverage?: {
+      found: number;
+      known: number;
+      foundKnown?: number;
+    };
   };
   travelDateOptions: Array<{ date: string; offset: number }>;
   defaultTravelDateSelection: string[];
@@ -86,6 +102,13 @@ const formatDate = (iso: string) => {
   const dt = new Date(`${iso}T00:00:00`);
   if (Number.isNaN(dt.getTime())) return iso;
   return dt.toLocaleDateString('pt-BR');
+};
+
+const addDaysToIso = (iso: string, days: number) => {
+  const [year, month, day] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
 };
 
 const safeRatio = (agg: Agg | null | undefined) => {
@@ -225,8 +248,24 @@ const DemandDashboardView = () => {
   const [expandedMarkets, setExpandedMarkets] = useState<Set<string>>(new Set());
   const [refreshAt, setRefreshAt] = useState<Date | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
 
   const lastObservationRef = useRef<string>('');
+  const stats = payload?.meta?.stats || {};
+
+  const handleExportImage = async () => {
+    if (!tableRef.current) return;
+    try {
+      const dataUrl = await toPng(tableRef.current, { cacheBust: true, backgroundColor: '#f9fafb' });
+      const link = document.createElement('a');
+      link.download = `tabela_demanda_${payload?.meta?.selectedObservationDate}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error('Erro ao exportar imagem:', err);
+      alert('Infelizmente não conseguimos gerar a imagem desta vez. Tente novamente.');
+    }
+  };
 
   const loadData = useCallback(async ({ force = false, observationDate }: { force?: boolean; observationDate?: string } = {}) => {
     setLoading(true);
@@ -383,27 +422,22 @@ const DemandDashboardView = () => {
 
   const apv7 = useMemo(() => {
     if (!minTravelDate) return 0;
-    const start = new Date(`${minTravelDate}T00:00:00`);
-    const end = new Date(start.getTime() + 6 * 86400000);
-    const endIso = end.toISOString().slice(0, 10);
-    return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= minTravelDate && r.travelDate <= endIso))) || 0;
+    const startIso = minTravelDate;
+    const endIso = addDaysToIso(startIso, 6);
+    return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
   }, [marketFilteredRows, minTravelDate]);
 
   const apv14 = useMemo(() => {
     if (!minTravelDate) return 0;
-    const start = new Date(new Date(`${minTravelDate}T00:00:00`).getTime() + 7 * 86400000);
-    const end = new Date(start.getTime() + 6 * 86400000);
-    const startIso = start.toISOString().slice(0, 10);
-    const endIso = end.toISOString().slice(0, 10);
+    const startIso = addDaysToIso(minTravelDate, 7);
+    const endIso = addDaysToIso(minTravelDate, 13);
     return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
   }, [marketFilteredRows, minTravelDate]);
 
   const apv21 = useMemo(() => {
     if (!maxTravelDate) return 0;
-    const end = new Date(`${maxTravelDate}T00:00:00`);
-    const start = new Date(end.getTime() - 6 * 86400000);
-    const startIso = start.toISOString().slice(0, 10);
-    const endIso = end.toISOString().slice(0, 10);
+    const endIso = maxTravelDate;
+    const startIso = addDaysToIso(endIso, -6);
     return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
   }, [marketFilteredRows, maxTravelDate]);
 
@@ -541,7 +575,8 @@ const DemandDashboardView = () => {
 
     const rowsData = markets.map((market) => {
       const dayAgg = new Map<string, Agg>();
-      const bucketAgg: Record<string, Agg> = Object.fromEntries(HYBRID_BUCKETS.map((bucket) => [bucket, emptyAgg()]));
+      // Buckets: usar WEEK_BUCKETS para garantir que 0-7 seja capturado para o rodapé
+      const bucketAgg: Record<string, Agg> = Object.fromEntries(WEEK_BUCKETS.map((bucket) => [bucket, emptyAgg()]));
       const totalAgg = emptyAgg();
 
       marketFilteredRows.forEach((row) => {
@@ -553,7 +588,7 @@ const DemandDashboardView = () => {
         }
 
         const bucket = bucketFromAdvp(row.advp);
-        if (bucket && HYBRID_BUCKETS.includes(bucket as any)) {
+        if (bucket && WEEK_BUCKETS.includes(bucket as any)) {
           addAgg(bucketAgg[bucket], row);
           addAgg(totalAgg, row);
         }
@@ -580,7 +615,7 @@ const DemandDashboardView = () => {
     });
 
     const totalDayAgg = new Map<string, Agg>();
-    const totalBucketAgg: Record<string, Agg> = Object.fromEntries(HYBRID_BUCKETS.map((bucket) => [bucket, emptyAgg()]));
+    const totalBucketAgg: Record<string, Agg> = Object.fromEntries(WEEK_BUCKETS.map((bucket) => [bucket, emptyAgg()]));
     const totalAgg = emptyAgg();
     const total07Agg = emptyAgg();
 
@@ -589,22 +624,23 @@ const DemandDashboardView = () => {
         if (!totalDayAgg.has(date)) totalDayAgg.set(date, emptyAgg());
         totalDayAgg.get(date)!.ocupacao += agg.ocupacao;
         totalDayAgg.get(date)!.capacidade += agg.capacidade;
-        
-        // Accumulate 0-7 total for the day footer
-        total07Agg.ocupacao += agg.ocupacao;
-        total07Agg.capacidade += agg.capacidade;
       });
 
-      HYBRID_BUCKETS.forEach((bucket) => {
-        totalBucketAgg[bucket].ocupacao += row.bucketAgg[bucket].ocupacao;
-        totalBucketAgg[bucket].capacidade += row.bucketAgg[bucket].capacidade;
+      WEEK_BUCKETS.forEach((bucket) => {
+        const rowBucket = row.bucketAgg?.[bucket];
+        if (rowBucket) {
+          totalBucketAgg[bucket].ocupacao += Number(rowBucket.ocupacao || 0);
+          totalBucketAgg[bucket].capacidade += Number(rowBucket.capacidade || 0);
+        }
       });
 
       totalAgg.ocupacao += row.totalAgg.ocupacao;
       totalAgg.capacidade += row.totalAgg.capacidade;
+      total07Agg.ocupacao = totalBucketAgg['0 a 07'].ocupacao;
+      total07Agg.capacidade = totalBucketAgg['0 a 07'].capacidade;
     });
 
-    const historyBucketAgg: Record<string, Agg> = Object.fromEntries(HYBRID_BUCKETS.map((bucket) => [bucket, emptyAgg()]));
+    const historyBucketAgg: Record<string, Agg> = Object.fromEntries(WEEK_BUCKETS.map((bucket) => [bucket, emptyAgg()]));
     const historyDayAgg = new Map<string, Agg>();
     const historyTotal = emptyAgg();
     const history07Agg = emptyAgg();
@@ -613,9 +649,9 @@ const DemandDashboardView = () => {
     const historyObserved = payload?.meta.historyObservationDate ? new Date(`${payload.meta.historyObservationDate}T00:00:00`) : null;
 
     marketFilteredHistoryRows.forEach((row) => {
-      // Buckets
+      // Buckets: incluir 0-7 no histórico também
       const bucket = bucketFromAdvp(row.advp);
-      if (bucket && HYBRID_BUCKETS.includes(bucket as any)) {
+      if (bucket && WEEK_BUCKETS.includes(bucket as any)) {
         addAgg(historyBucketAgg[bucket], row);
         addAgg(historyTotal, row);
       }
@@ -629,13 +665,16 @@ const DemandDashboardView = () => {
           const mappedIso = mappedDate.toISOString().slice(0, 10);
           if (!historyDayAgg.has(mappedIso)) historyDayAgg.set(mappedIso, emptyAgg());
           addAgg(historyDayAgg.get(mappedIso)!, row);
-          
-          // Accumulate 0-7 history for the day footer
-          history07Agg.ocupacao += row.ocupacao;
-          history07Agg.capacidade += row.capacidade;
         }
       }
     });
+
+    // Calcular history07Agg aqui fora para maior segurança
+    const h07 = historyBucketAgg['0 a 07'];
+    if (h07) {
+      history07Agg.ocupacao = Number(h07.ocupacao || 0);
+      history07Agg.capacidade = Number(h07.capacidade || 0);
+    }
 
     return {
       rows,
@@ -725,6 +764,36 @@ const DemandDashboardView = () => {
           </div>
         </div>
       </motion.section>
+
+      {/* Statistics Banner */}
+      <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 flex flex-col justify-center">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total no Arquivo</span>
+              <span className="text-xl font-black text-white leading-tight">{formatInt(stats?.totalRead || 0)}</span>
+          </div>
+          <div className="bg-blue-950/40 border border-blue-900/50 rounded-2xl px-4 py-3 flex flex-col justify-center">
+              <span className="text-[10px] font-black uppercase tracking-widest text-blue-300">Processados</span>
+              <span className="text-xl font-black text-blue-100 leading-tight">{formatInt(stats?.processed || 0)}</span>
+          </div>
+          <div className="bg-amber-950/40 border border-amber-900/50 rounded-2xl px-4 py-3 flex flex-col justify-center">
+              <span className="text-[10px] font-black uppercase tracking-widest text-amber-300">Sem Data (Ignorados)</span>
+              <span className="text-xl font-black text-amber-100 leading-tight">{formatInt(stats?.skippedDate || 0)}</span>
+          </div>
+          <div className="bg-rose-950/40 border border-rose-900/50 rounded-2xl px-4 py-3 flex flex-col justify-center">
+              <span className="text-[10px] font-black uppercase tracking-widest text-rose-300">Vazios (Cap 0)</span>
+              <span className="text-xl font-black text-rose-100 leading-tight">{formatInt(stats?.skippedEmpty || 0)}</span>
+          </div>
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl px-4 py-3 flex flex-col justify-center">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">ADVP {'<'} -1</span>
+              <span className="text-xl font-black text-slate-200 leading-tight">{formatInt(stats?.skippedAdvp || 0)}</span>
+          </div>
+          <div className="bg-emerald-950/40 border border-emerald-900/50 rounded-2xl px-4 py-3 flex flex-col justify-center group relative cursor-help" title="Mercados identificados no De Para">
+              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Mercados</span>
+              <span className="text-xl font-black text-emerald-100 leading-tight">
+                {payload?.meta?.marketCoverage?.foundKnown ?? payload?.meta?.marketCoverage?.found ?? payload?.markets?.length ?? 0} / {payload?.meta?.marketCoverage?.known ?? payload?.meta?.defaultMarkets?.length ?? payload?.markets?.length ?? 0}
+              </span>
+          </div>
+      </div>
 
       <Card className="relative z-40 overflow-visible border-slate-200 bg-white/90 p-4 sm:p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
@@ -1030,17 +1099,34 @@ const DemandDashboardView = () => {
         </div>
       </Card>
 
-      <Card className="p-5">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-2 text-cyan-700 shadow-sm">
-            <BarChart3 size={16} />
+        <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200/60 p-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div className="flex items-center gap-4">
+              <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-2 text-cyan-700 shadow-sm">
+                <BarChart3 size={20} />
+              </div>
+              <div>
+                <h3 className="text-lg font-black uppercase tracking-[0.16em] text-slate-700">Tabela hibrida: Diario x Acumulado</h3>
+                <p className="text-xs font-semibold text-slate-400">Resumo da primeira semana e total acumulado por mercado</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3">
+                <button 
+                  onClick={handleExportImage}
+                  className="inline-flex h-[44px] items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-xs font-black uppercase tracking-widest text-emerald-700 transition-all hover:bg-emerald-100 active:scale-95"
+                >
+                  <Camera size={16} /> Salvar como Foto
+                </button>
+                <div className="h-8 w-px bg-slate-200" />
+                <div className="flex items-center gap-1.5 rounded-xl border border-red-100 bg-red-50/50 px-3 py-1.5 shadow-sm">
+                  <div className="h-2 w-2 animate-pulse rounded-full bg-red-600" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-red-700">Ao Vivo</span>
+                </div>
+            </div>
           </div>
-          <div>
-            <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">Tabela hibrida (D-1..D7 + semanas)</h3>
-            <p className="text-xs font-semibold text-slate-400">Com total, historico ano anterior, atual e meta</p>
-          </div>
-        </div>
-        <div className="overflow-x-auto custom-scrollbar">
+
+          <div className="overflow-x-auto custom-scrollbar -mx-6 px-6" ref={tableRef}>
           <table className="w-full min-w-[1450px] border-separate border-spacing-0 text-xs">
             <thead>
               <tr className="bg-slate-900 text-white">
@@ -1185,7 +1271,7 @@ const DemandDashboardView = () => {
             </tfoot>
           </table>
         </div>
-      </Card>
+      </div>
 
       {loading && (
         <div className="fixed bottom-6 right-6 rounded-2xl border border-blue-100 bg-white px-4 py-3 text-xs font-black text-blue-700 shadow-xl">

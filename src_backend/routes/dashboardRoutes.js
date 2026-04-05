@@ -15,6 +15,7 @@ const REVENUE_DASH_CACHE_TTL_MS = 5 * 60 * 1000;
 const REVENUE_DASH_WORKER_TIMEOUT_MS = 120 * 1000;
 const DEFAULT_DEMAND_BASE_DIR = 'Z:\\Forecast\\Forecast2';
 const DEMAND_FILE_REGEX = /\.(xlsx|xls|xlsm|csv|db|sqlite|sqlite3|parquet)$/i;
+const DEMAND_EXCLUDED_FILE_REGEX = /de\s*para/i;
 const DEMAND_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEMAND_DEFAULT_MARKETS = [
     'BELO HORIZONTE - RIO DE JANEIRO',
@@ -53,7 +54,15 @@ const parseBrDate = (value) => {
     if (value === null || value === undefined || value === '') return null;
 
     if (value instanceof Date && !Number.isNaN(value.getTime())) {
-        return new Date(value.getTime());
+        const utcDate = buildSafeDate(
+            value.getUTCFullYear(),
+            value.getUTCMonth() + 1,
+            value.getUTCDate(),
+            value.getUTCHours(),
+            value.getUTCMinutes(),
+            value.getUTCSeconds(),
+        );
+        return utcDate || new Date(value.getTime());
     }
 
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -201,7 +210,7 @@ const readRowsFromExcelOrCsv = (filePath, sheetResolver) => {
     if (!selectedSheet) return [];
     const sheet = workbook.Sheets[selectedSheet];
     if (!sheet) return [];
-    return XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
+    return XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
 };
 
 const readRowsFromSqlite = async (filePath) => {
@@ -319,15 +328,35 @@ const loadDeParaMap = async (baseDir) => {
                 }
             });
             for (const row of rawRows) {
-                const codLinha = getRowValue(row, ['Cod Linha', 'COD LINHA', 'Cod_Linha', 'Linha', 'LINHA']);
-                if (codLinha !== null && codLinha !== undefined) {
-                    const normCod = String(codLinha).trim().replace(/^0+/, '') || '0';
-                    const mercado = getRowValue(row, ['Mercado', 'MERCADO']);
-                    const empresa = getRowValue(row, ['Empresa', 'EMPRESA']);
-                    newMap.set(normCod, {
+                const codLinha = getRowValue(row, ['Cod Linha', 'COD LINHA', 'Cod_Linha', 'Linha', 'LINHA', 'SERVICO', 'Serviço', 'Cod. Linha', 'COD. LINHA']);
+                if (codLinha !== null && codLinha !== undefined && String(codLinha).trim()) {
+                    const rawCod = String(codLinha).trim();
+                    const normCod = rawCod.replace(/^0+/, '') || '0';
+                    const mercado = getRowValue(row, ['Mercado', 'MERCADO', 'NOME MERCADO', 'DESC MERCADO']);
+                    const empresa = getRowValue(row, ['Empresa', 'EMPRESA', 'NOME EMPRESA']);
+                    const entry = {
                         mercado: mercado ? String(mercado).trim().toUpperCase() : null,
                         empresa: empresa ? String(empresa).trim().toUpperCase() : null
-                    });
+                    };
+
+                    const rawKey = `RAW:${rawCod}`;
+                    if (!newMap.has(rawKey)) {
+                        newMap.set(rawKey, entry);
+                    }
+
+                    const normKey = `NORM:${normCod}`;
+                    if (!newMap.has(normKey)) {
+                        newMap.set(normKey, entry);
+                    } else {
+                        const existing = newMap.get(normKey);
+                        const hasConflict = !!existing && (
+                            normalizeDemandToken(existing.mercado || '') !== normalizeDemandToken(entry.mercado || '')
+                            || normalizeDemandToken(existing.empresa || '') !== normalizeDemandToken(entry.empresa || '')
+                        );
+                        if (hasConflict) {
+                            newMap.set(normKey, null);
+                        }
+                    }
                 }
             }
         } catch (err) {
@@ -851,21 +880,21 @@ const parseObservationDateFromName = (fileName, fallbackDate) => {
         if (!Number.isNaN(dt.getTime())) return toStartOfDay(dt);
     }
 
-    const dmyMatch = cleanName.match(/(\d{1,2})[-_.\s](\d{1,2})[-_.\s](\d{4}|\d{2})/);
-    if (dmyMatch) {
-        const day = Number(dmyMatch[1]);
-        const month = Number(dmyMatch[2]);
-        const yearRaw = dmyMatch[3];
-        const year = Number(yearRaw.length === 2 ? `20${yearRaw}` : yearRaw);
+    const ymdMatch = cleanName.match(/(^|[^\d])(20\d{2})[-_.\s](\d{1,2})[-_.\s](\d{1,2})(?!\d)/);
+    if (ymdMatch) {
+        const year = Number(ymdMatch[2]);
+        const month = Number(ymdMatch[3]);
+        const day = Number(ymdMatch[4]);
         const dt = buildSafeDate(year, month, day);
         if (dt) return toStartOfDay(dt);
     }
 
-    const ymdMatch = cleanName.match(/(\d{4})[-_.\s](\d{1,2})[-_.\s](\d{1,2})/);
-    if (ymdMatch) {
-        const year = Number(ymdMatch[1]);
-        const month = Number(ymdMatch[2]);
-        const day = Number(ymdMatch[3]);
+    const dmyMatch = cleanName.match(/(^|[^\d])(\d{1,2})[-_.\s](\d{1,2})[-_.\s](\d{4}|\d{2})(?!\d)/);
+    if (dmyMatch) {
+        const day = Number(dmyMatch[2]);
+        const month = Number(dmyMatch[3]);
+        const yearRaw = dmyMatch[4];
+        const year = Number(yearRaw.length === 2 ? `20${yearRaw}` : yearRaw);
         const dt = buildSafeDate(year, month, day);
         if (dt) return toStartOfDay(dt);
     }
@@ -878,7 +907,11 @@ const parseObservationDateFromName = (fileName, fallbackDate) => {
         if (dt) return toStartOfDay(dt);
     }
 
-    return toStartOfDay(fallbackDate);
+    if (fallbackDate instanceof Date && !Number.isNaN(fallbackDate.getTime())) {
+        return toStartOfDay(fallbackDate);
+    }
+
+    return null;
 };
 
 const collectDemandFiles = (baseDir) => {
@@ -886,7 +919,12 @@ const collectDemandFiles = (baseDir) => {
     const entries = fs.readdirSync(baseDir, { withFileTypes: true });
 
     return entries
-        .filter((entry) => entry.isFile() && DEMAND_FILE_REGEX.test(entry.name) && !entry.name.startsWith('~$'))
+        .filter((entry) => (
+            entry.isFile()
+            && DEMAND_FILE_REGEX.test(entry.name)
+            && !entry.name.startsWith('~$')
+            && !DEMAND_EXCLUDED_FILE_REGEX.test(entry.name)
+        ))
         .map((entry) => {
             const fullPath = path.join(baseDir, entry.name);
             const stat = fs.statSync(fullPath);
@@ -979,9 +1017,24 @@ const setDemandDashboardCache = (cacheKey, payload) => {
 const buildDemandDataset = async (effectiveDir) => {
     const files = collectDemandFiles(effectiveDir);
     const deParaMap = await loadDeParaMap(effectiveDir);
+    const knownMarkets = new Set(
+        Array.from(deParaMap.values())
+            .map((item) => normalizeDemandToken(item?.mercado || ''))
+            .filter(Boolean)
+    );
     const warnings = [];
     const groupedByObservation = new Map();
+    const seenRowsByObservation = new Map();
     let totalRows = 0;
+    const stats = {
+        totalRead: 0,
+        processed: 0,
+        skippedDate: 0,
+        skippedEmpty: 0,
+        skippedNoValues: 0,
+        skippedAdvp: 0,
+        skippedDuplicated: 0
+    };
 
     for (const file of files) {
         try {
@@ -989,31 +1042,65 @@ const buildDemandDataset = async (effectiveDir) => {
             const fallbackObsDate = parseObservationDateFromName(file.fileName, file.mtime);
 
             for (const row of rawRows) {
-                let observationDate = fallbackObsDate;
-                if (row._tableName) {
+                stats.totalRead++;
+                const observationRaw = getRowValue(row, [
+                    'Data Observação',
+                    'Data Observacao',
+                    'DATA OBSERVACAO',
+                    'Data Observacao Arquivo',
+                    'Data Referencia',
+                    'Data Referência',
+                    'DATA REFERENCIA',
+                    'Data Base',
+                    'DATA BASE',
+                    'Snapshot Date',
+                    'Data_Observacao'
+                ]);
+
+                let observationDate = parseBrDate(observationRaw);
+                if (observationDate) {
+                    observationDate = toStartOfDay(observationDate);
+                } else if (row._tableName) {
                     const extracted = parseObservationDateFromName(row._tableName, null);
                     if (extracted) observationDate = extracted;
+                    else observationDate = fallbackObsDate;
+                } else {
+                    observationDate = fallbackObsDate;
                 }
+
+                if (!(observationDate instanceof Date) || Number.isNaN(observationDate.getTime())) {
+                    stats.skippedDate++;
+                    continue;
+                }
+
                 const obsIso = toISOStringDate(observationDate);
                 const bucket = groupedByObservation.get(obsIso) || [];
 
                 const travelDateRaw = getRowValue(row, ['Data Viagem', 'DATA VIAGEM', 'DATA', 'Data']);
                 const travelDate = parseBrDate(travelDateRaw);
-                if (!travelDate) continue;
+                if (!travelDate) {
+                    stats.skippedDate++;
+                    continue;
+                }
 
                 const linhaRaw = getRowValue(row, ['LINHA', 'Linha', 'Cod Linha', 'Cod_Linha', 'SERVIÇO', 'SERVICO', 'Num. Serviço', 'Num. Servico']);
-                const normLinha = linhaRaw !== null && linhaRaw !== undefined ? String(linhaRaw).trim().replace(/^0+/, '') || '0' : 'SEM LINHA';
-                
-                const deParaEntry = deParaMap.get(normLinha);
+                const linhaRawValue = linhaRaw !== null && linhaRaw !== undefined ? String(linhaRaw).trim() : '';
+                const normLinha = linhaRawValue ? (linhaRawValue.replace(/^0+/, '') || '0') : 'SEM LINHA';
+
+                const deParaEntry = (
+                    (linhaRawValue ? deParaMap.get(`RAW:${linhaRawValue}`) : null)
+                    || deParaMap.get(`NORM:${normLinha}`)
+                );
 
                 const empresaRaw = getRowValue(row, ['EMPRESA', 'Empresa']);
-                const empresa = deParaEntry?.empresa || normalizeDemandToken(empresaRaw || 'SEM EMPRESA');
-                
-                const mercado = deParaEntry?.mercado || 'OUTROS MERCADOS';
+                const empresa = normalizeDemandToken(deParaEntry?.empresa || empresaRaw || 'SEM EMPRESA');
 
-                const ocupacaoRaw = getRowValue(row, ['PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao']);
-                const capacidadeRaw = getRowValue(row, ['Capacidade', 'CAPACIDADE', 'Oferta', 'OFERTA']);
-                const apvRaw = getRowValue(row, ['%Ocupação', '% Ocupação', 'APV', 'IPV', 'IPV 3', 'IPV3', '% APV']);
+                const mercadoDePara = normalizeDemandToken(deParaEntry?.mercado || '');
+                const mercado = mercadoDePara || 'OUTROS MERCADOS';
+
+                const ocupacaoRaw = getRowValue(row, ['PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao', 'Pax Total', 'TRANSITADO', 'Pax_Total', 'Ocup']);
+                const capacidadeRaw = getRowValue(row, ['Capacidade', 'CAPACIDADE', 'Oferta', 'OFERTA', 'Vagas', 'VAGAS', 'Cap', 'Cap_Total']);
+                const apvRaw = getRowValue(row, ['%Ocupação', '% Ocupação', 'APV', 'IPV', 'IPV 3', 'IPV3', '% APV', 'Aproveitamento', 'APROVEITAMENTO']);
 
                 let ocupacao = toNumber(ocupacaoRaw);
                 let capacidade = toNumber(capacidadeRaw);
@@ -1022,32 +1109,70 @@ const buildDemandDataset = async (effectiveDir) => {
                 if (!Number.isFinite(capacidade) && Number.isFinite(ocupacao) && Number.isFinite(apvRatio) && apvRatio > 0) {
                     capacidade = ocupacao / apvRatio;
                 }
-
-                if (!Number.isFinite(ocupacao) && Number.isFinite(capacidade) && Number.isFinite(apvRatio) && apvRatio >= 0) {
+                if (!Number.isFinite(ocupacao) && Number.isFinite(capacidade) && Number.isFinite(apvRatio)) {
                     ocupacao = capacidade * apvRatio;
                 }
 
-                if (!Number.isFinite(ocupacao) || !Number.isFinite(capacidade) || capacidade <= 0) {
+                const isRowEmpty = (!Number.isFinite(ocupacao) || ocupacao <= 0)
+                    && (!Number.isFinite(capacidade) || capacidade <= 0);
+                if (isRowEmpty) {
+                    stats.skippedEmpty++;
+                    continue;
+                }
+
+                if (!Number.isFinite(ocupacao) && !Number.isFinite(capacidade)) {
+                    stats.skippedNoValues++;
+                    continue;
+                }
+
+                const finalCapacidade = Number.isFinite(capacidade) && capacidade > 0 ? capacidade : 0;
+                const finalOcupacao = Number.isFinite(ocupacao) && ocupacao >= 0 ? ocupacao : 0;
+
+                if (finalCapacidade <= 0 && finalOcupacao <= 0) {
+                    stats.skippedNoValues++;
                     continue;
                 }
 
                 const travelDay = toStartOfDay(travelDate);
                 const advp = Math.round((travelDay.getTime() - observationDate.getTime()) / 86400000);
-                if (advp < -1) continue;
+                if (advp < -1) {
+                    stats.skippedAdvp++;
+                }
+
+                const roundedOcupacao = Number(finalOcupacao.toFixed(4));
+                const roundedCapacidade = Number(finalCapacidade.toFixed(4));
+                const travelIso = toISOStringDate(travelDay);
+                const dedupeSet = seenRowsByObservation.get(obsIso) || new Set();
+                const rowSignature = JSON.stringify(
+                    Object.keys(row)
+                        .sort()
+                        .reduce((acc, key) => {
+                            acc[key] = row[key];
+                            return acc;
+                        }, {})
+                );
+                const dedupeKey = [obsIso, rowSignature].join('|');
+                if (dedupeSet.has(dedupeKey)) {
+                    stats.skippedDuplicated++;
+                    continue;
+                }
+                dedupeSet.add(dedupeKey);
+                seenRowsByObservation.set(obsIso, dedupeSet);
 
                 bucket.push({
                     observationDate: obsIso,
-                    travelDate: toISOStringDate(travelDay),
+                    travelDate: travelIso,
                     mercado,
                     empresa,
                     linha: normLinha,
-                    ocupacao: Number(ocupacao.toFixed(4)),
-                    capacidade: Number(capacidade.toFixed(4)),
-                    apv: Number((ocupacao / capacidade).toFixed(6)),
+                    ocupacao: roundedOcupacao,
+                    capacidade: roundedCapacidade,
+                    apv: finalCapacidade > 0 ? Number((finalOcupacao / finalCapacidade).toFixed(6)) : 0,
                     advp,
                     faixaAdvp: buildDemandFaixa(advp)
                 });
                 groupedByObservation.set(obsIso, bucket);
+                stats.processed++;
             }
         } catch (error) {
             warnings.push(`Falha ao ler ${file.fileName}: ${error.message || error}`);
@@ -1064,9 +1189,11 @@ const buildDemandDataset = async (effectiveDir) => {
         baseDir: effectiveDir,
         filesRead: files.length,
         records: totalRows,
+        stats,
         warnings,
         observationDates,
-        groupedByObservation
+        groupedByObservation,
+        knownMarkets: Array.from(knownMarkets).sort((a, b) => a.localeCompare(b))
     };
 };
 
@@ -1116,7 +1243,11 @@ router.get('/demand-dashboard', async (req, res) => {
                     observationDates: [],
                     selectedObservationDate: null,
                     historyObservationDate: null,
-                    defaultMarkets: DEMAND_DEFAULT_MARKETS
+                    defaultMarkets: DEMAND_DEFAULT_MARKETS,
+                    marketCoverage: {
+                        found: 0,
+                        known: Array.isArray(dataset.knownMarkets) ? dataset.knownMarkets.length : DEMAND_DEFAULT_MARKETS.length
+                    }
                 },
                 travelDateOptions: [],
                 defaultTravelDateSelection: [],
@@ -1183,7 +1314,12 @@ router.get('/demand-dashboard', async (req, res) => {
             return a.localeCompare(b);
         });
 
-        const defaultSelectedMarkets = markets.filter((market) => DEMAND_DEFAULT_MARKETS.includes(market));
+        const knownMarkets = Array.isArray(dataset.knownMarkets) ? dataset.knownMarkets : [];
+        const knownMarketSet = new Set(knownMarkets);
+        const knownMarketCount = knownMarkets.length || Math.max(DEMAND_DEFAULT_MARKETS.length, markets.length);
+        const foundKnownCount = markets.filter((market) => knownMarketSet.has(market)).length;
+        const autoSelectedMarkets = markets.filter((market) => DEMAND_DEFAULT_MARKETS.includes(market));
+
         const selectedDateBase = parseBrDate(selectedObservationDate) || new Date();
         const travelDateOptions = [];
 
@@ -1205,14 +1341,21 @@ router.get('/demand-dashboard', async (req, res) => {
                 observationDates,
                 selectedObservationDate,
                 historyObservationDate,
-                defaultMarkets: DEMAND_DEFAULT_MARKETS
+                defaultMarkets: DEMAND_DEFAULT_MARKETS,
+                marketCoverage: {
+                    found: markets.length,
+                    known: knownMarketCount,
+                    foundKnown: foundKnownCount,
+                    unknown: Math.max(0, markets.length - foundKnownCount)
+                },
+                stats: dataset.stats
             },
             travelDateOptions,
             defaultTravelDateSelection: travelDateOptions.map((item) => item.date),
             rows,
             historyRows,
             markets,
-            defaultSelectedMarkets: defaultSelectedMarkets.length ? defaultSelectedMarkets : markets.slice(0, 10),
+            defaultSelectedMarkets: autoSelectedMarkets.length ? autoSelectedMarkets : markets.slice(0, 10),
             companiesByMarket: Object.fromEntries(
                 Object.entries(companiesByMarket).map(([market, companiesSet]) => [market, Array.from(companiesSet).sort()])
             )
