@@ -5,7 +5,14 @@
  */
 
 /** Identificador das views/telas disponíveis na navegação principal. */
-export type View = 'dashboard' | 'reports' | 'vault' | 'calculator' | 'settings' | 'history';
+export type View = 'dashboard' | 'dashboards' | 'presentations' | 'demand' | 'reports' | 'vault' | 'calculator' | 'settings' | 'history';
+
+/** Usuário autenticado na aplicação. */
+export interface User {
+  id: number;
+  nome: string;
+  usuario?: string;
+}
 
 /** Variante visual de proposta (legado, mantido para compatibilidade). */
 export type Proposal = 'A' | 'B';

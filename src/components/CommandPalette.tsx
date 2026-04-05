@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Search, LayoutDashboard, FileDown, Lock, Calculator,
-  FileText, ChevronRight, CheckCircle, Loader2, AlertCircle, SlidersHorizontal
+  FileText, ChevronRight, CheckCircle, Loader2, AlertCircle, SlidersHorizontal, Presentation
 } from 'lucide-react';
 import { cn } from '../utils/cn';
 import type { View } from '../types';
@@ -26,8 +26,9 @@ const CommandPalette = ({ isOpen, onClose, onSelect, onDeepSelect, historyItems 
 
   /** Itens de navegação principal (telas). */
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard Principal', icon: <LayoutDashboard size={18} />, shortcut: 'D', category: 'Navegação' },
+    { id: 'dashboard', label: 'Inicio', icon: <LayoutDashboard size={18} />, shortcut: 'I', category: 'Navegação' },
     { id: 'reports', label: 'Automações e Fluxos', icon: <FileDown size={18} />, shortcut: 'F', category: 'Navegação' },
+    { id: 'dashboards', label: 'Dashboards e Apresentacoes', icon: <Presentation size={18} />, shortcut: 'A', category: 'Navegação' },
     { id: 'vault', label: 'Cofre de Segurança', icon: <Lock size={18} />, shortcut: 'C', category: 'Navegação' },
     { id: 'calculator', label: 'Calculadora de PAX', icon: <Calculator size={18} />, shortcut: 'L', category: 'Navegação' },
     { id: 'settings', label: 'Configurações', icon: <SlidersHorizontal size={18} />, shortcut: 'S', category: 'Navegação' },

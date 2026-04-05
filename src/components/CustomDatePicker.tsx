@@ -82,7 +82,7 @@ const CustomDatePicker = ({ label, value, onChange, align = 'left', disabled = f
         </button>
 
         {isOpen && (
-          <div className={`absolute bg-white border-2 border-slate-100 rounded-3xl shadow-2xl p-4 z-[500] min-w-[280px] sm:min-w-[320px] animate-in duration-200 ${dropUp ? 'bottom-full mb-2 slide-in-from-bottom-95 origin-bottom' : 'top-full mt-2 slide-in-from-top-95 origin-top'} ${align === 'right' ? 'right-0' : 'left-0'}`}>
+          <div className={`absolute bg-white border-2 border-slate-100 rounded-3xl shadow-2xl p-4 z-[900] min-w-[280px] sm:min-w-[320px] animate-in duration-200 ${dropUp ? 'bottom-full mb-2 slide-in-from-bottom-95 origin-bottom' : 'top-full mt-2 slide-in-from-top-95 origin-top'} ${align === 'right' ? 'right-0' : 'left-0'}`}>
             {/* Navegação de mês/ano */}
             <div className="flex items-center justify-between mb-4">
               <button type="button" onClick={handlePrevYear} className="p-1.5 text-slate-400 hover:bg-slate-50 rounded-lg hover:text-slate-700 transition-all flex -space-x-2"><ChevronRight size={16} className="rotate-180" /><ChevronRight size={16} className="rotate-180" /></button>

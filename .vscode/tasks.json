@@ -1,19 +1,75 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Run App (venv python)",
-      "type": "shell",
-      "command": "${workspaceFolder}\\venv\\Scripts\\python.exe",
-      "args": [
-        "${workspaceFolder}\\main.py"
-      ],
-      "group": "build",
-      "presentation": {
-        "reveal": "always",
-        "panel": "shared"
-      },
-      "problemMatcher": []
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run App (venv python)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\venv\\Scripts\\python.exe",
+			"args": [
+				"${workspaceFolder}\\main.py"
+			],
+			"group": "build",
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Validate Demand 2026-03-30",
+			"type": "shell",
+			"command": "c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/venv/Scripts/python.exe",
+			"args": [
+				"-c",
+				"import json; from urllib.request import urlopen; from urllib.parse import quote; base_dir='C:/Users/guilherme.felix/Documents/Relatório Demanda/DASH Forecast/Forecast2'; url='http://127.0.0.1:3001/api/demand-dashboard?baseDir='+quote(base_dir,safe='')+'&observationDate=2026-03-30&noCache=1'; data=json.loads(urlopen(url,timeout=180).read().decode('utf-8')); rows=data.get('rows') or []; mk=data.get('markets') or []; ds=set(data.get('defaultSelectedMarkets') or []); def_rows=[r for r in rows if r.get('mercado') in ds];\n\ndef agg(items):\n p=sum(float(r.get('ocupacao') or 0) for r in items); c=sum(float(r.get('capacidade') or 0) for r in items); return {'pax':round(p),'oferta':round(c),'apv':round((p/c)*100,2) if c>0 else 0.0};\n\ndef buck(items,a,b):\n return [r for r in items if isinstance(r.get('advp'),(int,float)) and a<=r['advp']<=b];\n\nout={'selectedObservationDate':data.get('meta',{}).get('selectedObservationDate'),'filesRead':data.get('meta',{}).get('filesRead'),'records':data.get('meta',{}).get('records'),'stats':data.get('meta',{}).get('stats'),'marketCoverage':data.get('meta',{}).get('marketCoverage'),'rowsCount':len(rows),'marketsCount':len(mk),'defaultSelectedCount':len(ds),'kpiDefault':{'apvTotal':agg(def_rows)['apv'],'apv7':agg(buck(def_rows,0,7))['apv'],'apv14':agg(buck(def_rows,0,14))['apv'],'apv21':agg(buck(def_rows,0,21))['apv'],'pax':agg(def_rows)['pax'],'oferta':agg(def_rows)['oferta']}}; print(json.dumps(out,ensure_ascii=False))"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Validate Demand Script",
+			"type": "shell",
+			"command": "c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/venv/Scripts/python.exe",
+			"args": [
+				"c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/tmp_validate_demand.py"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Validate Demand Script After Fix",
+			"type": "shell",
+			"command": "c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/venv/Scripts/python.exe",
+			"args": [
+				"c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/tmp_validate_demand.py"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Validate Demand Rule Check",
+			"type": "shell",
+			"command": "c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/venv/Scripts/python.exe",
+			"args": [
+				"c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/tmp_validate_demand_rulecheck.py"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Validate Demand KPI Variants",
+			"type": "shell",
+			"command": "c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/venv/Scripts/python.exe",
+			"args": [
+				"-c",
+				"import json;from urllib.parse import quote;from urllib.request import urlopen;base='C:/Users/guilherme.felix/Documents/Relatório Demanda/DASH Forecast/Forecast2';url='http://127.0.0.1:3001/api/demand-dashboard?baseDir='+quote(base,safe='')+'&observationDate=2026-03-30&noCache=1';d=json.loads(urlopen(url,timeout=180).read().decode('utf-8'));rows=[r for r in (d.get('rows') or []) if r.get('mercado') in set(d.get('defaultSelectedMarkets') or [])];\n\ndef agg(it):\n p=sum(float(r.get('ocupacao') or 0) for r in it);c=sum(float(r.get('capacidade') or 0) for r in it);return round((p/c)*100,2) if c>0 else 0.0,round(p),round(c)\n\nall7=[r for r in rows if isinstance(r.get('advp'),(int,float)) and r['advp']<=7]\nr814=[r for r in rows if isinstance(r.get('advp'),(int,float)) and 8<=r['advp']<=14]\nr1521=[r for r in rows if isinstance(r.get('advp'),(int,float)) and 15<=r['advp']<=21]\nprint(json.dumps({'all_total':agg(rows),'all_7_le':agg(all7),'all_8_14':agg(r814),'all_15_21':agg(r1521)},ensure_ascii=False))"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Validate Demand Rule Check 2",
+			"type": "shell",
+			"command": "c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/venv/Scripts/python.exe",
+			"args": [
+				"c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/tmp_validate_demand_rulecheck.py"
+			],
+			"isBackground": false
+		}
+	]
 }
