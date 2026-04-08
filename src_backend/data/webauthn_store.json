@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "users": {
+    "1": {
+      "user": {
+        "id": 1,
+        "nome": "Guilherme",
+        "usuario": "guilherme.felix"
+      },
+      "enabled": true,
+      "credentials": [
+        {
+          "id": "ViwjlynAt2Eu88qU-crngD1iQR5h3F6aeWfDAzvIeb4",
+          "publicKey": "pQECAyYgASFYIHUA8LWwsG2WiWq28FKSx7R39_dy7hQFEMxIR47B5O9sIlggEMVIJwi0Z65wm-KFr-baLgr7S79r8zOY_Bx4HN3juxM",
+          "counter": 9,
+          "deviceType": "singleDevice",
+          "backedUp": false,
+          "transports": [
+            "internal"
+          ],
+          "createdAt": "2026-04-08T12:28:15.557Z",
+          "updatedAt": "2026-04-08T14:10:37.584Z"
+        }
+      ],
+      "biometricTokenHash": "2eb3b85d09c6b71f6fe80bad5cbb7d57b6b8344eb5d20154ae9df65ec26f0a86",
+      "tokenExpiresAt": "2026-10-05T12:28:15.557Z",
+      "createdAt": "2026-04-08T12:28:15.557Z",
+      "updatedAt": "2026-04-08T14:10:37.584Z"
+    }
+  }
+}

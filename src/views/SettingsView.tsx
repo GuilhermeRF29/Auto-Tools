@@ -3,7 +3,7 @@
  * @description Tela de configurações do sistema.
  * Neste momento, concentra as preferências visuais da confirmação de execução.
  */
-import { Sparkles, Zap, SlidersHorizontal } from 'lucide-react';
+import { Loader2, ScanFace, SlidersHorizontal, Sparkles, Zap } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '../utils/cn';
 import Card from '../components/Card';
@@ -18,6 +18,9 @@ interface SettingsViewProps {
   onSuccessAnimationDurationSecChange: (seconds: number) => void;
   successAnimationIntensity: AnimationIntensity;
   onSuccessAnimationIntensityChange: (intensity: AnimationIntensity) => void;
+  windowsHelloEnabled: boolean;
+  onWindowsHelloEnabledChange: (enabled: boolean) => void | Promise<void>;
+  windowsHelloBusy?: boolean;
 }
 
 const SettingsView = ({
@@ -29,6 +32,9 @@ const SettingsView = ({
   onSuccessAnimationDurationSecChange,
   successAnimationIntensity,
   onSuccessAnimationIntensityChange,
+  windowsHelloEnabled,
+  onWindowsHelloEnabledChange,
+  windowsHelloBusy = false,
 }: SettingsViewProps) => {
   const options: Array<{
     id: SuccessAnimationStyle;
@@ -76,7 +82,7 @@ const SettingsView = ({
               type="button"
               onClick={() => onAnimationsEnabledChange(!animationsEnabled)}
               className={cn(
-                'relative w-16 h-9 rounded-full transition-all duration-300 shrink-0 border',
+                'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border',
                 animationsEnabled
                   ? 'bg-blue-600 border-blue-500 shadow-lg shadow-blue-200'
                   : 'bg-slate-200 border-slate-300'
@@ -86,10 +92,51 @@ const SettingsView = ({
             >
               <span
                 className={cn(
-                  'absolute top-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300',
-                  animationsEnabled ? 'left-8 -translate-x-full' : 'left-1'
+                  'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
+                  animationsEnabled ? 'translate-x-7' : 'translate-x-0'
                 )}
-              />
+              >
+                <span className={cn('w-1.5 h-1.5 rounded-full transition-colors', animationsEnabled ? 'bg-blue-600' : 'bg-slate-300')} />
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-5 pb-5 border-b border-slate-100">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Windows Hello / Biometria</h3>
+              <p className="text-xs text-slate-500 mt-2">
+                Ativa login com PIN, reconhecimento facial ou digital. Ao desativar, a credencial e o token local
+                são removidos e será necessário validar novamente para reativar.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onWindowsHelloEnabledChange(!windowsHelloEnabled)}
+              disabled={windowsHelloBusy}
+              className={cn(
+                'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
+                windowsHelloEnabled
+                  ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
+                  : 'bg-slate-200 border-slate-300'
+              )}
+              aria-pressed={windowsHelloEnabled}
+              aria-label="Ativar ou desativar Windows Hello"
+            >
+              <span
+                className={cn(
+                  'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
+                  windowsHelloEnabled ? 'translate-x-7' : 'translate-x-0'
+                )}
+              >
+                {windowsHelloBusy ? (
+                  <Loader2 size={12} className="animate-spin text-slate-500" />
+                ) : (
+                  <ScanFace size={12} className={cn(windowsHelloEnabled ? 'text-emerald-600' : 'text-slate-400')} />
+                )}
+              </span>
             </button>
           </div>
         </div>

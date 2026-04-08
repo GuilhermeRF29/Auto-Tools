@@ -15,6 +15,7 @@ import {
   ChevronRight, Clock, X, PlayCircle, Bus,
   Navigation, Download, LayoutDashboard, Search
 } from 'lucide-react';
+import { useDialog } from '../context/DialogContext';
 import type { RunningTask, SuccessAnimationStyle, AnimationIntensity } from '../types';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -50,6 +51,7 @@ const ReportsView = ({
   successAnimationDurationSec,
   successAnimationIntensity,
 }: ReportsViewProps) => {
+  const { showAlert } = useDialog();
   const SUCCESS_ANIMATION_PRESETS = {
     premium: {
       visibleMs: 1600,
@@ -231,7 +233,7 @@ const ReportsView = ({
         handleCloseModal();
       }, selectedSuccessAnimation.visibleMs + selectedSuccessAnimation.exitMs);
     } else {
-      alert('Erro ao conectar com o servidor.');
+      await showAlert({ title: 'Erro de Conexão', message: 'Erro ao conectar com o servidor.', tone: 'danger' });
     }
 
     setIsExecuting(false);
@@ -618,7 +620,11 @@ const ReportsView = ({
                                 const data = await res.json();
                                 if (data.caminho) setFolderPath(data.caminho);
                               } catch (e) {
-                                alert('Servidor py local não rodando ou mockado. Cole o caminho na caixa de texto na web.');
+                                await showAlert({
+                                  title: 'Falha ao Abrir Explorador',
+                                  message: 'Servidor py local não rodando ou mockado. Cole o caminho na caixa de texto na web.',
+                                  tone: 'warning',
+                                });
                               }
                             }}
                             className="p-3.5 flex-shrink-0 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-600 hover:text-white transition-colors"
@@ -659,7 +665,11 @@ const ReportsView = ({
                               const data = await res.json();
                               if (data.caminho) setOutFolderPath(data.caminho);
                             } catch (e) {
-                              alert('Servidor py local não rodando. Cole o caminho na caixa de texto.');
+                               await showAlert({
+                                 title: 'Falha ao Abrir Explorador',
+                                 message: 'Servidor py local não rodando. Cole o caminho na caixa de texto.',
+                                 tone: 'warning',
+                               });
                             }
                           }}
                           className="p-3.5 flex-shrink-0 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-600 hover:text-white transition-colors"

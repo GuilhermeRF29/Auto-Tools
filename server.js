@@ -8,6 +8,7 @@ import vaultRoutes from './src_backend/routes/vaultRoutes.js';
 import systemRoutes from './src_backend/routes/systemRoutes.js';
 import automationRoutes from './src_backend/routes/automationRoutes.js';
 import dashboardRoutes from './src_backend/routes/dashboardRoutes.js';
+import webauthnRoutes from './src_backend/routes/webauthnRoutes.js';
 
 const app = express();
 const port = 3001;
@@ -22,8 +23,30 @@ runPythonCmd(initDbCmd).then(() => {
     console.error(`[SYSTEM] Erro ao inicializar banco: ${e.message}`);
 });
 
-app.get('/api/status', (req, res) => {
-    res.json({ status: 'ok', version: 'AutoTools API v3.0 (Modular)', python: PYTHON_PATH });
+app.get('/api/status', async (req, res) => {
+    try {
+        const dbCheckCmd = `import json, sqlite3; from core.banco import DB_PATH\nstatus='ok'\nmessage='Conexao validada'\ntry:\n    conn=sqlite3.connect(DB_PATH)\n    conn.execute('SELECT 1')\n    conn.close()\nexcept Exception as e:\n    status='error'\n    message=str(e)\nprint(json.dumps({'dbStatus': status, 'dbMessage': message}))`;
+        const dbResult = await runPythonCmd(dbCheckCmd);
+        const dbStatus = dbResult?.dbStatus === 'ok' ? 'ok' : 'error';
+
+        return res.json({
+            status: dbStatus === 'ok' ? 'ok' : 'degraded',
+            version: 'AutoTools API v3.0 (Modular)',
+            python: PYTHON_PATH,
+            dbStatus,
+            dbMessage: dbResult?.dbMessage || 'Sem resposta da checagem de banco.',
+            checkedAt: new Date().toISOString(),
+        });
+    } catch (e) {
+        return res.status(503).json({
+            status: 'offline',
+            version: 'AutoTools API v3.0 (Modular)',
+            python: PYTHON_PATH,
+            dbStatus: 'offline',
+            dbMessage: e?.message || 'Falha ao verificar conexão do banco.',
+            checkedAt: new Date().toISOString(),
+        });
+    }
 });
 
 // APIs modulares
@@ -31,6 +54,7 @@ app.use('/api', authRoutes);
 app.use('/api/credentials', vaultRoutes);
 app.use('/api', systemRoutes);
 app.use('/api', automationRoutes);
+app.use('/api', webauthnRoutes);
 
 // Dashboards e relatorios (demanda, revenue)
 app.use('/api', dashboardRoutes);

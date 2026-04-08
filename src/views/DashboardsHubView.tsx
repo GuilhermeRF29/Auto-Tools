@@ -4,7 +4,7 @@ import Card from '../components/Card';
 import type { View } from '../types';
 
 const DASHBOARD_CARDS: Array<{
-  id: 'presentations' | 'demand';
+  id: 'presentations' | 'demand' | 'rioShare';
   title: string;
   description: string;
   eta: string;
@@ -27,6 +27,14 @@ const DASHBOARD_CARDS: Array<{
     icon: TrendingUp,
     gradient: 'from-slate-900 via-emerald-900 to-cyan-900',
   },
+  {
+    id: 'rioShare',
+    title: 'Dashboard RIO x SP',
+    description: 'Share de mercado por empresa, filtros multiselecao e leitura da base RIO x SAO.',
+    eta: '~10 a 25s',
+    icon: BarChart3,
+    gradient: 'from-slate-900 via-blue-900 to-indigo-900',
+  },
 ];
 
 const DashboardsHubView = ({ setView }: { setView: (view: View) => void }) => {
@@ -39,7 +47,7 @@ const DashboardsHubView = ({ setView }: { setView: (view: View) => void }) => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {DASHBOARD_CARDS.map((item, index) => {
           const Icon = item.icon;
           return (

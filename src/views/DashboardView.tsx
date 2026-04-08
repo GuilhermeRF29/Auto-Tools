@@ -5,22 +5,26 @@
  */
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Play, Download, CheckCircle, ShieldCheck, FileSpreadsheet,
-  AlertCircle, Loader2, ChevronRight, Lock,
-  Settings, Activity, Layers, Zap, FolderOpen, BarChart3, TrendingUp
+  Play, Download, ShieldCheck, FileSpreadsheet,
+  Loader2, ChevronRight, Lock, Fingerprint, Cpu, Sparkles,
+  Settings, Activity, Layers, Zap, FolderOpen, BarChart3, TrendingUp, PieChart
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../utils/cn';
 import type { View } from '../types';
 import Card from '../components/Card';
 import Button from '../components/Button';
+import { getWindowsHelloHint, isWindowsHelloAvailable } from '../utils/windowsHello';
 
-const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasksCount }: { 
+const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasksCount, windowsHelloEnabled, serverStatus = 'checking', serverInfo = null }: { 
   setView: (v: View) => void, 
   onReRun?: (item: any) => void, 
   onStartAutomation?: (payload: any) => Promise<string | null>,
   currentUser?: any, 
-  tasksCount?: number 
+  tasksCount?: number,
+  windowsHelloEnabled?: boolean,
+  serverStatus?: 'checking' | 'online' | 'offline',
+  serverInfo?: { version?: string; dbStatus?: string; dbMessage?: string } | null,
 }) => {
   const [tab, setTab] = useState<'files' | 'history'>('files');
   const [data, setData] = useState<any[]>([]);
@@ -68,6 +72,20 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
     return data;
   }, [data, tab]);
 
+  const windowsHelloHint = getWindowsHelloHint();
+  const windowsHelloTokenReady = Boolean(
+    windowsHelloHint?.biometricToken
+    && windowsHelloHint.userId === currentUser?.id
+    && isWindowsHelloAvailable()
+  );
+
+  const windowsHelloStatus: 'active' | 'partial' | 'inactive' = windowsHelloEnabled
+    ? (windowsHelloTokenReady ? 'active' : 'partial')
+    : 'inactive';
+
+  const backendOnline = serverStatus === 'online';
+  const databaseOnline = backendOnline && serverInfo?.dbStatus === 'ok';
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -80,7 +98,7 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
       {/* Dashboards e Apresentacoes */}
       <section>
         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 ml-1">Dashboards e Apresentacoes</h3>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <Card
             onClick={() => setView('presentations')}
             className="p-5 hover:border-cyan-300 transition-all bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-900 text-white"
@@ -107,6 +125,21 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
               </div>
               <div className="p-3 rounded-2xl transition-all bg-white/15 text-white group-hover:bg-emerald-400 group-hover:text-slate-950 group-hover:scale-110 shadow-sm">
                 <TrendingUp size={20} />
+              </div>
+            </div>
+          </Card>
+
+          <Card
+            onClick={() => setView('rioShare')}
+            className="p-5 hover:border-indigo-300 transition-all bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 text-white"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className="font-black text-white group-hover:text-indigo-100 transition-colors">Dashboard RIO x SP</h4>
+                <p className="text-[10px] text-indigo-100/90 mt-1 font-bold uppercase tracking-tight">Share de empresas, pax, viagens e IPV com filtros completos</p>
+              </div>
+              <div className="p-3 rounded-2xl transition-all bg-white/15 text-white group-hover:bg-indigo-300 group-hover:text-slate-950 group-hover:scale-110 shadow-sm">
+                <PieChart size={20} />
               </div>
             </div>
           </Card>
@@ -300,41 +333,137 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
         </Card>
 
         {/* Status do Sistema */}
-        <Card>
-          <div className="p-4 border-b border-slate-200 bg-slate-50 rounded-t-lg">
-            <h3 className="font-semibold text-slate-800 flex items-center gap-2">
-              <ShieldCheck size={18} className="text-slate-500" />
+        <Card className="overflow-hidden border-slate-200 bg-gradient-to-b from-slate-50/90 to-white">
+          <div className="relative border-b border-slate-200 px-6 py-5">
+            <div className="absolute -right-12 -top-12 h-28 w-28 rounded-full bg-blue-200/30 blur-2xl" />
+            <h3 className="relative flex items-center gap-2 text-sm font-black uppercase tracking-wider text-slate-800">
+              <ShieldCheck size={17} className="text-blue-600" />
               Status do Sistema
             </h3>
+            <p className="relative mt-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+              Segurança, motor e integrações
+            </p>
           </div>
-          <div className="p-4 space-y-4">
-            <div className="flex items-center justify-between p-3 bg-green-50 border border-green-100 rounded-md">
+
+          <div className="space-y-3 p-4">
+            <div className={cn(
+              'group rounded-2xl border p-3 transition-all hover:shadow-sm',
+              backendOnline
+                ? 'border-emerald-200 bg-gradient-to-r from-emerald-50 to-emerald-100/40'
+                : 'border-rose-200 bg-gradient-to-r from-rose-50 to-rose-100/40'
+            )}>
               <div className="flex items-center gap-3">
-                <CheckCircle size={20} className="text-green-600" />
+                <div className={cn(
+                  'rounded-xl bg-white/80 p-2 shadow-sm',
+                  backendOnline ? 'text-emerald-700' : 'text-rose-700'
+                )}>
+                  <Cpu size={18} />
+                </div>
                 <div>
-                  <p className="text-sm font-medium text-green-900">Selenium WebDriver</p>
-                  <p className="text-xs text-green-700">Pronto para execução</p>
+                  <p className={cn('text-sm font-black', backendOnline ? 'text-emerald-900' : 'text-rose-900')}>
+                    API Backend
+                  </p>
+                  <p className={cn('text-xs font-semibold', backendOnline ? 'text-emerald-700' : 'text-rose-700')}>
+                    {backendOnline ? 'Online e respondendo normalmente' : 'Offline ou sem resposta'}
+                  </p>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-md">
+            <div className={cn(
+              'group rounded-2xl border p-3 transition-all hover:shadow-sm',
+              databaseOnline
+                ? 'border-emerald-200 bg-gradient-to-r from-emerald-50 to-emerald-100/40'
+                : 'border-amber-200 bg-gradient-to-r from-amber-50 to-amber-100/40'
+            )}>
               <div className="flex items-center gap-3">
-                <Lock size={20} className="text-slate-600" />
+                <div className={cn(
+                  'rounded-xl bg-white/80 p-2 shadow-sm',
+                  databaseOnline ? 'text-emerald-700' : 'text-amber-700'
+                )}>
+                  <Layers size={18} />
+                </div>
                 <div>
-                  <p className="text-sm font-medium text-slate-900">Cofre de Senhas</p>
-                  <p className="text-xs text-slate-500">Bloqueado</p>
+                  <p className={cn('text-sm font-black', databaseOnline ? 'text-emerald-900' : 'text-amber-900')}>
+                    Banco de Dados
+                  </p>
+                  <p className={cn('text-xs font-semibold', databaseOnline ? 'text-emerald-700' : 'text-amber-700')}>
+                    {databaseOnline
+                      ? 'Conexão validada com sucesso'
+                      : (serverInfo?.dbMessage || 'Sem conexão validada no momento')}
+                  </p>
                 </div>
               </div>
-              <Button variant="ghost" className="text-xs px-2 py-1" onClick={() => setView('vault')}>Desbloquear</Button>
             </div>
 
-            <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-md">
+            <div className="group rounded-2xl border border-slate-200 bg-white p-3 transition-all hover:shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-slate-100 p-2 text-slate-700">
+                    <Lock size={18} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-slate-900">Cofre de Senhas</p>
+                    <p className="text-xs font-semibold text-slate-500">Acesso protegido</p>
+                  </div>
+                </div>
+                <Button variant="ghost" className="text-xs px-2 py-1" onClick={() => setView('vault')}>Abrir</Button>
+              </div>
+            </div>
+
+            <div className={cn(
+              'group rounded-2xl border p-3 transition-all hover:shadow-sm',
+              windowsHelloStatus === 'active' && 'border-emerald-200 bg-gradient-to-r from-emerald-50 to-emerald-100/40',
+              windowsHelloStatus === 'partial' && 'border-amber-200 bg-gradient-to-r from-amber-50 to-amber-100/40',
+              windowsHelloStatus === 'inactive' && 'border-slate-200 bg-white'
+            )}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={cn(
+                    'rounded-xl p-2',
+                    windowsHelloStatus === 'active' && 'bg-white/80 text-emerald-700',
+                    windowsHelloStatus === 'partial' && 'bg-white/80 text-amber-700',
+                    windowsHelloStatus === 'inactive' && 'bg-slate-100 text-slate-600'
+                  )}>
+                    <Fingerprint size={18} />
+                  </div>
+                  <div>
+                    <p className={cn(
+                      'text-sm font-black',
+                      windowsHelloStatus === 'active' && 'text-emerald-900',
+                      windowsHelloStatus === 'partial' && 'text-amber-900',
+                      windowsHelloStatus === 'inactive' && 'text-slate-900'
+                    )}>
+                      Biometria (Windows Hello)
+                    </p>
+                    <p className={cn(
+                      'text-xs font-semibold',
+                      windowsHelloStatus === 'active' && 'text-emerald-700',
+                      windowsHelloStatus === 'partial' && 'text-amber-700',
+                      windowsHelloStatus === 'inactive' && 'text-slate-500'
+                    )}>
+                      {windowsHelloStatus === 'active' && 'Ativa e pronta neste dispositivo.'}
+                      {windowsHelloStatus === 'partial' && 'Ativa no sistema, mas o pareamento local precisa ser validado novamente.'}
+                      {windowsHelloStatus === 'inactive' && 'Não ativa. Recomendado habilitar em Configurações.'}
+                    </p>
+                  </div>
+                </div>
+                {windowsHelloStatus !== 'active' && (
+                  <Button variant="ghost" className="text-xs px-2 py-1" onClick={() => setView('settings')}>
+                    Configurar
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            <div className="group rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-amber-100/40 p-3 transition-all hover:shadow-sm">
               <div className="flex items-center gap-3">
-                <AlertCircle size={20} className="text-amber-500" />
+                <div className="rounded-xl bg-white/80 p-2 text-amber-700 shadow-sm">
+                  <Sparkles size={18} />
+                </div>
                 <div>
-                  <p className="text-sm font-medium text-slate-900">Atualização Pendente</p>
-                  <p className="text-xs text-slate-500">Versão 1.2.4 disponível</p>
+                  <p className="text-sm font-black text-amber-900">Atualização Pendente</p>
+                  <p className="text-xs font-semibold text-amber-700">Versão 1.2.4 disponível</p>
                 </div>
               </div>
             </div>

@@ -5,18 +5,24 @@ import fs from 'fs';
 import XLSX from 'xlsx';
 import initSqlJs from 'sql.js';
 import { asyncBufferFromFile, parquetReadObjects } from 'hyparquet';
+import { runPythonCmd } from '../utils/pythonProxy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DEFAULT_REVENUE_BASE_DIR = 'Z:\\DASH REVENUE APPLICATION\\BASE';
-const REVENUE_FILE_REGEX = /revenue.*\.(xlsx|xls|xlsm|csv|db|sqlite|sqlite3|parquet)$/i;
+const REVENUE_FILE_REGEX = /revenue.*\.(xlsx|xls|xlsm|csv|db|sqlite|sqlite3|duckdb|parquet)$/i;
 const REVENUE_DASH_CACHE_TTL_MS = 5 * 60 * 1000;
 const REVENUE_DASH_WORKER_TIMEOUT_MS = 120 * 1000;
 const DEFAULT_DEMAND_BASE_DIR = 'Z:\\Forecast\\Forecast2';
-const DEMAND_FILE_REGEX = /\.(xlsx|xls|xlsm|csv|db|sqlite|sqlite3|parquet)$/i;
+const DEMAND_FILE_REGEX = /\.(xlsx|xls|xlsm|csv|db|sqlite|sqlite3|duckdb|parquet)$/i;
 const DEMAND_EXCLUDED_FILE_REGEX = /de\s*para/i;
 const DEMAND_CACHE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_RIO_SHARE_BASE_DIR = 'Z:\\Dash RIO';
+const RIO_SHARE_FALLBACK_BASE_DIR = 'C:\\Users\\guilherme.felix\\Documents\\Relatórios RIO x SP';
+const RIO_SHARE_FILE_REGEX = /\.(xlsx|xls|xlsm|csv|db|sqlite|sqlite3|duckdb|parquet)$/i;
+const RIO_SHARE_HINT_REGEX = /(rio\s*x\s*sao|base\s*rio|share\s*-?\s*mercado\s*rio|base\s*relatorio)/i;
+const RIO_SHARE_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEMAND_DEFAULT_MARKETS = [
     'BELO HORIZONTE - RIO DE JANEIRO',
     'CURITIBA - LITORAL SC',
@@ -33,9 +39,11 @@ const DEMAND_DEFAULT_MARKETS = [
 const revenueDashboardCache = new Map();
 const revenueDashboardInFlight = new Map();
 const demandDashboardCache = new Map();
+const rioShareDashboardCache = new Map();
 
 const EXCEL_LIKE_EXTENSIONS = new Set(['.xlsx', '.xls', '.xlsm', '.csv']);
 const SQLITE_EXTENSIONS = new Set(['.db', '.sqlite', '.sqlite3']);
+const DUCKDB_EXTENSIONS = new Set(['.duckdb']);
 const PARQUET_EXTENSIONS = new Set(['.parquet']);
 
 let sqlJsRuntimePromise = null;
@@ -246,6 +254,61 @@ const readRowsFromSqlite = async (filePath) => {
     }
 };
 
+const readRowsFromDuckDb = async (filePath) => {
+    const pyCmd = [
+        'import sys, json',
+        'try:',
+        '    import duckdb',
+        'except Exception as e:',
+        '    print(json.dumps({"ok": False, "error": "duckdb_python_missing", "details": str(e)}))',
+        '    raise SystemExit(0)',
+        'db_path = sys.argv[1]',
+        'con = duckdb.connect(database=db_path, read_only=True)',
+        'tables = con.execute("SELECT table_schema, table_name FROM information_schema.tables WHERE table_type = \'BASE TABLE\' ORDER BY table_schema, table_name").fetchall()',
+        'rows = []',
+        'for schema_name, table_name in tables:',
+        '    safe_schema = str(schema_name).replace(chr(34), chr(34) * 2)',
+        '    safe_table = str(table_name).replace(chr(34), chr(34) * 2)',
+        '    qry = f\'SELECT * FROM "{safe_schema}"."{safe_table}"\'',
+        '    cursor = con.execute(qry)',
+        '    columns = [d[0] for d in (cursor.description or [])]',
+        '    values = cursor.fetchall()',
+        '    table_key = f\'{schema_name}.{table_name}\' if schema_name else str(table_name)',
+        '    for value_row in values:',
+        '        row = {"_tableName": table_key}',
+        '        for idx, column in enumerate(columns):',
+        '            value = value_row[idx]',
+        '            if isinstance(value, (bytes, bytearray, memoryview)):',
+        '                try:',
+        '                    value = bytes(value).decode("utf-8")',
+        '                except Exception:',
+        '                    value = bytes(value).hex()',
+        '            elif hasattr(value, "isoformat"):',
+        '                try:',
+        '                    value = value.isoformat()',
+        '                except Exception:',
+        '                    pass',
+        '            row[column] = value',
+        '        rows.append(row)',
+        'con.close()',
+        'print(json.dumps({"ok": True, "rows": rows}, default=str))'
+    ].join('\n');
+
+    const output = await runPythonCmd(pyCmd, [filePath]);
+    if (!output || typeof output !== 'object') {
+        throw new Error('Resposta invalida ao ler arquivo DuckDB.');
+    }
+
+    if (!output.ok) {
+        if (output.error === 'duckdb_python_missing') {
+            throw new Error('Leitor DuckDB indisponivel no ambiente Python (modulo "duckdb" nao instalado).');
+        }
+        throw new Error(output.details || output.error || 'Falha ao ler arquivo DuckDB.');
+    }
+
+    return Array.isArray(output.rows) ? output.rows : [];
+};
+
 const normalizeParquetValue = (value) => {
     if (typeof value === 'bigint') {
         const asNumber = Number(value);
@@ -286,6 +349,10 @@ const readTabularRows = async (filePath, { sheetResolver } = {}) => {
         return readRowsFromSqlite(filePath);
     }
 
+    if (DUCKDB_EXTENSIONS.has(extension)) {
+        return readRowsFromDuckDb(filePath);
+    }
+
     if (PARQUET_EXTENSIONS.has(extension)) {
         return readRowsFromParquet(filePath);
     }
@@ -305,7 +372,7 @@ const loadDeParaMap = async (baseDir) => {
         for (const dir of checkdirs) {
             if (!fs.existsSync(dir)) continue;
             const entries = fs.readdirSync(dir);
-            const found = entries.find(e => /de\s*para\s*de\s*linhas.*\.(xlsx|parquet|db|sqlite)$/i.test(e));
+            const found = entries.find(e => /de\s*para\s*de\s*linhas.*\.(xlsx|parquet|db|sqlite|duckdb)$/i.test(e));
             if (found) {
                 matchedFile = path.join(dir, found);
                 matchedStat = fs.statSync(matchedFile);
@@ -1014,6 +1081,318 @@ const setDemandDashboardCache = (cacheKey, payload) => {
     });
 };
 
+const RIO_SHARE_COMPANY_RULES = {
+    '1001': { grupo: 'JCA', modalidade: 'RODOVIARIO' },
+    'AGUIA BRANCA': { grupo: 'AGUIA BRANCA', modalidade: 'RODOVIARIO' },
+    'EXPRESSO DO SUL': { grupo: 'JCA', modalidade: 'RODOVIARIO' },
+    CATARINENSE: { grupo: 'JCA', modalidade: 'RODOVIARIO' },
+    PENHA: { grupo: 'COMPORTE', modalidade: 'RODOVIARIO' },
+    'AGUIA FLEX': { grupo: 'AGUIA BRANCA', modalidade: 'DIGITAL' },
+    KAISSARA: { grupo: 'SUZANTUR', modalidade: 'RODOVIARIO' },
+    WEMOBI: { grupo: 'JCA', modalidade: 'DIGITAL' },
+    ADAMANTINA: { grupo: 'ADAMANTINA', modalidade: 'RODOVIARIO' },
+    FLIXBUS: { grupo: 'FLIXBUS', modalidade: 'DIGITAL' },
+    'RIO DOCE': { grupo: 'RIO DOCE', modalidade: 'RODOVIARIO' },
+    NOTAVEL: { grupo: 'NOTAVEL', modalidade: 'RODOVIARIO' }
+};
+
+const RIO_SHARE_MONTH_LABELS = {
+    1: '01-JANEIRO',
+    2: '02-FEVEREIRO',
+    3: '03-MARCO',
+    4: '04-ABRIL',
+    5: '05-MAIO',
+    6: '06-JUNHO',
+    7: '07-JULHO',
+    8: '08-AGOSTO',
+    9: '09-SETEMBRO',
+    10: '10-OUTUBRO',
+    11: '11-NOVEMBRO',
+    12: '12-DEZEMBRO'
+};
+
+const normalizeRioCategory = (value, fallback) => {
+    const normalized = stripAccents(String(value || ''))
+        .toUpperCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+    return normalized || fallback;
+};
+
+const normalizeRioLocation = (value, fallback) => {
+    const normalized = stripAccents(String(value || ''))
+        .toUpperCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!normalized) return fallback;
+    if (normalized.includes('BARRA FUNDA')) return 'SAO PAULO (BARRA FUNDA)';
+
+    if (
+        normalized === 'SP'
+        || normalized.includes('SAO PAULO')
+        || normalized.includes('SÃO PAULO')
+    ) {
+        return 'SAO PAULO';
+    }
+
+    if (
+        normalized === 'RJ'
+        || normalized === 'RIO'
+        || normalized.includes('RIO DE JANEIRO')
+        || normalized.includes('RIO JANEIRO')
+        || normalized.includes('RIO DE JANERIO')
+    ) {
+        return 'RIO DE JANEIRO';
+    }
+
+    return normalized;
+};
+
+const normalizeRioTime = (value, fallback = 'SEM HORARIO') => {
+    if (value === null || value === undefined) return fallback;
+
+    const toHms = (hours, minutes, seconds = 0) => {
+        const hh = String(Math.min(23, Math.max(0, Number(hours || 0)))).padStart(2, '0');
+        const mm = String(Math.min(59, Math.max(0, Number(minutes || 0)))).padStart(2, '0');
+        const ss = String(Math.min(59, Math.max(0, Number(seconds || 0)))).padStart(2, '0');
+        return `${hh}:${mm}:${ss}`;
+    };
+
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return toHms(value.getHours(), value.getMinutes(), value.getSeconds());
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        const timeFraction = value % 1;
+        const secondsTotal = Math.round((timeFraction < 0 ? 0 : timeFraction) * 24 * 60 * 60);
+        return toHms(Math.floor(secondsTotal / 3600) % 24, Math.floor((secondsTotal % 3600) / 60), secondsTotal % 60);
+    }
+
+    const raw = String(value).trim();
+    if (!raw) return fallback;
+
+    const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (match) {
+        return toHms(match[1], match[2], match[3] || '0');
+    }
+
+    const embeddedTime = raw.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (embeddedTime) {
+        return toHms(embeddedTime[1], embeddedTime[2], embeddedTime[3] || '0');
+    }
+
+    return raw;
+};
+
+const inferIsoWeek = (date) => {
+    const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = utcDate.getUTCDay() || 7;
+    utcDate.setUTCDate(utcDate.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
+    return Math.ceil((((utcDate - yearStart) / 86400000) + 1) / 7);
+};
+
+const resolveRioShareSourcePath = (requestedDir) => {
+    const requested = String(requestedDir || '').trim();
+    const preferred = requested || DEFAULT_RIO_SHARE_BASE_DIR;
+
+    if (requested) {
+        return { preferredPath: preferred, effectivePath: preferred };
+    }
+
+    if (fs.existsSync(preferred)) {
+        return { preferredPath: preferred, effectivePath: preferred };
+    }
+
+    if (fs.existsSync(RIO_SHARE_FALLBACK_BASE_DIR)) {
+        return { preferredPath: preferred, effectivePath: RIO_SHARE_FALLBACK_BASE_DIR };
+    }
+
+    return { preferredPath: preferred, effectivePath: preferred };
+};
+
+const collectRioShareFiles = (sourcePath) => {
+    if (!fs.existsSync(sourcePath)) return [];
+
+    const stats = fs.statSync(sourcePath);
+    if (stats.isFile()) {
+        const extension = path.extname(sourcePath).toLowerCase();
+        if (!RIO_SHARE_FILE_REGEX.test(extension)) return [];
+        return [{
+            filePath: sourcePath,
+            fileName: path.basename(sourcePath),
+            mtimeMs: stats.mtimeMs,
+            mtime: stats.mtime
+        }];
+    }
+
+    if (!stats.isDirectory()) return [];
+
+    const entries = fs.readdirSync(sourcePath, { withFileTypes: true });
+    const tabularFiles = entries
+        .filter((entry) => entry.isFile() && !entry.name.startsWith('~$') && RIO_SHARE_FILE_REGEX.test(entry.name))
+        .map((entry) => {
+            const filePath = path.join(sourcePath, entry.name);
+            const fileStats = fs.statSync(filePath);
+            return {
+                filePath,
+                fileName: entry.name,
+                mtimeMs: fileStats.mtimeMs,
+                mtime: fileStats.mtime
+            };
+        });
+
+    const preferredMatches = tabularFiles.filter((item) => RIO_SHARE_HINT_REGEX.test(item.fileName));
+    const files = preferredMatches.length ? preferredMatches : tabularFiles;
+    return files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+};
+
+const pickRioShareSheet = (workbook) => {
+    const names = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
+    if (!names.length) return null;
+
+    const exact = names.find((name) => /base\s*relatorio\s*rio\s*x\s*sao/i.test(name));
+    if (exact) return exact;
+
+    const preferred = names.find((name) => /(rio\s*x\s*sao|base\s*rio|share)/i.test(name));
+    if (preferred) return preferred;
+
+    return names[0];
+};
+
+const buildRioShareDashboardCacheKey = (sourcePath) => String(sourcePath || '').trim().toLowerCase();
+
+const getRioShareDashboardCache = (cacheKey) => {
+    const entry = rioShareDashboardCache.get(cacheKey);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+        rioShareDashboardCache.delete(cacheKey);
+        return null;
+    }
+    return entry.payload;
+};
+
+const setRioShareDashboardCache = (cacheKey, payload) => {
+    rioShareDashboardCache.set(cacheKey, {
+        payload,
+        expiresAt: Date.now() + RIO_SHARE_CACHE_TTL_MS
+    });
+};
+
+const buildRioShareDataset = async (sourcePath) => {
+    const files = collectRioShareFiles(sourcePath);
+    const warnings = [];
+    const rows = [];
+    const stats = {
+        totalRead: 0,
+        processed: 0,
+        skippedDate: 0,
+        skippedEmpresa: 0,
+        skippedPax: 0
+    };
+
+    for (const file of files) {
+        try {
+            const rawRows = await readTabularRows(file.filePath, { sheetResolver: pickRioShareSheet });
+
+            for (const row of rawRows) {
+                stats.totalRead += 1;
+
+                const dateRaw = getRowValue(row, ['DATA', 'Data', 'DATA SP', 'DATA_VIAGEM']);
+                const parsedDate = parseBrDate(dateRaw);
+                if (!parsedDate) {
+                    stats.skippedDate += 1;
+                    continue;
+                }
+                const travelDate = toStartOfDay(parsedDate);
+
+                const empresa = normalizeDemandToken(getRowValue(row, ['EMPRESA', 'Empresa', 'CIA', 'OPERADOR']) || '');
+                if (!empresa) {
+                    stats.skippedEmpresa += 1;
+                    continue;
+                }
+
+                const paxValue = toNumber(getRowValue(row, ['PAX', 'PASSAGEIRO', 'PASSAGEIROS', 'QTD PAX', 'QTD_PAX']));
+                if (!Number.isFinite(paxValue) || paxValue <= 0) {
+                    stats.skippedPax += 1;
+                    continue;
+                }
+
+                const viagensRaw = toNumber(getRowValue(row, [
+                    'VIAGENS',
+                    'VIAGEM',
+                    'QTD VIAGENS',
+                    'QTD_VIAGENS',
+                    'TOTAL VIAGENS',
+                    'SERVIÇO',
+                    'SERVICO',
+                    'SERVICO TOTAL'
+                ]));
+
+                // Ignore blank/null trip cells. Keep fallback=1 only for potential service code values.
+                let viagens = 0;
+                if (Number.isFinite(viagensRaw) && viagensRaw > 0) {
+                    viagens = viagensRaw <= 100 ? viagensRaw : 1;
+                }
+
+                const origem = normalizeRioLocation(getRowValue(row, ['ORIGEM', 'Origem']), 'SEM ORIGEM');
+                const destino = normalizeRioLocation(getRowValue(row, ['DESTINO', 'Destino']), 'SEM DESTINO');
+                const monthNumberRaw = toNumber(getRowValue(row, ['Nº Mês', 'N MES', 'MES NUMERO', 'MES_N']));
+                const monthNumber = Number.isFinite(monthNumberRaw) && monthNumberRaw >= 1 && monthNumberRaw <= 12
+                    ? Math.round(monthNumberRaw)
+                    : (travelDate.getMonth() + 1);
+
+                const monthLabelRaw = getRowValue(row, ['MÊS', 'MES', 'Mês', 'NOME MES']);
+                const monthLabel = String(monthLabelRaw || RIO_SHARE_MONTH_LABELS[monthNumber] || '').trim() || RIO_SHARE_MONTH_LABELS[monthNumber];
+
+                const weekRaw = toNumber(getRowValue(row, ['SEMANA', 'Semana', 'SEMANA ANO']));
+                const week = Number.isFinite(weekRaw) && weekRaw > 0 ? Math.round(weekRaw) : inferIsoWeek(travelDate);
+
+                const yearRaw = toNumber(getRowValue(row, ['Ano', 'ANO', 'YEAR']));
+                const year = Number.isFinite(yearRaw) && yearRaw > 0 ? Math.round(yearRaw) : travelDate.getFullYear();
+
+                const grupoRaw = getRowValue(row, ['GRUPO', 'Grupo']);
+                const modalidadeRaw = getRowValue(row, ['MODALIDADE', 'Modalidade', 'CANAL']);
+                const horarioRaw = getRowValue(row, ['HORARIO', 'HORÁRIO', 'HORA', 'HORA PARTIDA', 'PARTIDA']);
+                const horario = normalizeRioTime(horarioRaw, 'SEM HORARIO');
+                const mappedRule = RIO_SHARE_COMPANY_RULES[empresa] || null;
+                const grupo = normalizeRioCategory(grupoRaw || mappedRule?.grupo, 'OUTROS');
+                const modalidade = normalizeRioCategory(modalidadeRaw || mappedRule?.modalidade, 'OUTROS');
+
+                rows.push({
+                    date: toISOStringDate(travelDate),
+                    dia: travelDate.getDate(),
+                    semana: week,
+                    mes: monthLabel,
+                    mesNumero: monthNumber,
+                    ano: year,
+                    empresa,
+                    origem,
+                    destino,
+                    horario,
+                    grupo,
+                    modalidade,
+                    pax: Number(paxValue.toFixed(4)),
+                    viagens: Number(viagens.toFixed(4))
+                });
+                stats.processed += 1;
+            }
+        } catch (error) {
+            warnings.push(`Falha ao ler ${file.fileName}: ${error.message || error}`);
+        }
+    }
+
+    return {
+        basePath: sourcePath,
+        filesRead: files.length,
+        warnings,
+        records: rows.length,
+        stats,
+        rows
+    };
+};
+
 const buildDemandDataset = async (effectiveDir) => {
     const files = collectDemandFiles(effectiveDir);
     const deParaMap = await loadDeParaMap(effectiveDir);
@@ -1365,6 +1744,109 @@ router.get('/demand-dashboard', async (req, res) => {
     } catch (error) {
         console.error('[DEMAND_DASH_ERROR]', error);
         return res.status(500).json({ error: 'Erro ao gerar dashboard de Demanda.', details: String(error?.message || error) });
+    }
+});
+
+router.get('/rio-share-dashboard', async (req, res) => {
+    try {
+        const bypassCache = String(req.query.noCache || '').toLowerCase() === '1' || String(req.query.noCache || '').toLowerCase() === 'true';
+        const requestedDir = typeof req.query.baseDir === 'string' ? req.query.baseDir.trim() : '';
+        const { preferredPath, effectivePath } = resolveRioShareSourcePath(requestedDir);
+
+        if (!fs.existsSync(effectivePath)) {
+            return res.status(400).json({
+                error: 'Diretorio/base da dashboard Rio x SP nao encontrado.',
+                details: { requestedDir: preferredPath }
+            });
+        }
+
+        const cacheKey = buildRioShareDashboardCacheKey(effectivePath);
+        const cachedDataset = !bypassCache ? getRioShareDashboardCache(cacheKey) : null;
+        const dataset = cachedDataset || await buildRioShareDataset(effectivePath);
+
+        if (!cachedDataset) {
+            setRioShareDashboardCache(cacheKey, dataset);
+        }
+
+        const rows = Array.isArray(dataset.rows) ? dataset.rows : [];
+
+        const companyAggMap = new Map();
+        const originsSet = new Set();
+        const destinationsSet = new Set();
+        const modalitySet = new Set();
+        const groupSet = new Set();
+        const hourSet = new Set();
+        const monthMap = new Map();
+        const weekSet = new Set();
+        const yearSet = new Set();
+
+        for (const row of rows) {
+            originsSet.add(row.origem);
+            destinationsSet.add(row.destino);
+            modalitySet.add(row.modalidade);
+            groupSet.add(row.grupo);
+            hourSet.add(row.horario);
+            weekSet.add(Number(row.semana || 0));
+            yearSet.add(Number(row.ano || 0));
+
+            const monthKey = String(row.mes || '').trim();
+            if (monthKey) {
+                monthMap.set(monthKey, {
+                    label: monthKey,
+                    number: Number(row.mesNumero || 0)
+                });
+            }
+
+            const current = companyAggMap.get(row.empresa) || { empresa: row.empresa, pax: 0, viagens: 0 };
+            current.pax += Number(row.pax || 0);
+            current.viagens += Number(row.viagens || 0);
+            companyAggMap.set(row.empresa, current);
+        }
+
+        const companyStats = Array.from(companyAggMap.values())
+            .map((item) => ({
+                empresa: item.empresa,
+                pax: Number(item.pax.toFixed(4)),
+                viagens: Number(item.viagens.toFixed(4)),
+                ipv: item.viagens > 0 ? Number((item.pax / item.viagens).toFixed(4)) : 0
+            }))
+            .sort((a, b) => b.pax - a.pax || a.empresa.localeCompare(b.empresa));
+
+        const months = Array.from(monthMap.values())
+            .sort((a, b) => a.number - b.number || a.label.localeCompare(b.label));
+
+        return res.json({
+            meta: {
+                baseDir: effectivePath,
+                requestedBaseDir: preferredPath,
+                filesRead: Number(dataset.filesRead || 0),
+                records: Number(dataset.records || 0),
+                warnings: Array.isArray(dataset.warnings) ? dataset.warnings : [],
+                stats: dataset.stats || null
+            },
+            rows,
+            companyStats,
+            filters: {
+                companies: companyStats.map((item) => item.empresa),
+                origins: Array.from(originsSet).sort((a, b) => a.localeCompare(b)),
+                destinations: Array.from(destinationsSet).sort((a, b) => a.localeCompare(b)),
+                modalities: Array.from(modalitySet).sort((a, b) => a.localeCompare(b)),
+                groups: Array.from(groupSet).sort((a, b) => a.localeCompare(b)),
+                horarios: Array.from(hourSet).sort((a, b) => a.localeCompare(b)),
+                months,
+                weeks: Array.from(weekSet).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b),
+                years: Array.from(yearSet).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => b - a)
+            },
+            defaultSelection: {
+                companies: companyStats.map((item) => item.empresa),
+                dayStart: 1,
+                dayEnd: 31,
+                modalities: Array.from(modalitySet).sort((a, b) => a.localeCompare(b))
+            }
+        });
+    } catch (error) {
+        console.error('[RIO_SHARE_DASH_ERROR]', error);
+        return res.status(500).json({ error: 'Erro ao gerar dashboard Rio x SP.', details: String(error?.message || error) });
     }
 });
 

@@ -1,26 +1,68 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, MotionConfig } from 'motion/react';
-import { CheckCircle, Loader2 } from 'lucide-react';
+import { CheckCircle, Fingerprint, Loader2 } from 'lucide-react';
 import logoApp from '../../logo_app.png';
 
 import { useAuth } from '../context/AuthContext';
 import BackgroundAnimation from '../components/BackgroundAnimation';
 import Button from '../components/Button';
 import { cn } from '../utils/cn';
+import { useDialog } from '../context/DialogContext';
+import {
+  authenticateWithWindowsHello,
+  clearWindowsHelloHint,
+  getWindowsHelloHint,
+  isWindowsHelloAvailable,
+} from '../utils/windowsHello';
 
 interface LoginViewProps {
   serverStatus: 'checking' | 'online' | 'offline';
-  serverInfo: { version?: string } | null;
+  serverInfo: { version?: string; dbStatus?: string; dbMessage?: string } | null;
   animationsEnabled: boolean;
 }
 
 export default function LoginView({ serverStatus, serverInfo, animationsEnabled }: LoginViewProps) {
-  const { setUser, isLoggingIn, logout } = useAuth(); // using global auth context
+  const { setUser, isLoggingIn } = useAuth(); // using global auth context
+  const { showAlert } = useDialog();
   const [internalIsLoggingIn, setInternalIsLoggingIn] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [authData, setAuthData] = useState({ user: '', pass: '', name: '' });
+  const [isWindowsHelloLoading, setIsWindowsHelloLoading] = useState(false);
+  const [windowsHelloAvailable, setWindowsHelloAvailable] = useState(false);
 
-  const loadingState = isLoggingIn || internalIsLoggingIn;
+  const loadingState = isLoggingIn || internalIsLoggingIn || isWindowsHelloLoading;
+
+  useEffect(() => {
+    const hint = getWindowsHelloHint();
+    setWindowsHelloAvailable(Boolean(hint?.biometricToken) && isWindowsHelloAvailable());
+  }, []);
+
+  const handleWindowsHelloLogin = async () => {
+    const hint = getWindowsHelloHint();
+    if (!hint?.biometricToken) {
+      setWindowsHelloAvailable(false);
+      return;
+    }
+
+    setIsWindowsHelloLoading(true);
+    try {
+      const user = await authenticateWithWindowsHello(hint.biometricToken);
+      setUser(user);
+    } catch (error: any) {
+      const message = error?.message || 'Falha na autenticação biométrica.';
+      if (/token biométrico inválido|expirado|não encontrada|não encontrado|reative/i.test(message)) {
+        clearWindowsHelloHint();
+        setWindowsHelloAvailable(false);
+      }
+      await showAlert({
+        title: 'Falha na Autenticação',
+        message: 'Não foi possível autenticar com Windows Hello: ' + message,
+        tone: 'danger',
+      });
+    } finally {
+      setIsWindowsHelloLoading(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,10 +89,18 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
         setUser(data.user);
       } else {
         const msg = data?.error || 'Erro desconhecido ao autenticar.';
-        alert(msg + (data?.details ? "\n\nDetalhes:\n" + data.details : ""));
+        await showAlert({
+          title: 'Falha no Login',
+          message: msg + (data?.details ? "\n\nDetalhes:\n" + data.details : ""),
+          tone: 'danger',
+        });
       }
     } catch (error: any) {
-      alert('Erro ao conectar com o servidor: ' + (error.message || error));
+      await showAlert({
+        title: 'Erro de Conexão',
+        message: 'Erro ao conectar com o servidor: ' + (error.message || error),
+        tone: 'danger',
+      });
     } finally {
       setInternalIsLoggingIn(false);
     }
@@ -72,13 +122,25 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
 
       const data = await response.json();
       if (data.success) {
-        alert('Usuário criado! Agora faça login.');
+        await showAlert({
+          title: 'Cadastro Concluído',
+          message: 'Usuário criado! Agora faça login.',
+          tone: 'success',
+        });
         setIsRegistering(false);
       } else {
-        alert(data.error + (data.details ? "\n\nDetalhes:\n" + data.details : ""));
+        await showAlert({
+          title: 'Falha no Cadastro',
+          message: data.error + (data.details ? "\n\nDetalhes:\n" + data.details : ""),
+          tone: 'danger',
+        });
       }
     } catch (error: any) {
-      alert('Erro ao criar usuário / Conexão falhou: ' + (error.message || error));
+      await showAlert({
+        title: 'Erro de Conexão',
+        message: 'Erro ao criar usuário / Conexão falhou: ' + (error.message || error),
+        tone: 'danger',
+      });
     } finally {
       setInternalIsLoggingIn(false);
     }
@@ -116,7 +178,9 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
                 <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse mx-1.5 shadow-[0_0_8px_rgba(239,44,44,0.5)]"></div>
               )}
               <span className="text-[11px] font-bold text-slate-300 tracking-tight">
-                {serverStatus === 'online' ? 'Banco de Dados: Userbank.db' : 'Banco: Sistema Fora de Linha'}
+                {serverStatus === 'online'
+                  ? (serverInfo?.dbStatus === 'ok' ? 'Banco de Dados: Conectado' : 'Banco de Dados: Instável')
+                  : 'Banco: Sistema Fora de Linha'}
               </span>
             </div>
             <div className="flex items-center gap-2 opacity-80 transition-all">
@@ -159,7 +223,7 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
               <span>{isRegistering ? 'Nova Conta' : 'Acessar'}</span>
             </h3>
             <p className="text-slate-500 text-sm mb-6">
-              {isRegistering ? 'Preencha os dados abaixo' : 'Insira suas credenciais'}
+              {isRegistering ? 'Preencha os dados abaixo' : 'Insira suas credenciais ou use Windows Hello'}
             </p>
 
             <form onSubmit={isRegistering ? handleRegister : handleLogin} className="space-y-4">
@@ -206,6 +270,21 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
                   isRegistering ? 'CADASTRAR CONTA' : 'ACESSAR AGORA'
                 )}
               </Button>
+
+              {!isRegistering && windowsHelloAvailable && (
+                <Button
+                  type="button"
+                  disabled={loadingState}
+                  onClick={handleWindowsHelloLogin}
+                  className="w-full py-3 text-xs font-black uppercase tracking-[0.15em] mt-2 rounded-2xl border-2 !border-emerald-800 !bg-emerald-700 !text-white hover:!bg-emerald-800 transition-all"
+                >
+                  {isWindowsHelloLoading ? (
+                    <><Loader2 size={16} className="animate-spin mr-2" /> VALIDANDO BIOMETRIA...</>
+                  ) : (
+                    <><Fingerprint size={16} className="mr-2" /> ENTRAR COM WINDOWS HELLO</>
+                  )}
+                </Button>
+              )}
             </form>
 
             <div className="mt-4 text-center">

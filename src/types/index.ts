@@ -5,7 +5,7 @@
  */
 
 /** Identificador das views/telas disponíveis na navegação principal. */
-export type View = 'dashboard' | 'dashboards' | 'presentations' | 'demand' | 'reports' | 'vault' | 'calculator' | 'settings' | 'history';
+export type View = 'dashboard' | 'dashboards' | 'presentations' | 'demand' | 'rioShare' | 'reports' | 'vault' | 'calculator' | 'tools' | 'settings' | 'history';
 
 /** Usuário autenticado na aplicação. */
 export interface User {
@@ -29,6 +29,7 @@ export interface UiSettings {
   successAnimationStyle: SuccessAnimationStyle;
   successAnimationDurationSec: number;
   successAnimationIntensity: AnimationIntensity;
+  windowsHelloEnabled: boolean;
 }
 
 /**

@@ -33,6 +33,7 @@ import Card from '../components/Card';
 import Button from '../components/Button';
 import CustomSelect from '../components/CustomSelect';
 import { cn } from '../utils/cn';
+import { useDialog } from '../context/DialogContext';
 
 const DEFAULT_DEMAND_BASE_DIR = 'Z:\\DASH DEMANDA\\BASE';
 
@@ -261,6 +262,7 @@ const MultiSelect = ({
 };
 
 const DemandDashboardView = () => {
+  const { showAlert } = useDialog();
   const [payload, setPayload] = useState<DemandPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -383,7 +385,11 @@ const DemandDashboardView = () => {
       downloadDataUrl(dataUrl, fileName);
     } catch (err) {
       console.error('Erro ao exportar imagem:', err);
-      alert('Infelizmente não conseguimos gerar a imagem desta vez. Tente novamente.');
+      await showAlert({
+        title: 'Falha na Exportação',
+        message: 'Infelizmente não conseguimos gerar a imagem desta vez. Tente novamente.',
+        tone: 'danger',
+      });
     }
   };
 

@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from selenium import webdriver # type: ignore
 from selenium.webdriver.common.by import By # type: ignore
-from selenium.webdriver.edge.options import Options # type: ignore
+from selenium.webdriver.chrome.options import Options # type: ignore
 
 try:
     from selenium_helper import get_driver_path
@@ -57,6 +57,177 @@ def gerar_intervalos_mensais_ebus(data_str_inicio, data_str_fim):
         intervalos.append((atual.strftime("%d/%m/%Y"), fim_trecho.strftime("%d/%m/%Y"), meses_pt[atual.month], atual.year))
         atual = data_ultimo_dia + timedelta(days=1)
     return intervalos
+
+
+def ler_planilha_relatorio(caminho_arquivo):
+    """Lê planilhas .xls/.xlsx do EBUS usando o engine compatível com a extensão."""
+    caminho = Path(caminho_arquivo)
+    sufixo = caminho.suffix.lower()
+
+    if sufixo == '.xls':
+        return pd.read_excel(caminho, engine='xlrd')
+
+    if sufixo in {'.xlsx', '.xlsm'}:
+        return pd.read_excel(caminho, engine='openpyxl')
+
+    # Fallback para extensões não previstas.
+    try:
+        return pd.read_excel(caminho)
+    except Exception:
+        return pd.read_excel(caminho, engine='openpyxl')
+
+
+def encontrar_coluna_data_viagem(df: pd.DataFrame):
+    """Localiza a coluna de Data Viagem mesmo com variações de grafia."""
+    for col in df.columns:
+        normalizado = normalizar_nome_coluna(col)
+        if normalizado == 'dataviagem' or ('data' in normalizado and 'viagem' in normalizado):
+            return col
+    return None
+
+
+def separar_arquivo_por_mes_data_viagem(arquivo_original, pasta_destino, callback_progresso=None):
+    """
+    Separa um relatório único em múltiplos arquivos por mês de Data Viagem.
+    Mantém o arquivo original caso não seja possível separar com segurança.
+    """
+    arquivo_original = Path(arquivo_original)
+    pasta_destino = Path(pasta_destino)
+    df = ler_planilha_relatorio(arquivo_original)
+    df = df.dropna(how='all')
+
+    coluna_data = encontrar_coluna_data_viagem(df)
+    if not coluna_data:
+        if callback_progresso:
+            callback_progresso(0.54, "Data Viagem não encontrada; arquivo seguirá sem separação mensal.")
+        return [{"arquivo": arquivo_original, "nome_mes": None, "ano": None}]
+
+    df_aux = df.copy()
+    df_aux['__data_parse'] = pd.to_datetime(df_aux[coluna_data], errors='coerce', dayfirst=True)
+    mascara_validas = df_aux['__data_parse'].notna()
+    if not mascara_validas.any():
+        if callback_progresso:
+            callback_progresso(0.54, "Nenhuma Data Viagem válida; arquivo seguirá sem separação mensal.")
+        return [{"arquivo": arquivo_original, "nome_mes": None, "ano": None}]
+
+    df_validas = df_aux.loc[mascara_validas].copy()
+    df_validas['__mes'] = df_validas['__data_parse'].apply(lambda dt: int(dt.month))
+    df_validas['__ano'] = df_validas['__data_parse'].apply(lambda dt: int(dt.year))
+    df_validas = df_validas.drop(columns=['__data_parse'])
+
+    arquivos_saida = []
+    chaves_ordenadas = sorted({(int(ano), int(mes)) for ano, mes in zip(df_validas['__ano'], df_validas['__mes'])})
+    total_grupos = len(chaves_ordenadas)
+
+    for idx, (ano, mes) in enumerate(chaves_ordenadas, 1):
+        grupo = df_validas[(df_validas['__ano'] == ano) & (df_validas['__mes'] == mes)].copy()
+        nome_mes = MESES_PT.get(int(mes), f"Mes {mes}")
+        nome_arquivo = sanitizar_nome_arquivo(
+            f"RelatorioRevenue - {nome_mes} {int(ano)} - origem_unica.xlsx"
+        )
+        caminho_mes = pasta_destino / nome_arquivo
+
+        grupo_saida = grupo.drop(columns=['__mes', '__ano'])
+        grupo_saida.to_excel(caminho_mes, index=False)
+
+        arquivos_saida.append({"arquivo": caminho_mes, "nome_mes": nome_mes, "ano": int(ano)})
+
+        if callback_progresso:
+            callback_progresso(
+                0.54 + (0.06 * (idx / max(total_grupos, 1))),
+                f"Separação mensal: {nome_mes}/{ano} preparado ({idx}/{total_grupos}).",
+            )
+
+    linhas_sem_data = int((~mascara_validas).sum())
+    if linhas_sem_data > 0 and callback_progresso:
+        callback_progresso(
+            0.60,
+            f"Aviso: {linhas_sem_data} linhas ficaram fora da separação por mês por não terem Data Viagem válida.",
+        )
+
+    try:
+        os.remove(arquivo_original)
+    except OSError:
+        pass
+
+    return arquivos_saida
+
+
+def limpar_cookies_ebus(driver, callback_progresso=None):
+    """
+    Sequência de higienização pedida para o EBUS:
+    acessa > apaga tudo > recarrega > segue para login.
+    """
+    url_login = "http://10.61.65.84/auth/login"
+    origem_ebus = "http://10.61.65.84"
+
+    def ler_estado_storage():
+        try:
+            estado = driver.execute_script(
+                "return {"
+                "localCount: window.localStorage ? window.localStorage.length : -1,"
+                "sessionCount: window.sessionStorage ? window.sessionStorage.length : -1"
+                "};"
+            ) or {}
+            return int(estado.get("localCount", -1)), int(estado.get("sessionCount", -1))
+        except Exception:
+            return -1, -1
+
+    driver.get(url_login)
+    time.sleep(1)
+
+    limpo_total = False
+    for tentativa in range(1, 4):
+        try:
+            driver.delete_all_cookies()
+        except Exception:
+            pass
+
+        # Apaga armazenamento web do domínio atual de forma resiliente.
+        try:
+            driver.execute_script("window.localStorage.clear();")
+            driver.execute_script("window.sessionStorage.clear();")
+        except Exception:
+            pass
+
+        # Em navegadores Chromium, limpa também cookies/cache/dados do site.
+        try:
+            driver.execute_cdp_cmd("Network.enable", {})
+            driver.execute_cdp_cmd("Network.clearBrowserCookies", {})
+            driver.execute_cdp_cmd("Network.clearBrowserCache", {})
+            driver.execute_cdp_cmd("Storage.clearDataForOrigin", {
+                "origin": origem_ebus,
+                "storageTypes": "local_storage,session_storage,indexeddb,websql,cache_storage,service_workers",
+            })
+        except Exception:
+            pass
+
+        local_count, session_count = ler_estado_storage()
+        try:
+            cookies_count = len(driver.get_cookies())
+        except Exception:
+            cookies_count = -1
+
+        limpo_total = cookies_count == 0 and local_count == 0 and session_count == 0
+        if callback_progresso:
+            callback_progresso(
+                0.14,
+                f"Validação de limpeza ({tentativa}/3): cookies={cookies_count}, localStorage={local_count}, sessionStorage={session_count}",
+            )
+
+        if limpo_total:
+            break
+
+        time.sleep(0.8)
+
+    # Recarrega conforme processo validado manualmente.
+    try:
+        driver.refresh()
+    except Exception:
+        driver.get(url_login)
+
+    time.sleep(1)
+    return limpo_total
 
 # ==========================================
 # FUNÇÃO AUXILIAR DE FORMATAÇÃO VISUAL
@@ -201,6 +372,41 @@ def data_aplicacao_parece_timestamp_download(df: pd.DataFrame, nome_coluna: str)
     return unicos <= limite_unicos and span_segundos <= 180
 
 
+def data_aplicacao_top10_iguais(arquivo_excel) -> bool:
+    """
+    Valida as 10 primeiras linhas de Data Aplicação.
+    Retorna True quando todos os valores válidos são exatamente iguais.
+    """
+    try:
+        df = ler_planilha_relatorio(arquivo_excel)
+    except Exception:
+        return False
+
+    coluna_data = encontrar_coluna_data_aplicacao(df)
+    if not coluna_data or coluna_data not in df.columns:
+        return False
+
+    serie = df[coluna_data].head(10)
+    if serie.empty:
+        return False
+
+    valores = []
+    for valor in serie:
+        if pd.isna(valor):
+            continue
+
+        convertido = pd.to_datetime(valor, errors='coerce', dayfirst=True)
+        if isinstance(convertido, pd.Timestamp) and not pd.isna(convertido):
+            valores.append(convertido.floor('s').strftime('%Y-%m-%d %H:%M:%S'))
+        else:
+            valores.append(str(valor).strip())
+
+    if len(valores) < 2:
+        return False
+
+    return len(set(valores)) == 1
+
+
 def valor_para_chave_comparacao(valor):
     """Padroniza valores para composição de chave de comparação de estado."""
     if pd.isna(valor):
@@ -244,7 +450,7 @@ def processar_arquivos_relatorios(arquivo_original, destino, nome_mes=None, ano_
     nome_arquivo_origem = Path(arquivo_original).name
     if callback_progresso: callback_progresso(0.40, f"Lendo planilha Excel bruta: {nome_arquivo_origem}")
     
-    df_novo = pd.read_excel(arquivo_original, engine='xlrd')
+    df_novo = ler_planilha_relatorio(arquivo_original)
 
     if callback_progresso: callback_progresso(0.42, f"Removendo linhas fantasmas ou inválidas...")
     df_novo = df_novo.dropna(how='all')
@@ -636,53 +842,59 @@ def executar_ebus(
             if callback_progresso:
                 callback_progresso(0.1, "Abrindo Navegador Invisível...")
 
-            resultado = gerar_intervalos_mensais_ebus(data_inicio, data_final)
             opcoes = Options()
             opcoes.add_argument("--window-size=1920,1080")
             opcoes.add_argument("--headless")
 
             driver_path = get_driver_path()
-            if driver_path:
-                from selenium.webdriver.edge.service import Service
-                driver = webdriver.Edge(service=Service(driver_path), options=opcoes)
+            if driver_path and "chrome" in Path(driver_path).name.lower():
+                from selenium.webdriver.chrome.service import Service
+                driver = webdriver.Chrome(service=Service(driver_path), options=opcoes)
             else:
-                driver = webdriver.Edge(options=opcoes)
+                driver = webdriver.Chrome(options=opcoes)
 
-            checar_parada()
-            driver.get("http://10.61.65.84/auth/login")
-            wait = WebDriverWait(driver, 60)
+            max_tentativas_download = 2
+            baixou_arquivo_valido = False
 
-            if callback_progresso:
-                callback_progresso(0.2, "Fazendo login no EBUS...")
-
-            login = wait.until(EC.presence_of_element_located((By.XPATH, "//input[contains (@id, 'input-usuario')]")))
-            login.send_keys(username)
-            senha = driver.find_element(By.XPATH, "//input[contains (@id, 'input-senha')]")
-            senha.send_keys(senha_user)
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Login')]"))).click()
-
-            if callback_progresso:
-                callback_progresso(0.3, "Navegando até aba de Revenue...")
-
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(@class, 'menu-title ng-tns-c129-33')]"))).click()
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(@class, 'menu-title ng-tns-c129-37')]"))).click()
-
-            total_meses = len(resultado)
-            for idx, (inicial_data, final_data, nome_mes, _ano_atual) in enumerate(resultado):
+            for tentativa_download in range(1, max_tentativas_download + 1):
                 checar_parada()
-                porcentagem = 0.3 + (0.5 * (idx / total_meses))
                 if callback_progresso:
-                    callback_progresso(porcentagem, f"Mês {idx+1}/{total_meses} - Inserindo filtro: {nome_mes}...")
+                    callback_progresso(
+                        0.12,
+                        f"Tentativa {tentativa_download}/{max_tentativas_download}: acessando e higienizando sessão EBUS...",
+                    )
+
+                limpar_cookies_ebus(driver, callback_progresso=callback_progresso)
+                wait = WebDriverWait(driver, 60)
+
+                if callback_progresso:
+                    callback_progresso(0.2, "Fazendo login no EBUS...")
+
+                login = wait.until(EC.presence_of_element_located((By.XPATH, "//input[contains (@id, 'input-usuario')]")))
+                login.send_keys(username)
+                senha = driver.find_element(By.XPATH, "//input[contains (@id, 'input-senha')]")
+                senha.send_keys(senha_user)
+                wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Login')]"))).click()
+
+                if callback_progresso:
+                    callback_progresso(0.3, "Navegando até aba de Revenue...")
+
+                wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(@class, 'menu-title ng-tns-c129-33')]"))).click()
+                wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(@class, 'menu-title ng-tns-c129-37')]"))).click()
+
+                checar_parada()
+                if callback_progresso:
+                    callback_progresso(0.32, f"Aplicando filtro único no período: {data_inicio} até {data_final}...")
 
                 data_relatorio = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[contains(@placeholder, 'Data Início Viagem')]")))
                 data_relatorio.clear()
-                data_relatorio.send_keys(inicial_data)
+                data_relatorio.send_keys(data_inicio)
                 data_relatorio = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[contains(@placeholder, 'Data Fim Viagem')]")))
                 data_relatorio.clear()
-                data_relatorio.send_keys(final_data)
+                data_relatorio.send_keys(data_final)
 
                 if callback_progresso:
-                    callback_progresso(porcentagem + 0.02, f"Pesquisando {nome_mes}... Aguardando tabela.")
+                    callback_progresso(0.35, "Pesquisando período completo... Aguardando tabela.")
                 wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), ' Pesquisar ')]"))).click()
 
                 try:
@@ -699,31 +911,61 @@ def executar_ebus(
 
                 wait.until(spinner_disappeared)
                 checar_parada()
+
+                arquivos_antes = {str(p.resolve()) for p in origem_download.rglob("*RelatorioRevenue*.xls*")}
+
                 if callback_progresso:
-                    callback_progresso(porcentagem + 0.04, f"Tabela de {nome_mes} carregada. Emitindo gatilho de Download...")
+                    callback_progresso(0.40, "Tabela carregada. Disparando download único do período...")
                 wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Gerar EXCEL')]"))).click()
 
                 if callback_progresso:
-                    callback_progresso(porcentagem + 0.05, f"Aguardando download de {nome_mes}...")
+                    callback_progresso(0.45, "Aguardando arquivo do período completo...")
 
-                time.sleep(10)
-                checar_parada()
+                arquivo_encontrado = None
+                limite_espera = time.time() + 120
+                while time.time() < limite_espera:
+                    checar_parada()
+                    candidatos = [
+                        p for p in origem_download.rglob("*RelatorioRevenue*.xls*")
+                        if str(p.resolve()) not in arquivos_antes
+                    ]
+                    if candidatos:
+                        candidatos.sort(key=os.path.getmtime, reverse=True)
+                        arquivo_encontrado = candidatos[0]
+                        break
+                    time.sleep(1)
 
-                arquivos_encontrados = list(origem_download.rglob("*RelatorioRevenue*.xls"))
-                if not arquivos_encontrados:
+                if arquivo_encontrado is None:
                     if callback_progresso:
-                        callback_progresso(porcentagem + 0.1, f"AVISO: Arquivo não encontrado para {nome_mes}")
+                        callback_progresso(0.52, "AVISO: arquivo do período completo não foi encontrado.")
                     continue
 
-                arquivos_encontrados.sort(key=os.path.getmtime, reverse=True)
-                arquivo_encontrado = arquivos_encontrados[0]
                 if callback_progresso:
-                    callback_progresso(porcentagem + 0.08, f"Arquivo encontrado para {nome_mes}: {arquivo_encontrado.name}")
-                novo_nome = pasta_trabalho / f"RelatorioRevenue - {datetime.now().strftime('%d.%m.%Y_%H%M%S')}.xls"
+                    callback_progresso(0.50, f"Arquivo encontrado: {arquivo_encontrado.name}")
+
+                novo_nome = pasta_trabalho / f"RelatorioRevenue - {datetime.now().strftime('%d.%m.%Y_%H%M%S')}{arquivo_encontrado.suffix}"
                 shutil.move(str(arquivo_encontrado), str(novo_nome))
+
+                if data_aplicacao_top10_iguais(novo_nome):
+                    if callback_progresso:
+                        callback_progresso(
+                            0.53,
+                            "Validação detectou Data Aplicação repetida nas 10 primeiras linhas. Excluindo e refazendo download com nova limpeza.",
+                        )
+                    try:
+                        os.remove(novo_nome)
+                    except OSError:
+                        pass
+                    continue
+
                 arquivos_baixados.append(novo_nome)
+                baixou_arquivo_valido = True
                 if callback_progresso:
-                    callback_progresso(porcentagem + 0.1, f"Arquivo renomeado: {arquivo_encontrado.name} -> {novo_nome.name}")
+                    callback_progresso(0.55, f"Arquivo renomeado: {arquivo_encontrado.name} -> {novo_nome.name}")
+                break
+
+            if not baixou_arquivo_valido and callback_progresso:
+                callback_progresso(0.56, "Nenhum arquivo válido foi obtido após as tentativas automáticas de limpeza e novo download.")
 
             if modo_execucao == "download":
                 arquivos_saida = [str(p) for p in arquivos_baixados]
@@ -763,13 +1005,36 @@ def executar_ebus(
                 callback_progresso(0.5, f"Arquivo manual localizado para tratamento: {origem_manual.name}")
 
         if precisa_tratamento:
+            arquivos_para_processamento = []
             for idx, arquivo in enumerate(arquivos_baixados, 1):
                 checar_parada()
                 if callback_progresso:
-                    callback_progresso(0.55, f"Processando arquivo {idx}/{len(arquivos_baixados)}: {Path(arquivo).name}")
-                resultado_proc = processar_arquivos_relatorios(
+                    callback_progresso(0.55, f"Separando por mês o arquivo {idx}/{len(arquivos_baixados)}: {Path(arquivo).name}")
+
+                arquivos_mes = separar_arquivo_por_mes_data_viagem(
                     arquivo,
                     pasta_trabalho,
+                    callback_progresso=callback_progresso,
+                )
+                arquivos_para_processamento.extend(arquivos_mes)
+
+            for idx, item in enumerate(arquivos_para_processamento, 1):
+                checar_parada()
+                caminho_arquivo = item["arquivo"]
+                nome_mes_item = item.get("nome_mes")
+                ano_item = item.get("ano")
+
+                if callback_progresso:
+                    callback_progresso(
+                        0.62,
+                        f"Processando recorte mensal {idx}/{len(arquivos_para_processamento)}: {Path(caminho_arquivo).name}",
+                    )
+
+                resultado_proc = processar_arquivos_relatorios(
+                    caminho_arquivo,
+                    pasta_trabalho,
+                    nome_mes=nome_mes_item,
+                    ano_atual=ano_item,
                     callback_progresso=callback_progresso,
                     destino_base=str(base_referencia),
                     destino_saida=str(destino_final),

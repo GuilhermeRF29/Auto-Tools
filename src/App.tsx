@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { TaskProvider, useTasks } from './context/TaskContext';
 import { UIProvider, useUI } from './context/UIContext';
+import { DialogProvider, useDialog } from './context/DialogContext';
 
 // Layout & Components
 import MainLayout from './layout/MainLayout';
@@ -16,14 +17,33 @@ import DashboardView from './views/DashboardView';
 import DashboardsHubView from './views/DashboardsHubView';
 import ApresentacoesView from './views/ApresentacoesView';
 import DemandDashboardView from './views/DemandDashboardView';
+import RioShareDashboardView from './views/RioShareDashboardView';
 import HistoryView from './views/HistoryView';
 import ReportsView from './views/ReportsView';
 import VaultView from './views/VaultView';
 import CalculatorView from './views/CalculatorView';
+import ToolsView from './views/ToolsView';
 import SettingsView from './views/SettingsView';
+import {
+  clearWindowsHelloHint,
+  disableWindowsHello,
+  getWindowsHelloServerState,
+  isWindowsHelloAvailable,
+  registerWindowsHello,
+} from './utils/windowsHello';
+
+type ServerHealthInfo = {
+  status?: 'ok' | 'degraded' | 'offline';
+  version?: string;
+  python?: string;
+  dbStatus?: 'ok' | 'error' | 'offline';
+  dbMessage?: string;
+  checkedAt?: string;
+};
 
 function AppContent() {
   const { user } = useAuth();
+  const { showAlert, showPrompt } = useDialog();
   const { 
     currentView, setCurrentView,
     isSearchOpen, setIsSearchOpen,
@@ -33,21 +53,167 @@ function AppContent() {
     successAnimationDurationSec, successAnimationIntensity,
     setAnimationsEnabled, setSuccessAnimationStyle,
     setSuccessAnimationDurationSec, setSuccessAnimationIntensity,
+    windowsHelloEnabled, setWindowsHelloEnabled,
     handleReRunFromDashboard
   } = useUI();
   const { runningTasks, startAutomation, cancelAutomation } = useTasks();
-
-  const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-  const [serverInfo, setServerInfo] = useState<{ version?: string } | null>(null);
+  const [windowsHelloBusy, setWindowsHelloBusy] = useState(false);
 
   useEffect(() => {
-    fetch('/api/status')
-      .then(res => res.json())
-      .then(data => {
-        setServerStatus(data.status === 'ok' ? 'online' : 'offline');
+    let cancelled = false;
+
+    const syncWindowsHelloState = async () => {
+      if (!user?.id) {
+        setWindowsHelloEnabled(false);
+        return;
+      }
+
+      try {
+        const enabled = await getWindowsHelloServerState(Number(user.id));
+        if (cancelled) return;
+        setWindowsHelloEnabled(enabled);
+        if (!enabled) {
+          clearWindowsHelloHint();
+        }
+      } catch {
+        // Keep local UI state if backend state is temporarily unavailable.
+      }
+    };
+
+    syncWindowsHelloState();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, setWindowsHelloEnabled]);
+
+  const handleWindowsHelloToggle = async (nextEnabled: boolean) => {
+    if (!user?.usuario) {
+      await showAlert('Usuário inválido para configurar Windows Hello. Faça login novamente.');
+      return;
+    }
+
+    if (nextEnabled && !isWindowsHelloAvailable()) {
+      await showAlert('Este navegador/dispositivo não suporta WebAuthn (Windows Hello).');
+      return;
+    }
+
+    if (nextEnabled) {
+      try {
+        const alreadyEnabled = await getWindowsHelloServerState(Number(user.id));
+        if (alreadyEnabled) {
+          setWindowsHelloEnabled(true);
+          await showAlert({
+            title: 'Windows Hello Já Ativo',
+            message: 'A biometria já está ativa para este usuário. Não é necessário cadastrar novamente.',
+            tone: 'info',
+          });
+          return;
+        }
+      } catch {
+        // If state check fails, keep normal activation flow.
+      }
+
+      const password = await showPrompt({
+        title: 'Ativar Windows Hello',
+        message: 'Confirme sua senha para ativar o Windows Hello.',
+        inputType: 'password',
+        placeholder: 'Digite sua senha',
+        confirmText: 'Ativar',
+        cancelText: 'Cancelar',
+        tone: 'warning',
+      });
+      if (!password || !password.trim()) return;
+      setWindowsHelloBusy(true);
+      try {
+        await registerWindowsHello(user, password.trim());
+        setWindowsHelloEnabled(true);
+        await showAlert({
+          title: 'Windows Hello Ativado',
+          message: 'Windows Hello foi ativado com sucesso. Você pode continuar usando normalmente e, no próximo login ou no Cofre, usar o botão de autenticação biométrica.',
+          tone: 'success',
+        });
+      } catch (e: any) {
+        await showAlert({
+          title: 'Falha na Ativação',
+          message: e?.message || 'Falha ao ativar Windows Hello.',
+          tone: 'danger',
+        });
+      } finally {
+        setWindowsHelloBusy(false);
+      }
+      return;
+    }
+
+    const password = await showPrompt({
+      title: 'Desativar Windows Hello',
+      message: 'Confirme sua senha para desativar o Windows Hello.',
+      inputType: 'password',
+      placeholder: 'Digite sua senha',
+      confirmText: 'Desativar',
+      cancelText: 'Cancelar',
+      tone: 'warning',
+    });
+    if (!password || !password.trim()) return;
+
+    setWindowsHelloBusy(true);
+    try {
+      await disableWindowsHello(user, password.trim());
+      clearWindowsHelloHint();
+      setWindowsHelloEnabled(false);
+      await showAlert({
+        title: 'Windows Hello Desativado',
+        message: 'A credencial/token local foi removida.',
+        tone: 'success',
+      });
+    } catch (e: any) {
+      await showAlert({
+        title: 'Falha na Desativação',
+        message: e?.message || 'Falha ao desativar Windows Hello.',
+        tone: 'danger',
+      });
+    } finally {
+      setWindowsHelloBusy(false);
+    }
+  };
+
+  const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [serverInfo, setServerInfo] = useState<ServerHealthInfo | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const checkServerStatus = async () => {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 5000);
+
+      try {
+        const response = await fetch('/api/status', { signal: controller.signal });
+        const data = await response.json();
+        if (disposed) return;
+
+        setServerStatus(data?.status === 'ok' ? 'online' : 'offline');
         setServerInfo(data);
-      })
-      .catch(() => setServerStatus('offline'));
+      } catch {
+        if (disposed) return;
+        setServerStatus('offline');
+        setServerInfo((prev) => ({
+          version: prev?.version || 'AutoTools API',
+          status: 'offline',
+          dbStatus: 'offline',
+          dbMessage: 'Sem comunicação com o backend no momento.',
+        }));
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    };
+
+    checkServerStatus();
+    const intervalId = window.setInterval(checkServerStatus, 10000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   if (!user) {
@@ -85,6 +251,9 @@ function AppContent() {
               currentUser={user}
               tasksCount={runningTasks.length}
               onStartAutomation={startAutomation}
+              windowsHelloEnabled={windowsHelloEnabled}
+              serverStatus={serverStatus}
+              serverInfo={serverInfo}
             />
           )}
           {currentView === 'history' && (
@@ -114,8 +283,15 @@ function AppContent() {
           {currentView === 'dashboards' && <DashboardsHubView setView={setCurrentView} />}
           {currentView === 'presentations' && <ApresentacoesView />}
           {currentView === 'demand' && <DemandDashboardView />}
-          {currentView === 'vault' && <VaultView currentUser={user as any} />}
+          {currentView === 'rioShare' && <RioShareDashboardView />}
+          {currentView === 'vault' && (
+            <VaultView
+              currentUser={user as any}
+              windowsHelloEnabled={windowsHelloEnabled}
+            />
+          )}
           {currentView === 'calculator' && <CalculatorView />}
+          {currentView === 'tools' && <ToolsView />}
           {currentView === 'settings' && (
             <SettingsView
               animationsEnabled={animationsEnabled}
@@ -126,6 +302,9 @@ function AppContent() {
               onSuccessAnimationDurationSecChange={setSuccessAnimationDurationSec}
               successAnimationIntensity={successAnimationIntensity}
               onSuccessAnimationIntensityChange={setSuccessAnimationIntensity}
+              windowsHelloEnabled={windowsHelloEnabled}
+              onWindowsHelloEnabledChange={handleWindowsHelloToggle}
+              windowsHelloBusy={windowsHelloBusy}
             />
           )}
         </motion.div>
@@ -136,12 +315,14 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <TaskProvider>
-        <UIProvider>
-          <AppContent />
-        </UIProvider>
-      </TaskProvider>
-    </AuthProvider>
+    <DialogProvider>
+      <AuthProvider>
+        <TaskProvider>
+          <UIProvider>
+            <AppContent />
+          </UIProvider>
+        </TaskProvider>
+      </AuthProvider>
+    </DialogProvider>
   );
 }

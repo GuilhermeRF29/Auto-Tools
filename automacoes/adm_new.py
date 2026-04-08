@@ -321,7 +321,7 @@ def executar_adm(
             resultado = gerar_intervalos_mensais(data_inicio, data_final)
             opcoes = Options()
             opcoes.add_argument("--window-size=1920,1080")
-            opcoes.add_argument("--headless")
+            # opcoes.add_argument("--headless")
 
             if callback_progresso:
                 callback_progresso(0.1, "Abrindo Navegador Invisível...")
@@ -357,10 +357,11 @@ def executar_adm(
                 callback_progresso(0.2, "Navegando entre MENUS de Demandas...")
 
             wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Relatórios')]"))).click()
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//a [contains(text(), ' Relatórios')and contains(@id, 'c4')]"))).click()
+            time.sleep(2)
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//a [contains(text(), ' Relatórios')and contains(@id, '4-a') and contains (@id, 'e4')]"))).click()
             time.sleep(1)
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//a [contains(text(), ' Relatórios Operacionais')and contains(@id, '25-a')]"))).click()
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//a [contains(text(), ' Demandas')and contains(@id, 'a5-a')]"))).click()
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//a [contains(text(), ' Relatórios Operacionais')and contains(@id, '45-a')]"))).click()
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//a [contains(text(), ' Demandas')and contains(@id, 'c5-a')]"))).click()
 
             total_blocos = len(resultado)
             for idx, (inicial_data, final_data) in enumerate(resultado):
@@ -369,16 +370,16 @@ def executar_adm(
                 if callback_progresso:
                     callback_progresso(porc, f"Lote {idx+1}/{total_blocos} - Inserindo filtro: {inicial_data} a {final_data}...")
 
-                data1 = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[contains (@id, 'ia-real')]")))
+                data1 = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[contains (@id, 'ka-real')]")))
                 data1.clear()
                 data1.send_keys(inicial_data)
 
-                data2 = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[contains(@id, 'la-real')]")))
+                data2 = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[contains(@id, 'na-real')]")))
                 data2.clear()
                 data2.send_keys(final_data)
 
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), ' Novo Layout')and contains(@id, 'zb')]"))).click()
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(@id, '4c')]"))).click()
+                wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), ' Novo Layout')and contains(@id, '0c')]"))).click()
+                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(@id, '6c')]"))).click()
 
                 if callback_progresso:
                     callback_progresso(porc + 0.05, f"Lote {idx+1}/{total_blocos} - Download solicitado. Aguardando arquivo...")

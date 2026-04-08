@@ -11,7 +11,10 @@ import { getRootDir, PYTHON_PATH } from '../config.js';
  */
 export const runPythonCmd = (rawCommand, args = []) => {
   return new Promise((resolve, reject) => {
-    const childPy = spawn(PYTHON_PATH, ["-c", rawCommand, ...args], { cwd: getRootDir() });
+    const childPy = spawn(PYTHON_PATH, ["-c", rawCommand, ...args], {
+      cwd: getRootDir(),
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+    });
     
     let stdoutData = '';
     let stderrData = '';
@@ -48,7 +51,7 @@ export const runPythonCmd = (rawCommand, args = []) => {
 export const spawnPythonScript = (scriptPath, args = []) => {
   return spawn(PYTHON_PATH, [scriptPath, ...args], { 
     cwd: getRootDir(),
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
   });
 };
 

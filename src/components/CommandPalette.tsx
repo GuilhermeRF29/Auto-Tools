@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Search, LayoutDashboard, FileDown, Lock, Calculator,
-  FileText, ChevronRight, CheckCircle, Loader2, AlertCircle, SlidersHorizontal, Presentation
+  FileText, ChevronRight, CheckCircle, Loader2, AlertCircle, SlidersHorizontal, Presentation, Wrench
 } from 'lucide-react';
 import { cn } from '../utils/cn';
 import type { View } from '../types';
@@ -31,6 +31,7 @@ const CommandPalette = ({ isOpen, onClose, onSelect, onDeepSelect, historyItems 
     { id: 'dashboards', label: 'Dashboards e Apresentacoes', icon: <Presentation size={18} />, shortcut: 'A', category: 'Navegação' },
     { id: 'vault', label: 'Cofre de Segurança', icon: <Lock size={18} />, shortcut: 'C', category: 'Navegação' },
     { id: 'calculator', label: 'Calculadora de PAX', icon: <Calculator size={18} />, shortcut: 'L', category: 'Navegação' },
+    { id: 'tools', label: 'Ferramentas', icon: <Wrench size={18} />, shortcut: 'T', category: 'Navegação' },
     { id: 'settings', label: 'Configurações', icon: <SlidersHorizontal size={18} />, shortcut: 'S', category: 'Navegação' },
   ];
 
