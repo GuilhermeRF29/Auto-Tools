@@ -1,3 +1,9 @@
+/**
+ * @module automationRoutes
+ * @description Rotas para execução e gerenciamento de automações Python.
+ * Gerencia jobs em background, progresso via SSE (Server-Sent Events),
+ * backups de arquivos gerados e histórico de execuções.
+ */
 import { Router } from 'express';
 import { runPythonCmd, spawnPythonScript } from '../utils/pythonProxy.js';
 import { BACKUP_DIR, getRootDir } from '../config.js';
@@ -5,13 +11,30 @@ import path from 'path';
 import fs from 'fs';
 
 const router = Router();
+
+/** Mapa em memória de jobs ativos/recentes — limpo automaticamente após 10min */
 const jobs = new Map();
+
+/**
+ * Valida se um caminho de arquivo está dentro de um diretório permitido.
+ * Previne ataques de path traversal (ex: ../../etc/passwd).
+ * @param {string} filePath - Caminho do arquivo a validar.
+ * @param {string} allowedDir - Diretório base permitido.
+ * @returns {boolean} true se o caminho é seguro.
+ */
+const isPathSafe = (filePath, allowedDir) => {
+    if (!filePath || !allowedDir) return false;
+    const resolvedFile = path.resolve(filePath);
+    const resolvedDir = path.resolve(allowedDir);
+    return resolvedFile.startsWith(resolvedDir + path.sep) || resolvedFile === resolvedDir;
+};
 
 const resolveAutomationLabel = (job) => {
     if (!job || !job.script) return 'AUTO';
     if (job.script.endsWith('sr_new.py')) return 'SR Gmail/Base';
     if (job.script.endsWith('adm_new.py')) return 'ADM Demandas';
     if (job.script.endsWith('ebus_new.py')) return 'EBUS Revenue';
+    if (job.script.endsWith('busca_dados.py')) return 'BI Performance';
     if (job.script.endsWith('paxcalc.py')) return 'PAX Calc';
     return 'AUTO';
 };
@@ -47,6 +70,7 @@ router.post('/run-automation', async (req, res) => {
     if (name.includes('RIO X SP')) scriptPath = path.join(rootDir, 'automacoes', 'sr_new.py');
     else if (name.includes('Revenue')) scriptPath = path.join(rootDir, 'automacoes', 'ebus_new.py');
     else if (name.includes('Demandas')) scriptPath = path.join(rootDir, 'automacoes', 'adm_new.py');
+    else if (name.includes('Performance de Canais')) scriptPath = path.join(rootDir, 'automacoes', 'busca_dados.py');
     else if (name.includes('Cotação')) scriptPath = path.join(rootDir, 'automacoes', 'paxcalc.py');
 
     if (!scriptPath) {
@@ -243,11 +267,13 @@ router.get('/relatorios-history', async (req, res) => {
     }
 });
 
+// HISTORY DELETE: Excluir registro do histórico (e opcionalmente o arquivo de backup)
 router.delete('/relatorios-history/:id', async (req, res) => {
     const { id } = req.params;
     const { deleteFile, path: filePath } = req.query;
 
-    if (deleteFile === 'true' && filePath && fs.existsSync(filePath)) {
+    // Proteção contra path traversal: só permite deletar arquivos dentro do diretório de backups
+    if (deleteFile === 'true' && filePath && isPathSafe(filePath, BACKUP_DIR) && fs.existsSync(filePath)) {
         try {
             fs.unlinkSync(filePath);
         } catch (e) {
@@ -264,9 +290,13 @@ router.delete('/relatorios-history/:id', async (req, res) => {
     }
 });
 
+// DOWNLOAD: Baixar arquivo de backup — protegido contra path traversal
 router.get('/download', (req, res) => {
     const filePath = req.query.path;
-    if (!filePath || !fs.existsSync(filePath)) {
+    if (!filePath || !isPathSafe(filePath, BACKUP_DIR)) {
+        return res.status(403).json({ error: 'Acesso negado: caminho fora do diretório de backups.' });
+    }
+    if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Arquivo não encontrado para download.' });
     }
     res.download(filePath);

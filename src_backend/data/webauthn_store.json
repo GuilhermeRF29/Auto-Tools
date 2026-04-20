@@ -10,22 +10,22 @@
       "enabled": true,
       "credentials": [
         {
-          "id": "ViwjlynAt2Eu88qU-crngD1iQR5h3F6aeWfDAzvIeb4",
-          "publicKey": "pQECAyYgASFYIHUA8LWwsG2WiWq28FKSx7R39_dy7hQFEMxIR47B5O9sIlggEMVIJwi0Z65wm-KFr-baLgr7S79r8zOY_Bx4HN3juxM",
-          "counter": 9,
+          "id": "9W3Pe_zGiLqb5pPjVRw0-R3LPDYy4quzyjZrib_Bn9E",
+          "publicKey": "pQECAyYgASFYIBg2oTxt_6uGr4M_I5OYRRgeehNdW66jSUdlbmljuR6vIlggGd88Of-lp7m60YYRTNSw6Qq_Y_ezCKvEiDztLznR0a4",
+          "counter": 1,
           "deviceType": "singleDevice",
           "backedUp": false,
           "transports": [
             "internal"
           ],
-          "createdAt": "2026-04-08T12:28:15.557Z",
-          "updatedAt": "2026-04-08T14:10:37.584Z"
+          "createdAt": "2026-04-18T21:24:56.134Z",
+          "updatedAt": "2026-04-18T21:25:08.340Z"
         }
       ],
-      "biometricTokenHash": "2eb3b85d09c6b71f6fe80bad5cbb7d57b6b8344eb5d20154ae9df65ec26f0a86",
-      "tokenExpiresAt": "2026-10-05T12:28:15.557Z",
-      "createdAt": "2026-04-08T12:28:15.557Z",
-      "updatedAt": "2026-04-08T14:10:37.584Z"
+      "biometricTokenHash": "55cb2fd50ce0fb6a540dd045f577303d16a81d3514fbfd260e7c59d338e5b279",
+      "tokenExpiresAt": "2026-10-15T21:24:56.135Z",
+      "createdAt": "2026-04-18T21:24:56.134Z",
+      "updatedAt": "2026-04-18T21:25:08.340Z"
     }
   }
 }

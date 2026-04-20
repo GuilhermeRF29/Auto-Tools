@@ -167,6 +167,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       { id: 'adm_new', name: 'Relatório de Demandas' },
       { id: 'ebus_new', name: 'Relatório Revenue' },
       { id: 'sr_new', name: 'Relatório BASE RIO X SP' },
+      { id: 'busca_dados', name: 'Relatório Performance de Canais' },
     ];
     const report = reports.find(r => r.name === item.nome_automacao);
     if (report) setHighlightId(report.id);

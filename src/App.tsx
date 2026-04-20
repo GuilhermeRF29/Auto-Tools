@@ -18,6 +18,7 @@ import DashboardsHubView from './views/DashboardsHubView';
 import ApresentacoesView from './views/ApresentacoesView';
 import DemandDashboardView from './views/DemandDashboardView';
 import RioShareDashboardView from './views/RioShareDashboardView';
+import ChannelShareDashboardView from './views/ChannelShareDashboardView';
 import HistoryView from './views/HistoryView';
 import ReportsView from './views/ReportsView';
 import VaultView from './views/VaultView';
@@ -284,6 +285,7 @@ function AppContent() {
           {currentView === 'presentations' && <ApresentacoesView />}
           {currentView === 'demand' && <DemandDashboardView />}
           {currentView === 'rioShare' && <RioShareDashboardView />}
+          {currentView === 'channelShare' && <ChannelShareDashboardView />}
           {currentView === 'vault' && (
             <VaultView
               currentUser={user as any}
@@ -305,6 +307,7 @@ function AppContent() {
               windowsHelloEnabled={windowsHelloEnabled}
               onWindowsHelloEnabledChange={handleWindowsHelloToggle}
               windowsHelloBusy={windowsHelloBusy}
+              currentUserId={(user as any)?.id ?? null}
             />
           )}
         </motion.div>

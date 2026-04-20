@@ -6,7 +6,7 @@ import {
   X, Settings, Menu, BarChart3, Wrench
 } from 'lucide-react';
 
-import logoApp from '../../logo_app.png';
+import logoApp from '../assets/logo_app.png';
 import { cn } from '../utils/cn';
 import type { View } from '../types';
 

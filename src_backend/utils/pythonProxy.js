@@ -1,3 +1,19 @@
+/**
+ * @module pythonProxy
+ * @description Ponte de comunicação entre Node.js e Python.
+ * 
+ * Provê três formas de executar código Python:
+ *   - runPythonCmd()     — Executa código Python inline (via -c flag)
+ *   - spawnPythonScript() — Executa arquivo .py (retorna ChildProcess)
+ *   - execCmd()          — Executa comando shell genérico
+ * 
+ * O caminho do interpretador Python é resolvido automaticamente pelo
+ * módulo config.js, detectando se estamos em ambiente de desenvolvimento
+ * (venv/) ou compilado (PyInstaller .exe).
+ * 
+ * SEGURANÇA: rawCommand vem do código-fonte (não de input do usuário).
+ * Argumentos são passados via sys.argv (não interpolados no código).
+ */
 import { spawn, exec } from 'child_process';
 import { getRootDir, PYTHON_PATH } from '../config.js';
 

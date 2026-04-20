@@ -1,10 +1,27 @@
+/**
+ * @module systemRoutes
+ * @description Rotas de sistema e ferramentas utilitárias.
+ * Inclui explorador de arquivos nativo, conversor de extensões,
+ * gerenciamento de ônibus, calculadora Pax e limpeza de backups.
+ */
 import { Router } from 'express';
 import { runPythonCmd, execCmd, spawnPythonScript } from '../utils/pythonProxy.js';
-import { getRootDir } from '../config.js';
+import { getRootDir, BACKUP_DIR } from '../config.js';
 import path from 'path';
 import fs from 'fs';
 
 const router = Router();
+
+/**
+ * Valida se um caminho está dentro de um diretório permitido.
+ * Previne path traversal (ex: ../../etc/passwd).
+ */
+const isPathSafe = (filePath, allowedDir) => {
+    if (!filePath || !allowedDir) return false;
+    const resolvedFile = path.resolve(filePath);
+    const resolvedDir = path.resolve(allowedDir);
+    return resolvedFile.startsWith(resolvedDir + path.sep) || resolvedFile === resolvedDir;
+};
 
 const runExtensionConverter = (payloadBase64) => {
     return new Promise((resolve, reject) => {
@@ -48,10 +65,13 @@ router.get('/abrir-explorador-pastas', async (req, res) => {
     
     try {
         const result = await runPythonCmd(script, []);
-        res.json(result);
+        if (result && typeof result === 'object' && !Array.isArray(result)) {
+            return res.json({ caminho: typeof result.caminho === 'string' ? result.caminho : '' });
+        }
+        return res.json({ caminho: '' });
     } catch (e) {
         console.error(`[EXPLORER_ERROR]`, e);
-        res.json({ caminho: '' });
+        return res.json({ caminho: '' });
     }
 });
 
@@ -61,10 +81,16 @@ router.get('/abrir-explorador-arquivos-excel', async (req, res) => {
 
     try {
         const result = await runPythonCmd(script, []);
-        res.json(result);
+        if (result && typeof result === 'object' && !Array.isArray(result)) {
+            const caminhos = Array.isArray(result.caminhos)
+                ? result.caminhos.filter((item) => typeof item === 'string' && item.trim())
+                : [];
+            return res.json({ caminhos });
+        }
+        return res.json({ caminhos: [] });
     } catch (e) {
         console.error(`[EXPLORER_FILES_ERROR]`, e);
-        res.json({ caminhos: [] });
+        return res.json({ caminhos: [] });
     }
 });
 
@@ -142,10 +168,13 @@ router.post('/onibus', async (req, res) => {
     }
 });
 
-// REVEAL: Abrir arquivo no explorer
+// REVEAL: Abrir arquivo no Windows Explorer — protegido contra path traversal
 router.get('/revelar-arquivo', async (req, res) => {
     const filePath = req.query.path;
-    if (!filePath || !fs.existsSync(filePath)) {
+    if (!filePath || !isPathSafe(filePath, BACKUP_DIR)) {
+        return res.status(403).json({ error: 'Acesso negado: caminho fora do diretório permitido.' });
+    }
+    if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Arquivo não encontrado.' });
     }
     const cmd = `explorer /select,"${path.normalize(filePath)}"`;

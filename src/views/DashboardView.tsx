@@ -3,11 +3,11 @@
  * @description Tela principal do painel — visão geral com ações rápidas,
  * atividades recentes (relatórios/processos) e status do sistema.
  */
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Play, Download, ShieldCheck, FileSpreadsheet,
   Loader2, ChevronRight, Lock, Fingerprint, Cpu, Sparkles,
-  Settings, Activity, Layers, Zap, FolderOpen, BarChart3, TrendingUp, PieChart
+  Settings, Activity, Layers, Zap, FolderOpen, BarChart3, TrendingUp, PieChart, ArrowLeft, ArrowRight
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -15,6 +15,48 @@ import type { View } from '../types';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import { getWindowsHelloHint, isWindowsHelloAvailable } from '../utils/windowsHello';
+
+const HOME_QUICK_CARDS: Array<{
+  view: View;
+  title: string;
+  description: string;
+  icon: typeof BarChart3;
+  className: string;
+  iconClassName: string;
+}> = [
+  {
+    view: 'presentations',
+    title: 'Revenue Application',
+    description: 'Abrir dashboard com filtro de datas e visao completa',
+    icon: BarChart3,
+    className: 'p-5 hover:border-cyan-300 transition-all bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-900 text-white',
+    iconClassName: 'group-hover:bg-cyan-400 group-hover:text-slate-950',
+  },
+  {
+    view: 'demand',
+    title: 'Dashboard de Demanda',
+    description: 'Abrir APV por mercado, ADVP e janela D-1 ate D60',
+    icon: TrendingUp,
+    className: 'p-5 hover:border-emerald-300 transition-all bg-gradient-to-br from-slate-900 via-emerald-900 to-cyan-900 text-white',
+    iconClassName: 'group-hover:bg-emerald-400 group-hover:text-slate-950',
+  },
+  {
+    view: 'rioShare',
+    title: 'Dashboard RIO x SP',
+    description: 'Share de empresas, pax, viagens e IPV com filtros completos',
+    icon: PieChart,
+    className: 'p-5 hover:border-indigo-300 transition-all bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 text-white',
+    iconClassName: 'group-hover:bg-indigo-300 group-hover:text-slate-950',
+  },
+  {
+    view: 'channelShare',
+    title: 'Share de canais',
+    description: 'Tabelas financeiras, passageiros e ticket medio do Busca Dados',
+    icon: PieChart,
+    className: 'p-5 hover:border-rose-300 transition-all bg-gradient-to-br from-slate-900 via-rose-900 to-orange-900 text-white',
+    iconClassName: 'group-hover:bg-rose-300 group-hover:text-slate-950',
+  },
+];
 
 const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasksCount, windowsHelloEnabled, serverStatus = 'checking', serverInfo = null }: { 
   setView: (v: View) => void, 
@@ -29,6 +71,9 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
   const [tab, setTab] = useState<'files' | 'history'>('files');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const cardsScrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollCardsLeft, setCanScrollCardsLeft] = useState(false);
+  const [canScrollCardsRight, setCanScrollCardsRight] = useState(false);
 
   /** Busca o histórico do banco de dados (sem limite = últimos ~20 registros). */
   const fetchHistory = async () => {
@@ -53,6 +98,34 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
   useEffect(() => {
     fetchHistory();
   }, [tasksCount]); // Recarrega sempre que o número de tarefas mudas (início/fim)
+
+  useEffect(() => {
+    const viewport = cardsScrollRef.current;
+    if (!viewport) return;
+
+    const updateScrollState = () => {
+      const maxScroll = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      setCanScrollCardsLeft(viewport.scrollLeft > 2);
+      setCanScrollCardsRight((maxScroll - viewport.scrollLeft) > 2);
+    };
+
+    updateScrollState();
+    viewport.addEventListener('scroll', updateScrollState);
+    window.addEventListener('resize', updateScrollState);
+
+    return () => {
+      viewport.removeEventListener('scroll', updateScrollState);
+      window.removeEventListener('resize', updateScrollState);
+    };
+  }, []);
+
+  const scrollQuickCards = (direction: -1 | 1) => {
+    const viewport = cardsScrollRef.current;
+    if (!viewport) return;
+
+    const step = Math.max(280, Math.floor(viewport.clientWidth * 0.85));
+    viewport.scrollBy({ left: direction * step, behavior: 'smooth' });
+  };
 
   /** Abre o Windows Explorer na pasta do arquivo. */
   const handleReveal = async (path: string) => {
@@ -88,6 +161,18 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <style>{`
+        .no-scrollbar {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+        .no-scrollbar::-webkit-scrollbar {
+          display: none;
+          width: 0;
+          height: 0;
+        }
+      `}</style>
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
          <div>
           <h2 className="text-2xl font-black text-slate-800 tracking-tight">Inicio</h2>
@@ -98,51 +183,51 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
       {/* Dashboards e Apresentacoes */}
       <section>
         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 ml-1">Dashboards e Apresentacoes</h3>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <Card
-            onClick={() => setView('presentations')}
-            className="p-5 hover:border-cyan-300 transition-all bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-900 text-white"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h4 className="font-black text-white group-hover:text-cyan-100 transition-colors">Revenue Application</h4>
-                <p className="text-[10px] text-cyan-100/85 mt-1 font-bold uppercase tracking-tight">Abrir dashboard com filtro de datas e visao completa</p>
-              </div>
-              <div className="p-3 rounded-2xl transition-all bg-white/15 text-white group-hover:bg-cyan-400 group-hover:text-slate-950 group-hover:scale-110 shadow-sm">
-                <BarChart3 size={20} />
-              </div>
-            </div>
-          </Card>
+        <div className="relative">
+          {canScrollCardsLeft && (
+            <button
+              type="button"
+              onClick={() => scrollQuickCards(-1)}
+              className="absolute -left-2 top-1/2 z-50 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-lg transition-colors hover:text-slate-900"
+              title="Voltar"
+            >
+              <ArrowLeft size={16} />
+            </button>
+          )}
 
-          <Card
-            onClick={() => setView('demand')}
-            className="p-5 hover:border-emerald-300 transition-all bg-gradient-to-br from-slate-900 via-emerald-900 to-cyan-900 text-white"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h4 className="font-black text-white group-hover:text-emerald-100 transition-colors">Dashboard de Demanda</h4>
-                <p className="text-[10px] text-emerald-100/90 mt-1 font-bold uppercase tracking-tight">Abrir APV por mercado, ADVP e janela D-1 ate D60</p>
-              </div>
-              <div className="p-3 rounded-2xl transition-all bg-white/15 text-white group-hover:bg-emerald-400 group-hover:text-slate-950 group-hover:scale-110 shadow-sm">
-                <TrendingUp size={20} />
-              </div>
-            </div>
-          </Card>
+          {canScrollCardsRight && (
+            <button
+              type="button"
+              onClick={() => scrollQuickCards(1)}
+              className="absolute -right-2 top-1/2 z-50 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-lg transition-colors hover:text-slate-900"
+              title="Avancar"
+            >
+              <ArrowRight size={16} />
+            </button>
+          )}
 
-          <Card
-            onClick={() => setView('rioShare')}
-            className="p-5 hover:border-indigo-300 transition-all bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 text-white"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h4 className="font-black text-white group-hover:text-indigo-100 transition-colors">Dashboard RIO x SP</h4>
-                <p className="text-[10px] text-indigo-100/90 mt-1 font-bold uppercase tracking-tight">Share de empresas, pax, viagens e IPV com filtros completos</p>
-              </div>
-              <div className="p-3 rounded-2xl transition-all bg-white/15 text-white group-hover:bg-indigo-300 group-hover:text-slate-950 group-hover:scale-110 shadow-sm">
-                <PieChart size={20} />
-              </div>
+          <div ref={cardsScrollRef} className="no-scrollbar -my-4 overflow-x-auto overflow-y-hidden px-2 py-6">
+            <div className="flex w-full gap-4 pr-2">
+              {HOME_QUICK_CARDS.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div key={item.view} className="relative basis-full shrink-0 py-1 sm:basis-[calc((100%_-_1rem)/2)] xl:basis-[calc((100%_-_2rem)/3)]">
+                    <Card onClick={() => setView(item.view)} className={cn(item.className, 'relative z-0 h-[97px] overflow-visible hover:z-30')}>
+                      <div className="flex h-full items-start justify-between gap-3">
+                        <div>
+                          <h4 className="font-black text-white transition-colors">{item.title}</h4>
+                          <p className="mt-1 h-7 overflow-hidden text-[10px] font-bold uppercase tracking-tight text-white/85">{item.description}</p>
+                        </div>
+                        <div className={cn('rounded-2xl bg-white/15 p-3 text-white shadow-sm transition-all group-hover:scale-110', item.iconClassName)}>
+                          <Icon size={20} />
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+                );
+              })}
             </div>
-          </Card>
+          </div>
         </div>
       </section>
 

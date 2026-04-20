@@ -11,8 +11,7 @@ const TaskContext = createContext<TaskContextData>({} as TaskContextData);
 
 export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [runningTasks, setRunningTasks] = useState<RunningTask[]>([]);
-  
-  const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+
   const lastActivityRef = useRef<Map<string, number>>(new Map());
   const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
 
@@ -33,7 +32,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         progress: 0,
         progressTarget: 0,
         status: 'running',
-        startTime: new Date()
+        startTime: new Date(),
+        lastUpdateTime: new Date(),
+        lastProgressChangeTime: new Date(),
       };
       
       setRunningTasks(prev => [newTask, ...prev]);
@@ -45,18 +46,23 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       eventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
         lastActivityRef.current.set(jobId, Date.now());
+        const receivedAt = new Date();
 
         setRunningTasks(prev => prev.map(t => {
           if (t.id === jobId) {
             const incomingProgress = Number.isFinite(data.progress) ? Number(data.progress) : (t.progressTarget ?? t.progress);
             const clampedProgress = Math.max(0, Math.min(100, incomingProgress));
             const isRunning = data.status === 'running';
+            const previousProgress = typeof t.progressTarget === 'number' ? t.progressTarget : t.progress;
+            const progressed = clampedProgress > previousProgress;
             return {
               ...t,
               progress: isRunning ? t.progress : clampedProgress,
               progressTarget: clampedProgress,
               status: data.status,
-              message: data.message
+              message: data.message,
+              lastUpdateTime: receivedAt,
+              lastProgressChangeTime: progressed ? receivedAt : t.lastProgressChangeTime,
             };
           }
           return t;
@@ -91,8 +97,11 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       };
 
       eventSource.onerror = () => {
-        eventSource.close();
-        eventSourcesRef.current.delete(jobId);
+        if (eventSource.readyState === EventSource.CLOSED) {
+          eventSource.close();
+          eventSourcesRef.current.delete(jobId);
+          lastActivityRef.current.delete(jobId);
+        }
       };
 
       return jobId;
@@ -123,32 +132,6 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (e) {
       console.error('Erro ao cancelar tarefa', e);
     }
-  }, []);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      lastActivityRef.current.forEach((lastTime, jobId) => {
-        if (now - lastTime > INACTIVITY_TIMEOUT_MS) {
-          const es = eventSourcesRef.current.get(jobId);
-          if (es) { es.close(); eventSourcesRef.current.delete(jobId); }
-          lastActivityRef.current.delete(jobId);
-
-          setRunningTasks(prev => prev.map(t => {
-            if (t.id === jobId && t.status === 'running') {
-              return { ...t, status: 'failed', message: 'Tempo limite excedido — sem resposta do servidor.' };
-            }
-            return t;
-          }));
-
-          setTimeout(() => {
-            setRunningTasks(prev => prev.filter(t => t.id !== jobId));
-          }, 15000);
-        }
-      });
-    }, 60000);
-
-    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {

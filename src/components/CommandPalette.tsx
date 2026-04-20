@@ -40,6 +40,7 @@ const CommandPalette = ({ isOpen, onClose, onSelect, onDeepSelect, historyItems 
     { id: 'adm_new', label: 'Relatório de Demandas', view: 'reports' as View, category: 'Relatórios' },
     { id: 'ebus_new', label: 'Relatório Revenue', view: 'reports' as View, category: 'Relatórios' },
     { id: 'sr_new', label: 'Relatório BASE RIO X SP', view: 'reports' as View, category: 'Relatórios' },
+    { id: 'busca_dados', label: 'Relatório Performance de Canais', view: 'reports' as View, category: 'Relatórios' },
   ];
 
   const filteredMenu = menuItems.filter(i => i.label.toLowerCase().includes(search.toLowerCase()));

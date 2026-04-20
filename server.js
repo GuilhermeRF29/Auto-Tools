@@ -1,3 +1,19 @@
+/**
+ * @module server
+ * @description Ponto de entrada principal do backend Auto Tools.
+ * 
+ * Fluxo de inicialização:
+ *   1. Configura Express com JSON body parser
+ *   2. Inicializa banco SQLite e limpa histórico antigo (>30 dias)
+ *   3. Monta rotas modulares sob /api
+ *   4. Escuta na porta 3001
+ * 
+ * Em desenvolvimento, o Vite (porta 3000) faz proxy das chamadas /api
+ * para este servidor (porta 3001) via vite.config.ts.
+ * 
+ * Para produção/Electron: servir o build estático do frontend
+ * diretamente pelo Express com express.static('dist').
+ */
 import express from 'express';
 import { runPythonCmd } from './src_backend/utils/pythonProxy.js';
 import { PYTHON_PATH } from './src_backend/config.js';
@@ -9,6 +25,7 @@ import systemRoutes from './src_backend/routes/systemRoutes.js';
 import automationRoutes from './src_backend/routes/automationRoutes.js';
 import dashboardRoutes from './src_backend/routes/dashboardRoutes.js';
 import webauthnRoutes from './src_backend/routes/webauthnRoutes.js';
+import settingsRoutes from './src_backend/routes/settingsRoutes.js';
 
 const app = express();
 const port = 3001;
@@ -55,8 +72,9 @@ app.use('/api/credentials', vaultRoutes);
 app.use('/api', systemRoutes);
 app.use('/api', automationRoutes);
 app.use('/api', webauthnRoutes);
+app.use('/api', settingsRoutes);
 
-// Dashboards e relatorios (demanda, revenue)
+// Dashboards e relatorios (demanda, revenue, market share)
 app.use('/api', dashboardRoutes);
 
 // Fallback para rotas não encontradas

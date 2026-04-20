@@ -1,13 +1,34 @@
 /**
  * @module SettingsView
  * @description Tela de configurações do sistema.
- * Neste momento, concentra as preferências visuais da confirmação de execução.
+ * 
+ * Seções disponíveis:
+ *   - Caminhos Base dos Dashboards (persistidos no banco por usuário)
+ *   - Animações e preferências visuais
+ *   - Windows Hello / Biometria
  */
-import { Loader2, ScanFace, SlidersHorizontal, Sparkles, Zap } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { FolderOpen, Loader2, ScanFace, SlidersHorizontal, Sparkles, Zap, Save, CheckCircle, Database } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '../utils/cn';
 import Card from '../components/Card';
 import type { SuccessAnimationStyle, AnimationIntensity } from '../types';
+
+/** Definição dos caminhos configuráveis para cada dashboard */
+interface BasePaths {
+  revenuePath: string;
+  demandPath: string;
+  rioSharePath: string;
+  channelSharePath: string;
+}
+
+/** Valores padrão do sistema (mantidos como fallback) */
+const DEFAULT_BASE_PATHS: BasePaths = {
+  revenuePath: 'Z:\\DASH REVENUE APPLICATION\\BASE',
+  demandPath: 'Z:\\Forecast\\Forecast2',
+  rioSharePath: 'Z:\\Dash RIO',
+  channelSharePath: 'Z:\\Forecast\\Forecast2',
+};
 
 interface SettingsViewProps {
   animationsEnabled: boolean;
@@ -21,6 +42,7 @@ interface SettingsViewProps {
   windowsHelloEnabled: boolean;
   onWindowsHelloEnabledChange: (enabled: boolean) => void | Promise<void>;
   windowsHelloBusy?: boolean;
+  currentUserId?: number | null;
 }
 
 const SettingsView = ({
@@ -35,7 +57,85 @@ const SettingsView = ({
   windowsHelloEnabled,
   onWindowsHelloEnabledChange,
   windowsHelloBusy = false,
+  currentUserId = null,
 }: SettingsViewProps) => {
+
+  // ======== Estado dos caminhos base ========
+  const [basePaths, setBasePaths] = useState<BasePaths>({ ...DEFAULT_BASE_PATHS });
+  const [pathsLoading, setPathsLoading] = useState(false);
+  const [pathsSaving, setPathsSaving] = useState(false);
+  const [pathsSaved, setPathsSaved] = useState(false);
+  const [pathsError, setPathsError] = useState('');
+
+  /** Carrega configurações salvas do backend (ao montar) */
+  const loadSettings = useCallback(async () => {
+    if (!currentUserId) return;
+    setPathsLoading(true);
+    try {
+      const resp = await fetch(`/api/settings/${currentUserId}`);
+      const data = await resp.json();
+      if (data?.settings?.basePaths) {
+        setBasePaths((prev) => ({
+          ...prev,
+          ...data.settings.basePaths,
+        }));
+      }
+    } catch (e) {
+      console.warn('[SETTINGS] Falha ao carregar configurações:', e);
+    } finally {
+      setPathsLoading(false);
+    }
+  }, [currentUserId]);
+
+  useEffect(() => { loadSettings(); }, [loadSettings]);
+
+  /** Salva os caminhos no banco de dados */
+  const handleSavePaths = async () => {
+    if (!currentUserId) return;
+    setPathsSaving(true);
+    setPathsError('');
+    setPathsSaved(false);
+    try {
+      const resp = await fetch(`/api/settings/${currentUserId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'basePaths', value: basePaths }),
+      });
+      const data = await resp.json();
+      if (data?.success) {
+        setPathsSaved(true);
+        setTimeout(() => setPathsSaved(false), 3000);
+      } else {
+        setPathsError('Falha ao salvar. Tente novamente.');
+      }
+    } catch (e) {
+      setPathsError('Erro de conexão ao salvar configurações.');
+    } finally {
+      setPathsSaving(false);
+    }
+  };
+
+  /** Restaura os valores padrão do sistema */
+  const handleResetPaths = () => {
+    setBasePaths({ ...DEFAULT_BASE_PATHS });
+    setPathsSaved(false);
+    setPathsError('');
+  };
+
+  /** Atualiza um campo de caminho */
+  const updatePath = (key: keyof BasePaths, value: string) => {
+    setBasePaths((prev) => ({ ...prev, [key]: value }));
+    setPathsSaved(false);
+  };
+
+  // Definição dos campos de caminho para renderização dinâmica
+  const pathFields: Array<{ key: keyof BasePaths; label: string; description: string; placeholder: string }> = [
+    { key: 'revenuePath', label: 'Revenue Dashboard', description: 'Pasta onde estão os arquivos de Revenue (Excel, DuckDB, Parquet)', placeholder: DEFAULT_BASE_PATHS.revenuePath },
+    { key: 'demandPath', label: 'Demand Dashboard', description: 'Pasta dos arquivos de demanda/forecast', placeholder: DEFAULT_BASE_PATHS.demandPath },
+    { key: 'rioSharePath', label: 'Rio x SP Market Share', description: 'Pasta dos relatórios Rio x São Paulo', placeholder: DEFAULT_BASE_PATHS.rioSharePath },
+    { key: 'channelSharePath', label: 'Channel Share (YoY)', description: 'Pasta das planilhas de performance de canais', placeholder: DEFAULT_BASE_PATHS.channelSharePath },
+  ];
+
   const options: Array<{
     id: SuccessAnimationStyle;
     title: string;
@@ -58,16 +158,98 @@ const SettingsView = ({
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-sm">
           <SlidersHorizontal size={20} />
         </div>
         <div>
           <h2 className="text-2xl font-black text-slate-800 tracking-tight">Configurações</h2>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Preferências visuais e comportamento</p>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Preferências visuais, caminhos e comportamento</p>
         </div>
       </div>
 
+      {/* ======== SEÇÃO: Caminhos Base dos Dashboards ======== */}
+      <Card className="p-5 sm:p-6">
+        <div className="flex items-center gap-3 mb-5 pb-4 border-b border-slate-100">
+          <div className="w-9 h-9 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center">
+            <Database size={18} />
+          </div>
+          <div>
+            <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Caminhos Base dos Dashboards</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Defina os diretórios onde cada dashboard buscará os arquivos de dados. Se vazio, o sistema usará o caminho padrão.
+            </p>
+          </div>
+        </div>
+
+        {pathsLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 size={20} className="animate-spin text-slate-400 mr-2" />
+            <span className="text-sm text-slate-500">Carregando configurações...</span>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {pathFields.map((field) => (
+              <div key={field.key} className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">{field.label}</label>
+                <p className="text-[11px] text-slate-400 px-1 -mt-0.5">{field.description}</p>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 relative">
+                    <FolderOpen size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={basePaths[field.key]}
+                      onChange={(e) => updatePath(field.key, e.target.value)}
+                      placeholder={field.placeholder}
+                      className="w-full pl-9 pr-3 py-2.5 text-sm font-mono text-slate-700 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-violet-300 focus:ring-2 focus:ring-violet-100 focus:outline-none transition-all placeholder:text-slate-300"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* Botões de ação */}
+            <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={handleSavePaths}
+                disabled={pathsSaving}
+                className={cn(
+                  'flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all duration-300',
+                  pathsSaved
+                    ? 'bg-emerald-100 text-emerald-700 border-2 border-emerald-200'
+                    : 'bg-violet-600 text-white hover:bg-violet-700 border-2 border-violet-500 shadow-md shadow-violet-200',
+                  pathsSaving && 'opacity-60 cursor-not-allowed'
+                )}
+              >
+                {pathsSaving ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : pathsSaved ? (
+                  <CheckCircle size={14} />
+                ) : (
+                  <Save size={14} />
+                )}
+                {pathsSaved ? 'Salvo!' : 'Salvar Caminhos'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResetPaths}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-500 border-2 border-slate-100 hover:border-slate-200 hover:bg-slate-50 transition-all"
+              >
+                Restaurar Padrão
+              </button>
+
+              {pathsError && (
+                <span className="text-xs text-red-500 font-medium">{pathsError}</span>
+              )}
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* ======== SEÇÃO: Animações e Visual ======== */}
       <Card className="p-5 sm:p-6">
         <div className="mb-5 pb-5 border-b border-slate-100">
           <div className="flex items-center justify-between gap-4">

@@ -1,10 +1,10 @@
-import { BarChart3, Clock3, TrendingUp } from 'lucide-react';
+import { BarChart3, Clock3, PieChart, TrendingUp } from 'lucide-react';
 import { motion } from 'motion/react';
 import Card from '../components/Card';
 import type { View } from '../types';
 
 const DASHBOARD_CARDS: Array<{
-  id: 'presentations' | 'demand' | 'rioShare';
+  id: 'presentations' | 'demand' | 'rioShare' | 'channelShare';
   title: string;
   description: string;
   eta: string;
@@ -35,6 +35,14 @@ const DASHBOARD_CARDS: Array<{
     icon: BarChart3,
     gradient: 'from-slate-900 via-blue-900 to-indigo-900',
   },
+  {
+    id: 'channelShare',
+    title: 'Share de canais',
+    description: 'Apresentacao das tabelas de receita, passageiros e ticket medio do Busca Dados.',
+    eta: '~5 a 15s',
+    icon: PieChart,
+    gradient: 'from-slate-900 via-rose-900 to-orange-900',
+  },
 ];
 
 const DashboardsHubView = ({ setView }: { setView: (view: View) => void }) => {
@@ -59,7 +67,7 @@ const DashboardsHubView = ({ setView }: { setView: (view: View) => void }) => {
             >
               <Card
                 onClick={() => setView(item.id)}
-                className={`aspect-square p-5 text-white bg-gradient-to-br ${item.gradient} border-none`}
+                className={`h-[290px] p-5 text-white bg-gradient-to-br ${item.gradient} border-none`}
               >
                 <div className="flex h-full flex-col justify-between">
                   <div className="flex items-start justify-between gap-3">

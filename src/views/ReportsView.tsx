@@ -7,6 +7,7 @@
  * - Demandas (adm_new) — Selenium scraper
  * - Revenue (ebus_new) — eBus scraper
  * - BASE RIO X SP (sr_new) — Gmail API + Pandas
+ * - Performance de Canais (busca_dados) — Power BI + consolidação YoY
  */
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -141,17 +142,23 @@ const ReportsView = ({
   const [dataInicialBase, setDataInicialBase] = useState<Date | null>(null);
   const [dataFinalBase, setDataFinalBase] = useState<Date | null>(null);
   const [defaultDates, setDefaultDates] = useState<{ ini: Date, fim: Date } | null>(null);
+  const isADMSelected = selectedReport === 'Relatório de Demandas';
   const isSRSelected = selectedReport === 'Relatório BASE RIO X SP';
+  const isBuscaDadosSelected = selectedReport === 'Relatório Performance de Canais';
+  const isBuscaDadosCustomMode = isBuscaDadosSelected && configPeriodo === 'custom';
   const isSRTreatmentWithoutDownload = isSRSelected
     && configPeriodo === 'custom'
     && (configAcao === 'tratamento' || configAcao === 'tratamento_envio');
   const showSREmailDateRange = isSRSelected && !isSRTreatmentWithoutDownload;
+  const showActionPicker = configPeriodo === 'custom' && !isBuscaDadosSelected;
+  const showAdvancedPaths = isBuscaDadosCustomMode || (configPeriodo === 'custom' && configAcao !== 'completo');
 
   /** Lista de relatórios disponíveis com metadados. */
   const reports = [
-    { id: 'adm_new', name: 'Relatório de Demandas', desc: 'Extração e consolidação de demandas e passagens.', time: '~25 min', icon: <FileSpreadsheet size={18} /> },
+    { id: 'adm_new', name: 'Relatório de Demandas', desc: 'Extração e consolidação de demandas e passagens.', time: '~16 min', icon: <FileSpreadsheet size={18} /> },
     { id: 'ebus_new', name: 'Relatório Revenue', desc: 'Processamento de dados do eBus e receitas.', time: '~8 min', icon: <Bus size={18} /> },
     { id: 'sr_new', name: 'Relatório BASE RIO X SP', desc: 'Base consolidada das operações e ocupações.', time: '~6 min', icon: <Navigation size={18} /> },
+    { id: 'busca_dados', name: 'Relatório Performance de Canais', desc: 'Extração no BI com atualização comparativa mês a mês.', time: '~12 min', icon: <LayoutDashboard size={18} /> },
   ];
 
   /**
@@ -167,6 +174,7 @@ const ReportsView = ({
 
     // Lógica de datas padrão por tipo de relatório
     const hoje = new Date();
+    const ultimoDiaFechado = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1);
     let ini = hoje;
     let fim = hoje;
 
@@ -176,6 +184,9 @@ const ReportsView = ({
     } else if (name === 'Relatório Revenue') {
       ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
       fim = new Date(hoje.getFullYear(), hoje.getMonth() + 5, 0);
+    } else if (name === 'Relatório Performance de Canais') {
+      ini = new Date(ultimoDiaFechado.getFullYear(), ultimoDiaFechado.getMonth(), 1);
+      fim = ultimoDiaFechado;
     }
 
     setDefaultDates({ ini, fim });
@@ -187,6 +198,18 @@ const ReportsView = ({
     // Reset de estados de configuração
     setConfigPeriodo('padrao');
     setConfigAcao('completo');
+    setConfigBase('padrao');
+    setConfigSaida('padrao');
+    setFolderPath('');
+    setOutFolderPath('');
+  };
+
+  const toPayloadDate = (value: Date | null) => {
+    if (!value) return null;
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   };
 
   /**
@@ -194,6 +217,44 @@ const ReportsView = ({
    * O gerenciamento de SSE e estado é feito globalmente.
    */
   const handleExecute = async () => {
+    const effectiveBuscaCustomMode = isBuscaDadosSelected && configPeriodo === 'custom';
+    const effectiveBase = isBuscaDadosSelected
+      ? (effectiveBuscaCustomMode ? configBase : 'padrao')
+      : configBase;
+    const effectiveSaida = isBuscaDadosSelected
+      ? (effectiveBuscaCustomMode ? configSaida : 'padrao')
+      : configSaida;
+    const effectiveBasePath = (isBuscaDadosSelected && !effectiveBuscaCustomMode) ? '' : folderPath;
+    const effectiveOutFolderPath = (isBuscaDadosSelected && !effectiveBuscaCustomMode) ? '' : outFolderPath;
+
+    const acaoExigeOrigem = ['tratamento', 'tratamento_envio', 'arquivo_envio'].includes(configAcao);
+    if (acaoExigeOrigem && !effectiveBasePath.trim()) {
+      await showAlert({
+        title: 'Origem Não Informada',
+        message: 'Informe a localização dos arquivos de demanda para continuar.',
+        tone: 'warning',
+      });
+      return;
+    }
+
+    if (effectiveSaida === 'personalizada' && !effectiveOutFolderPath.trim()) {
+      await showAlert({
+        title: 'Saída Não Informada',
+        message: 'Selecione uma pasta de saída para continuar.',
+        tone: 'warning',
+      });
+      return;
+    }
+
+    if (isBuscaDadosSelected && effectiveBase === 'personalizada' && !effectiveBasePath.trim()) {
+      await showAlert({
+        title: 'Base Não Informada',
+        message: 'Selecione a pasta base onde está o arquivo comparativo do BI.',
+        tone: 'warning',
+      });
+      return;
+    }
+
     setIsExecuting(true);
 
     const dataBaseIni = dataInicialBase || dataInicial;
@@ -202,16 +263,17 @@ const ReportsView = ({
     const payload = {
       name: selectedReport,
       user_id: currentUser?.id,
-      acao: configAcao,
-      base: configBase,
-      saida: configSaida,
-      pasta_personalizada: folderPath,
-      pasta_saida: outFolderPath,
+      acao: isBuscaDadosSelected ? 'completo' : configAcao,
+      base: effectiveBase,
+      saida: effectiveSaida,
+      pasta_personalizada: effectiveBasePath,
+      pasta_saida: effectiveOutFolderPath,
       periodo: configPeriodo,
-      data_ini: isSRTreatmentWithoutDownload ? null : (dataInicial?.toISOString() || null),
-      data_fim: isSRTreatmentWithoutDownload ? null : (dataFinal?.toISOString() || null),
-      data_ini_base: isSRSelected ? (dataBaseIni?.toISOString() || null) : null,
-      data_fim_base: isSRSelected ? (dataBaseFim?.toISOString() || null) : null,
+      data_ini: isSRTreatmentWithoutDownload ? null : toPayloadDate(dataInicial),
+      data_fim: isSRTreatmentWithoutDownload ? null : toPayloadDate(dataFinal),
+      data_ini_base: isSRSelected ? toPayloadDate(dataBaseIni) : null,
+      data_fim_base: isSRSelected ? toPayloadDate(dataBaseFim) : null,
+      servico_credencial: isBuscaDadosSelected ? 'Busca Dados BI' : null,
     };
 
     const jobId = await onStartAutomation(payload);
@@ -247,6 +309,18 @@ const ReportsView = ({
   const parseDateParam = (value: any): Date | null => {
     if (!value || typeof value !== 'string') return null;
 
+    const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnlyMatch) {
+      const [, y, m, d] = dateOnlyMatch;
+      return new Date(Number(y), Number(m) - 1, Number(d));
+    }
+
+    const dateTimeMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+    if (dateTimeMatch) {
+      const [, y, m, d] = dateTimeMatch;
+      return new Date(Number(y), Number(m) - 1, Number(d));
+    }
+
     if (value.includes('/')) {
       const [d, m, y] = value.split('/');
       if (d && m && y) {
@@ -277,6 +351,10 @@ const ReportsView = ({
         if (rrBaseIni) setDataInicialBase(rrBaseIni);
         if (rrBaseFim) setDataFinalBase(rrBaseFim);
         if (params.acao) setConfigAcao(params.acao);
+        if (params.base) setConfigBase(params.base);
+        if (params.saida) setConfigSaida(params.saida);
+        if (typeof params.pasta_personalizada === 'string') setFolderPath(params.pasta_personalizada);
+        if (typeof params.pasta_saida === 'string') setOutFolderPath(params.pasta_saida);
         if (params.data_ini || params.data_fim) setConfigPeriodo('custom');
       }
 
@@ -287,6 +365,37 @@ const ReportsView = ({
   useEffect(() => {
     return () => clearSuccessTimers();
   }, []);
+
+  const [nowTick, setNowTick] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const toMillis = (value: Date | string | undefined) => {
+    if (!value) return Date.now();
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  };
+
+  const formatElapsed = (ms: number) => {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+      return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+    }
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  };
+
+  const parseTaskStage = (message?: string) => {
+    if (!message) return 'Aguardando instruções do backend...';
+    const parts = message.split('|').map(p => p.trim()).filter(Boolean);
+    return parts.length > 1 ? parts[parts.length - 1] : message;
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -309,14 +418,30 @@ const ReportsView = ({
       {/* Fila de Processamento (Tarefas em andamento/concluídas) */}
       {runningTasks.length > 0 && (
         <Card className="p-5 border-blue-100 bg-blue-50/50">
-          <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
+          <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
             <Loader2 size={16} className="text-blue-600 animate-spin" />
             Fila de Processamento ({runningTasks.filter(t => t.status === 'running').length})
           </h3>
+          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-black mb-4">
+            Atualização dinâmica em tempo real
+          </p>
           <div className="space-y-4">
             {runningTasks.map(task => (
               <div key={task.id} className={`bg-white rounded-2xl p-4 border shadow-sm relative overflow-hidden group transition-all duration-500 
                 ${task.status === 'completed' ? 'border-green-100' : (task.status === 'failed' || task.status === 'cancelled') ? 'border-red-100' : 'border-blue-100'}`}>
+                {(() => {
+                  const startedAt = toMillis(task.startTime as Date | string);
+                  const lastUpdate = toMillis(task.lastUpdateTime as Date | string | undefined);
+                  const elapsed = formatElapsed(nowTick - startedAt);
+                  const staleSeconds = Math.max(0, Math.floor((nowTick - lastUpdate) / 1000));
+                  const freshness = staleSeconds <= 20
+                    ? { label: 'AO VIVO', cls: 'text-emerald-600 bg-emerald-50 border-emerald-100' }
+                    : staleSeconds <= 90
+                      ? { label: `AGUARDANDO (${staleSeconds}s)`, cls: 'text-amber-600 bg-amber-50 border-amber-100' }
+                      : { label: `SEM NOVO EVENTO (${Math.floor(staleSeconds / 60)} min)`, cls: 'text-rose-600 bg-rose-50 border-rose-100' };
+
+                  return (
+                    <>
                 {/* Fundo de progresso */}
                 <div className="absolute top-0 left-0 bottom-0 bg-slate-50/50 w-full z-0"></div>
                 <div
@@ -344,24 +469,37 @@ const ReportsView = ({
                         <h4 className="font-bold text-slate-800 text-sm">{task.name}</h4>
                         {task.status === 'completed' && <span className="text-[10px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full uppercase tracking-widest">Concluído</span>}
                         {(task.status === 'failed' || task.status === 'cancelled') && <span className="text-[10px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded-full uppercase tracking-widest">{task.status === 'failed' ? 'Falha' : 'Cancelado'}</span>}
+                        {task.status === 'running' && (
+                          <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider border ${freshness.cls}`}>
+                            {freshness.label}
+                          </span>
+                        )}
                       </div>
                       <p className="text-[11px] font-bold text-slate-500 uppercase tracking-tight mt-0.5">
-                        {task.message || (task.status === 'running' ? `Processando... ${Math.round(task.progress)}%` :
+                        {parseTaskStage(task.message) || (task.status === 'running' ? 'Processando...' :
                           task.status === 'completed' ? 'Relatório gerado com sucesso!' : 'Operação interrompida')}
                       </p>
                     </div>
                   </div>
 
-                  {task.status === 'running' && (
-                    <button
-                      onClick={() => handleCancelTask(task.id)}
-                      className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                      title="Cancelar"
-                    >
-                      <X size={18} />
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      Tempo: {elapsed}
+                    </span>
+                    {task.status === 'running' && (
+                      <button
+                        onClick={() => handleCancelTask(task.id)}
+                        className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                        title="Cancelar"
+                      >
+                        <X size={18} />
+                      </button>
+                    )}
+                  </div>
                 </div>
+                    </>
+                  );
+                })()}
               </div>
             ))}
           </div>
@@ -515,6 +653,12 @@ const ReportsView = ({
                     onClick={() => {
                       setConfigPeriodo(p.id);
                       if (p.id !== 'custom') setConfigAcao('completo');
+                      if (isBuscaDadosSelected && p.id !== 'custom') {
+                        setConfigBase('padrao');
+                        setConfigSaida('padrao');
+                        setFolderPath('');
+                        setOutFolderPath('');
+                      }
                       if (p.id === 'padrao' && defaultDates) {
                         setDataInicial(defaultDates.ini);
                         setDataFinal(defaultDates.fim);
@@ -567,41 +711,81 @@ const ReportsView = ({
               </div>
             )}
 
+            {isBuscaDadosSelected && (
+              <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3">
+                <p className="text-xs font-bold text-blue-700">O período selecionado será dividido automaticamente por mês para extração no BI.</p>
+              </div>
+            )}
+
+            {isBuscaDadosCustomMode && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3">
+                <p className="text-xs font-bold text-amber-700">
+                  Modo personalizado ativo: escolha base e saída manualmente. Nos modos Padrão e Modificado, o diretório padrão é usado automaticamente.
+                </p>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-4">
               {/* Ação personalizada */}
-              {configPeriodo === 'custom' && (
+              {showActionPicker && (
                 <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                  {(() => {
+                    const actionOptions = isADMSelected
+                      ? [
+                          { value: 'completo', label: 'Processo completo' },
+                          { value: 'download', label: 'Apenas download' },
+                          { value: 'download_tratamento', label: 'Download + tratamento' },
+                          { value: 'tratamento', label: 'Apenas tratamento' },
+                          { value: 'tratamento_envio', label: 'Tratamento + envio' },
+                          { value: 'arquivo_envio', label: 'Só envio' },
+                        ]
+                      : [
+                          { value: 'completo', label: 'Processo completo' },
+                          { value: 'download', label: 'Apenas download' },
+                          { value: 'download_tratamento', label: 'Download + tratamento' },
+                          { value: 'tratamento', label: 'Apenas tratamento' },
+                          { value: 'tratamento_envio', label: 'Tratamento + envio' },
+                        ];
+
+                    return (
                   <CustomDropdown
                     label="Ação do Processo"
                     value={configAcao}
                     onChange={setConfigAcao}
                     icon={PlayCircle}
-                    options={[
-                      { value: 'completo', label: 'Processo completo' },
-                      { value: 'download', label: 'Apenas download' },
-                      { value: 'download_tratamento', label: 'Download + tratamento' },
-                      { value: 'tratamento', label: 'Apenas tratamento' },
-                      { value: 'tratamento_envio', label: 'Tratamento + envio' },
-                    ]}
+                    options={actionOptions}
                   />
+                    );
+                  })()}
+
+                  {isADMSelected && configAcao === 'arquivo_envio' && (
+                    <p className="mt-2 px-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      Modo só envio: organiza histórico, envia o arquivo atual e copia o par do ano anterior.
+                    </p>
+                  )}
                 </div>
               )}
 
               {/* Base e Saída (apenas para custom e não completo) */}
-              {configPeriodo === 'custom' && configAcao !== 'completo' && (
+              {showAdvancedPaths && (
                 <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                  {configAcao !== 'download' && (
+                  {(isBuscaDadosSelected || configAcao !== 'download') && (
                     <div className="space-y-3">
                       <CustomDropdown
                         label="Base da Automação"
                         value={configBase}
                         onChange={setConfigBase}
                         icon={LayoutDashboard}
-                        options={[
-                          { value: 'padrao', label: 'Base padrão' },
-                          { value: 'sem_base', label: 'Sem base (Pular comparação)' },
-                          { value: 'personalizada', label: 'Escolher local (Personalizado)' },
-                        ]}
+                        options={isBuscaDadosSelected
+                          ? [
+                              { value: 'padrao', label: 'Base padrão' },
+                              { value: 'personalizada', label: 'Escolher local (Personalizado)' },
+                            ]
+                          : [
+                              { value: 'padrao', label: 'Base padrão' },
+                              { value: 'sem_base', label: 'Sem base (Pular comparação)' },
+                              { value: 'personalizada', label: 'Escolher local (Personalizado)' },
+                            ]}
                       />
                       {configBase === 'personalizada' && (
                         <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -637,6 +821,7 @@ const ReportsView = ({
                     </div>
                   )}
 
+                  {(!isBuscaDadosSelected || isBuscaDadosCustomMode) && (
                   <div className={`space-y-3 ${configAcao !== 'download' ? 'pt-3 border-t border-slate-100' : ''}`}>
                     <CustomDropdown
                       label="Local de Saída"
@@ -680,6 +865,7 @@ const ReportsView = ({
                       </div>
                     )}
                   </div>
+                  )}
                 </div>
               )}
             </div>

@@ -3,9 +3,20 @@ node_modules/
 server_debug.log
 *.db
 backups_sistema/
+backup_dados/
 backup_pyside/
+tmp_out_test/
+padrao/
+
+# Credenciais e tokens sensíveis (NUNCA commitar)
 token.json
+core/credentials.json
+src_backend/data/webauthn_store.json
 .env
+.env.local
+
+# Logs e arquivos temporários
+*.log
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

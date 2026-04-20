@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion, MotionConfig } from 'motion/react';
 import { CheckCircle, Fingerprint, Loader2 } from 'lucide-react';
-import logoApp from '../../logo_app.png';
+import logoApp from '../assets/logo_app.png';
 
 import { useAuth } from '../context/AuthContext';
 import BackgroundAnimation from '../components/BackgroundAnimation';
