@@ -1,3 +1,19 @@
+/**
+ * @module server
+ * @description Ponto de entrada principal do backend Auto Tools.
+ * 
+ * Fluxo de inicialização:
+ *   1. Configura Express com JSON body parser
+ *   2. Inicializa banco SQLite e limpa histórico antigo (>30 dias)
+ *   3. Monta rotas modulares sob /api
+ *   4. Escuta na porta 3001
+ * 
+ * Em desenvolvimento, o Vite (porta 3000) faz proxy das chamadas /api
+ * para este servidor (porta 3001) via vite.config.ts.
+ * 
+ * Para produção/Electron: servir o build estático do frontend
+ * diretamente pelo Express com express.static('dist').
+ */
 import express from 'express';
 import { runPythonCmd } from './src_backend/utils/pythonProxy.js';
 import { PYTHON_PATH } from './src_backend/config.js';
@@ -8,6 +24,8 @@ import vaultRoutes from './src_backend/routes/vaultRoutes.js';
 import systemRoutes from './src_backend/routes/systemRoutes.js';
 import automationRoutes from './src_backend/routes/automationRoutes.js';
 import dashboardRoutes from './src_backend/routes/dashboardRoutes.js';
+import webauthnRoutes from './src_backend/routes/webauthnRoutes.js';
+import settingsRoutes from './src_backend/routes/settingsRoutes.js';
 
 const app = express();
 const port = 3001;
@@ -22,8 +40,30 @@ runPythonCmd(initDbCmd).then(() => {
     console.error(`[SYSTEM] Erro ao inicializar banco: ${e.message}`);
 });
 
-app.get('/api/status', (req, res) => {
-    res.json({ status: 'ok', version: 'AutoTools API v3.0 (Modular)', python: PYTHON_PATH });
+app.get('/api/status', async (req, res) => {
+    try {
+        const dbCheckCmd = `import json, sqlite3; from core.banco import DB_PATH\nstatus='ok'\nmessage='Conexao validada'\ntry:\n    conn=sqlite3.connect(DB_PATH)\n    conn.execute('SELECT 1')\n    conn.close()\nexcept Exception as e:\n    status='error'\n    message=str(e)\nprint(json.dumps({'dbStatus': status, 'dbMessage': message}))`;
+        const dbResult = await runPythonCmd(dbCheckCmd);
+        const dbStatus = dbResult?.dbStatus === 'ok' ? 'ok' : 'error';
+
+        return res.json({
+            status: dbStatus === 'ok' ? 'ok' : 'degraded',
+            version: 'AutoTools API v3.0 (Modular)',
+            python: PYTHON_PATH,
+            dbStatus,
+            dbMessage: dbResult?.dbMessage || 'Sem resposta da checagem de banco.',
+            checkedAt: new Date().toISOString(),
+        });
+    } catch (e) {
+        return res.status(503).json({
+            status: 'offline',
+            version: 'AutoTools API v3.0 (Modular)',
+            python: PYTHON_PATH,
+            dbStatus: 'offline',
+            dbMessage: e?.message || 'Falha ao verificar conexão do banco.',
+            checkedAt: new Date().toISOString(),
+        });
+    }
 });
 
 // APIs modulares
@@ -31,8 +71,10 @@ app.use('/api', authRoutes);
 app.use('/api/credentials', vaultRoutes);
 app.use('/api', systemRoutes);
 app.use('/api', automationRoutes);
+app.use('/api', webauthnRoutes);
+app.use('/api', settingsRoutes);
 
-// Dashboards e relatorios (demanda, revenue)
+// Dashboards e relatorios (demanda, revenue, market share)
 app.use('/api', dashboardRoutes);
 
 // Fallback para rotas não encontradas

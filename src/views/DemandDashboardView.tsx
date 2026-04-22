@@ -24,6 +24,8 @@ import {
   LayoutDashboard,
   Search,
   Camera,
+  Image as ImageIcon,
+  Images,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toPng } from 'html-to-image';
@@ -31,6 +33,7 @@ import Card from '../components/Card';
 import Button from '../components/Button';
 import CustomSelect from '../components/CustomSelect';
 import { cn } from '../utils/cn';
+import { useDialog } from '../context/DialogContext';
 
 const DEFAULT_DEMAND_BASE_DIR = 'Z:\\DASH DEMANDA\\BASE';
 
@@ -142,8 +145,30 @@ const aggregateRows = (rows: DemandRow[]) => {
 const heatColor = (ratio: number | null) => {
   if (ratio === null || !Number.isFinite(ratio)) return '#f8fafc';
   const clamped = Math.max(0, Math.min(1, ratio));
-  const hue = 4 + (clamped * 120);
-  return `hsl(${hue} 70% 76%)`;
+  const hue = 2 + (clamped * 118);
+  const saturation = 74;
+  const lightness = 75 - ((1 - clamped) * 6);
+  return `hsl(${hue} ${saturation}% ${lightness}%)`;
+};
+
+const buildHeatScale = (values: Array<number | null | undefined>) => {
+  const finiteValues = values.filter((value): value is number => Number.isFinite(value as number));
+  if (!finiteValues.length) return null;
+  return {
+    min: Math.min(...finiteValues),
+    max: Math.max(...finiteValues),
+  };
+};
+
+const heatColorByScale = (
+  value: number | null | undefined,
+  scale: { min: number; max: number } | null,
+) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '#f8fafc';
+  if (!scale) return heatColor(value);
+  if (scale.max === scale.min) return heatColor(0.5);
+  const normalized = (value - scale.min) / (scale.max - scale.min);
+  return heatColor(normalized);
 };
 
 const MultiSelect = ({
@@ -237,6 +262,7 @@ const MultiSelect = ({
 };
 
 const DemandDashboardView = () => {
+  const { showAlert } = useDialog();
   const [payload, setPayload] = useState<DemandPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -248,22 +274,122 @@ const DemandDashboardView = () => {
   const [expandedMarkets, setExpandedMarkets] = useState<Set<string>>(new Set());
   const [refreshAt, setRefreshAt] = useState<Date | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
-  const tableRef = useRef<HTMLDivElement>(null);
+  const [showRemovedDatesTable, setShowRemovedDatesTable] = useState(false);
+  const [exportImageMode, setExportImageMode] = useState<'combined' | 'separate'>('combined');
+  const tableRef = useRef<HTMLTableElement>(null);
+  const removedTableRef = useRef<HTMLTableElement>(null);
 
   const lastObservationRef = useRef<string>('');
   const stats = payload?.meta?.stats || {};
 
+  const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+
+  const captureTableImage = async (tableEl: HTMLTableElement) => {
+    const width = tableEl.scrollWidth;
+    const height = tableEl.scrollHeight;
+
+    const dataUrl = await toPng(tableEl, {
+      cacheBust: true,
+      backgroundColor: '#ffffff',
+      pixelRatio: 2,
+      canvasWidth: width,
+      canvasHeight: height,
+      width,
+      height,
+    });
+
+    const img = await loadImage(dataUrl);
+    return { img, width, height, dataUrl };
+  };
+
+  const downloadDataUrl = (dataUrl: string, fileName: string) => {
+    const link = document.createElement('a');
+    link.download = fileName;
+    link.href = dataUrl;
+    link.click();
+  };
+
   const handleExportImage = async () => {
     if (!tableRef.current) return;
+
     try {
-      const dataUrl = await toPng(tableRef.current, { cacheBust: true, backgroundColor: '#f9fafb' });
-      const link = document.createElement('a');
-      link.download = `tabela_demanda_${payload?.meta?.selectedObservationDate}.png`;
-      link.href = dataUrl;
-      link.click();
+      const hasRemovedTableVisible = showRemovedDatesTable
+        && removedDailyColumns.length > 0
+        && !!removedTableRef.current;
+
+      const shouldExportSeparate = exportImageMode === 'separate';
+      const selectedDate = payload?.meta?.selectedObservationDate || 'sem_data';
+
+      if (shouldExportSeparate) {
+        if (hasRemovedTableVisible && removedTableRef.current) {
+          const [hybrid, removed] = await Promise.all([
+            captureTableImage(tableRef.current),
+            captureTableImage(removedTableRef.current),
+          ]);
+          downloadDataUrl(hybrid.dataUrl, `tabela_hibrida_demanda_${selectedDate}.png`);
+          downloadDataUrl(removed.dataUrl, `tabela_removidos_demanda_${selectedDate}.png`);
+          return;
+        }
+
+        const hybrid = await captureTableImage(tableRef.current);
+        downloadDataUrl(hybrid.dataUrl, `tabela_hibrida_demanda_${selectedDate}.png`);
+        return;
+      }
+
+      let dataUrl = '';
+
+      if (hasRemovedTableVisible && removedTableRef.current) {
+        const [hybrid, removed] = await Promise.all([
+          captureTableImage(tableRef.current),
+          captureTableImage(removedTableRef.current),
+        ]);
+
+        const gap = 20;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(hybrid.width, removed.width);
+        canvas.height = hybrid.height + gap + removed.height;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Nao foi possivel gerar o canvas de exportacao.');
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(hybrid.img, 0, 0, hybrid.width, hybrid.height);
+        ctx.drawImage(removed.img, 0, hybrid.height + gap, removed.width, removed.height);
+
+        dataUrl = canvas.toDataURL('image/png');
+      } else {
+        const single = await captureTableImage(tableRef.current);
+        const canvas = document.createElement('canvas');
+        canvas.width = single.width;
+        canvas.height = single.height;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Nao foi possivel gerar o canvas de exportacao.');
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(single.img, 0, 0, single.width, single.height);
+
+        dataUrl = canvas.toDataURL('image/png');
+      }
+
+      const fileName = hasRemovedTableVisible
+        ? `tabelas_demanda_${payload?.meta?.selectedObservationDate}.png`
+        : `tabela_demanda_${payload?.meta?.selectedObservationDate}.png`;
+      downloadDataUrl(dataUrl, fileName);
     } catch (err) {
       console.error('Erro ao exportar imagem:', err);
-      alert('Infelizmente não conseguimos gerar a imagem desta vez. Tente novamente.');
+      await showAlert({
+        title: 'Falha na Exportação',
+        message: 'Infelizmente não conseguimos gerar a imagem desta vez. Tente novamente.',
+        tone: 'danger',
+      });
     }
   };
 
@@ -486,11 +612,11 @@ const DemandDashboardView = () => {
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       if (sortConfig?.key === 'total') {
-        const cmp = safeRatio(a.total) - safeRatio(b.total);
+        const cmp = (safeRatio(a.total) || 0) - (safeRatio(b.total) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       if (sortConfig && WEEK_BUCKETS.includes(sortConfig.key)) {
-        const cmp = safeRatio(a.buckets[sortConfig.key]) - safeRatio(b.buckets[sortConfig.key]);
+        const cmp = (safeRatio(a.buckets[sortConfig.key]) || 0) - (safeRatio(b.buckets[sortConfig.key]) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       return selectedOrder.indexOf(a.market) - selectedOrder.indexOf(b.market);
@@ -513,7 +639,21 @@ const DemandDashboardView = () => {
       totalByBucket,
       grandTotal,
     };
-  }, [filteredRows, selectedMarkets]);
+  }, [marketFilteredRows, selectedMarkets, sortConfig]);
+
+  const weekHeatScale = useMemo(() => {
+    const values: Array<number | null> = [];
+
+    weekTable.rows.forEach((line: { buckets: Record<string, Agg>; total: Agg }) => {
+      WEEK_BUCKETS.forEach((bucket) => values.push(safeRatio(line.buckets[bucket])));
+      values.push(safeRatio(line.total));
+    });
+
+    WEEK_BUCKETS.forEach((bucket) => values.push(safeRatio(weekTable.totalByBucket[bucket])));
+    values.push(safeRatio(weekTable.grandTotal));
+
+    return buildHeatScale(values);
+  }, [weekTable]);
 
   const visibleTravelOptions = useMemo(
     () => travelOptions.filter((item) => selectedTravelDates.has(item.date)),
@@ -525,7 +665,17 @@ const DemandDashboardView = () => {
     [travelOptions, selectedTravelDates],
   );
 
-  const dailyColumns = useMemo(() => visibleTravelOptions.sort((a, b) => a.offset - b.offset), [visibleTravelOptions]);
+  const dailyColumns = useMemo(() => [...visibleTravelOptions].sort((a, b) => a.offset - b.offset), [visibleTravelOptions]);
+
+  const removedDailyColumns = useMemo(
+    () => [...removedTravelOptions].sort((a, b) => a.offset - b.offset),
+    [removedTravelOptions],
+  );
+
+  const removedTravelDateSet = useMemo(
+    () => new Set(removedDailyColumns.map((item) => item.date)),
+    [removedDailyColumns],
+  );
 
   const dailyTable = useMemo(() => {
     const marketRows = Array.from(selectedMarkets);
@@ -561,6 +711,70 @@ const DemandDashboardView = () => {
 
     return { data, totalByDate, grandTotal };
   }, [filteredRows, selectedMarkets, selectedTravelDates]);
+
+  const dailyHeatScale = useMemo(() => {
+    const values: Array<number | null> = [];
+
+    dailyTable.data.forEach((line: { byDate: Map<string, Agg>; total: Agg }) => {
+      dailyColumns.forEach((column: { date: string; offset: number }) => values.push(safeRatio(line.byDate.get(column.date))));
+      values.push(safeRatio(line.total));
+    });
+
+    dailyColumns.forEach((column: { date: string; offset: number }) => values.push(safeRatio(dailyTable.totalByDate.get(column.date))));
+    values.push(safeRatio(dailyTable.grandTotal));
+
+    return buildHeatScale(values);
+  }, [dailyColumns, dailyTable]);
+
+  const removedDailyTable = useMemo(() => {
+    const sourceRows = payload?.rows || [];
+    const marketRows = Array.from(selectedMarkets);
+
+    const data = marketRows.map((market) => {
+      const byDate = new Map<string, Agg>();
+      const total = emptyAgg();
+
+      sourceRows.forEach((row) => {
+        if (row.mercado !== market) return;
+        if (!removedTravelDateSet.has(row.travelDate)) return;
+
+        if (!byDate.has(row.travelDate)) byDate.set(row.travelDate, emptyAgg());
+        addAgg(byDate.get(row.travelDate)!, row);
+        addAgg(total, row);
+      });
+
+      return { market, byDate, total };
+    });
+
+    const totalByDate = new Map<string, Agg>();
+    const grandTotal = emptyAgg();
+
+    data.forEach((line) => {
+      line.byDate.forEach((agg, date) => {
+        if (!totalByDate.has(date)) totalByDate.set(date, emptyAgg());
+        totalByDate.get(date)!.ocupacao += agg.ocupacao;
+        totalByDate.get(date)!.capacidade += agg.capacidade;
+      });
+      grandTotal.ocupacao += line.total.ocupacao;
+      grandTotal.capacidade += line.total.capacidade;
+    });
+
+    return { data, totalByDate, grandTotal };
+  }, [payload?.rows, removedTravelDateSet, selectedMarkets]);
+
+  const removedDailyHeatScale = useMemo(() => {
+    const values: Array<number | null> = [];
+
+    removedDailyTable.data.forEach((line: { byDate: Map<string, Agg>; total: Agg }) => {
+      removedDailyColumns.forEach((column: { date: string; offset: number }) => values.push(safeRatio(line.byDate.get(column.date))));
+      values.push(safeRatio(line.total));
+    });
+
+    removedDailyColumns.forEach((column: { date: string; offset: number }) => values.push(safeRatio(removedDailyTable.totalByDate.get(column.date))));
+    values.push(safeRatio(removedDailyTable.grandTotal));
+
+    return buildHeatScale(values);
+  }, [removedDailyColumns, removedDailyTable]);
 
   const hybridColumns = useMemo(() => {
     const dayColumns = dailyColumns.filter((item) => item.offset >= -1 && item.offset <= 6);
@@ -603,11 +817,11 @@ const DemandDashboardView = () => {
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       if (sortConfig?.key === 'total') {
-        const cmp = safeRatio(a.totalAgg) - safeRatio(b.totalAgg);
+        const cmp = (safeRatio(a.totalAgg) || 0) - (safeRatio(b.totalAgg) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       if (sortConfig && HYBRID_BUCKETS.includes(sortConfig.key as any)) {
-        const cmp = safeRatio(a.bucketAgg[sortConfig.key]) - safeRatio(b.bucketAgg[sortConfig.key]);
+        const cmp = (safeRatio(a.bucketAgg[sortConfig.key]) || 0) - (safeRatio(b.bucketAgg[sortConfig.key]) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
       const selectedOrder = Array.from(selectedMarkets);
@@ -688,6 +902,21 @@ const DemandDashboardView = () => {
       historyTotal,
     };
   }, [filteredRows, marketFilteredHistoryRows, marketFilteredRows, selectedMarkets, selectedTravelDates, payload?.meta.selectedObservationDate, payload?.meta.historyObservationDate, sortConfig]);
+
+  const hybridHeatScale = useMemo(() => {
+    const values: Array<number | null> = [];
+
+    hybridTable.rows.forEach((line: { dayAgg: Map<string, Agg>; bucketAgg: Record<string, Agg> }) => {
+      hybridColumns.dayColumns.forEach((column: { date: string; offset: number }) => values.push(safeRatio(line.dayAgg.get(column.date))));
+      hybridColumns.bucketColumns.forEach((bucket: string) => values.push(safeRatio(line.bucketAgg[bucket])));
+    });
+
+    hybridColumns.dayColumns.forEach((column: { date: string; offset: number }) => values.push(safeRatio(hybridTable.totalDayAgg.get(column.date))));
+    hybridColumns.bucketColumns.forEach((bucket: string) => values.push(safeRatio(hybridTable.totalBucketAgg[bucket])));
+    values.push(safeRatio(hybridTable.total07Agg));
+
+    return buildHeatScale(values);
+  }, [hybridColumns.bucketColumns, hybridColumns.dayColumns, hybridTable]);
 
   const toggleMarket = (market: string) => {
     setSelectedMarkets((prev) => {
@@ -892,7 +1121,17 @@ const DemandDashboardView = () => {
 
         {removedTravelOptions.length > 0 && (
           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Datas removidas da analise</p>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Datas removidas da analise</p>
+              <button
+                type="button"
+                onClick={() => setShowRemovedDatesTable((prev) => !prev)}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-cyan-200 hover:text-cyan-700"
+              >
+                <Calendar size={12} />
+                {showRemovedDatesTable ? 'Ocultar Tabela' : `Tabela Removidas (${removedTravelOptions.length})`}
+              </button>
+            </div>
             <div className="flex flex-wrap gap-2">
               {removedTravelOptions.map((item) => (
                 <span key={item.date} className="rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black text-slate-500">
@@ -920,6 +1159,66 @@ const DemandDashboardView = () => {
           </div>
         )}
       </Card>
+
+      {showRemovedDatesTable && removedDailyColumns.length > 0 && (
+        <Card className="p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-2 text-amber-700 shadow-sm">
+              <CalendarDays size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">Tabela de datas removidas</h3>
+              <p className="text-xs font-semibold text-slate-400">Mesmo formato da tabela diaria, considerando apenas datas removidas</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto custom-scrollbar">
+            <table ref={removedTableRef} className="w-full border-separate border-spacing-0 text-xs">
+              <thead>
+                <tr className="bg-slate-900 text-white">
+                  <th className="sticky left-0 z-20 min-w-[267px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Mercado</th>
+                  {removedDailyColumns.map((item) => (
+                    <th key={`removed-${item.date}`} className="min-w-[85px] px-2 py-2 text-center text-[10px] font-black uppercase tracking-wider">
+                      <div>{formatDate(item.date)}</div>
+                      <div className="text-[9px] text-slate-300">{item.offset >= 0 ? `D+${item.offset}` : `D${item.offset}`}</div>
+                    </th>
+                  ))}
+                  <th className="min-w-[89px] px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {removedDailyTable.data.map((line) => (
+                  <tr key={`removed-daily-${line.market}`}>
+                    <td className="sticky left-0 z-10 bg-white px-3 py-2 font-black text-slate-700">{line.market}</td>
+                    {removedDailyColumns.map((column) => {
+                      const ratio = safeRatio(line.byDate.get(column.date));
+                      return (
+                        <td key={`${line.market}-${column.date}`} style={{ backgroundColor: heatColorByScale(ratio, removedDailyHeatScale) }} className="px-2 py-2 text-center text-[14px] font-bold text-slate-950">
+                          {formatPercent(ratio)}
+                        </td>
+                      );
+                    })}
+                    <td style={{ backgroundColor: heatColorByScale(safeRatio(line.total), removedDailyHeatScale) }} className="px-2 py-2 text-center text-[14px] font-black text-slate-950">
+                      {formatPercent(safeRatio(line.total))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-900 text-white">
+                  <td className="sticky left-0 z-20 bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Total</td>
+                  {removedDailyColumns.map((column) => (
+                    <td key={`removed-total-${column.date}`} className="px-2 py-2 text-center text-[13px] font-black">
+                      {formatPercent(safeRatio(removedDailyTable.totalByDate.get(column.date)))}
+                    </td>
+                  ))}
+                  <td className="px-2 py-2 text-center text-[13px] font-black">{formatPercent(safeRatio(removedDailyTable.grandTotal))}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </Card>
+      )}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
         <Card className="border-cyan-100 bg-gradient-to-br from-cyan-50 to-white p-5">
@@ -960,22 +1259,22 @@ const DemandDashboardView = () => {
         </div>
 
         <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full min-w-[920px] border-separate border-spacing-0 text-xs">
+          <table className="w-full min-w-[880px] border-separate border-spacing-0 text-xs">
             <thead>
               <tr className="bg-slate-900 text-white">
-                <th className="group sticky left-0 z-20 min-w-[280px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider cursor-pointer hover:bg-slate-800" onClick={() => requestSort('market')}>
+                <th className="group sticky left-0 z-20 min-w-[261px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider cursor-pointer hover:bg-slate-800" onClick={() => requestSort('market')}>
                   <div className="flex items-center">
                     Mercado {getSortIcon('market')}
                   </div>
                 </th>
                 {WEEK_BUCKETS.map((bucket) => (
-                  <th key={bucket} className="min-w-[110px] px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider cursor-pointer hover:bg-slate-800" onClick={() => requestSort(bucket)}>
+                  <th key={bucket} className="min-w-[99px] px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider cursor-pointer hover:bg-slate-800" onClick={() => requestSort(bucket)}>
                     <div className="flex items-center justify-center">
                       {bucket} {getSortIcon(bucket)}
                     </div>
                   </th>
                 ))}
-                <th className="min-w-[110px] bg-slate-900/50 px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider cursor-pointer hover:bg-slate-800" onClick={() => requestSort('total')}>
+                <th className="min-w-[99px] bg-slate-900/50 px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider cursor-pointer hover:bg-slate-800" onClick={() => requestSort('total')}>
                   <div className="flex items-center justify-center text-blue-300">
                     Total {getSortIcon('total')}
                   </div>
@@ -996,12 +1295,12 @@ const DemandDashboardView = () => {
                       {WEEK_BUCKETS.map((bucket) => {
                         const ratio = safeRatio(line.buckets[bucket]);
                         return (
-                          <td key={`${line.market}-${bucket}`} style={{ backgroundColor: heatColor(ratio) }} className="px-2 py-2 text-center font-black text-slate-800">
+                          <td key={`${line.market}-${bucket}`} style={{ backgroundColor: heatColorByScale(ratio, weekHeatScale) }} className="px-2 py-2 text-center font-black text-slate-950">
                             {formatPercent(ratio)}
                           </td>
                         );
                       })}
-                      <td style={{ backgroundColor: heatColor(safeRatio(line.total)) }} className="px-2 py-2 text-center font-black text-slate-900">
+                      <td style={{ backgroundColor: heatColorByScale(safeRatio(line.total), weekHeatScale) }} className="px-2 py-2 text-center font-black text-slate-950">
                         {formatPercent(safeRatio(line.total))}
                       </td>
                     </tr>
@@ -1014,12 +1313,12 @@ const DemandDashboardView = () => {
                         {WEEK_BUCKETS.map((bucket) => {
                           const ratio = safeRatio(company.buckets[bucket]);
                           return (
-                            <td key={`${line.market}-${company.company}-${bucket}`} style={{ backgroundColor: heatColor(ratio) }} className="px-2 py-2 text-center font-bold text-slate-700">
+                            <td key={`${line.market}-${company.company}-${bucket}`} style={{ backgroundColor: heatColorByScale(ratio, weekHeatScale) }} className="px-2 py-2 text-center font-bold text-slate-950">
                               {formatPercent(ratio)}
                             </td>
                           );
                         })}
-                        <td style={{ backgroundColor: heatColor(safeRatio(company.total)) }} className="px-2 py-2 text-center font-bold text-slate-700">
+                        <td style={{ backgroundColor: heatColorByScale(safeRatio(company.total), weekHeatScale) }} className="px-2 py-2 text-center font-bold text-slate-950">
                           {formatPercent(safeRatio(company.total))}
                         </td>
                       </tr>
@@ -1053,17 +1352,17 @@ const DemandDashboardView = () => {
         </div>
 
         <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full min-w-[1600px] border-separate border-spacing-0 text-xs">
+          <table className="w-full min-w-[1480px] border-separate border-spacing-0 text-xs">
             <thead>
               <tr className="bg-slate-900 text-white">
-                <th className="sticky left-0 z-20 min-w-[290px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Mercado</th>
+                <th className="sticky left-0 z-20 min-w-[267px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Mercado</th>
                 {dailyColumns.map((item) => (
-                  <th key={item.date} className="min-w-[96px] px-2 py-2 text-center text-[10px] font-black uppercase tracking-wider">
+                  <th key={item.date} className="min-w-[85px] px-2 py-2 text-center text-[10px] font-black uppercase tracking-wider">
                     <div>{formatDate(item.date)}</div>
                     <div className="text-[9px] text-slate-300">{item.offset >= 0 ? `D+${item.offset}` : `D${item.offset}`}</div>
                   </th>
                 ))}
-                <th className="min-w-[100px] px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider">Total</th>
+                <th className="min-w-[89px] px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider">Total</th>
               </tr>
             </thead>
             <tbody>
@@ -1073,12 +1372,12 @@ const DemandDashboardView = () => {
                   {dailyColumns.map((column) => {
                     const ratio = safeRatio(line.byDate.get(column.date));
                     return (
-                      <td key={`${line.market}-${column.date}`} style={{ backgroundColor: heatColor(ratio) }} className="px-2 py-2 text-center font-bold text-slate-700">
+                      <td key={`${line.market}-${column.date}`} style={{ backgroundColor: heatColorByScale(ratio, dailyHeatScale) }} className="px-2 py-2 text-center font-bold text-slate-950">
                         {formatPercent(ratio)}
                       </td>
                     );
                   })}
-                  <td style={{ backgroundColor: heatColor(safeRatio(line.total)) }} className="px-2 py-2 text-center font-black text-slate-800">
+                  <td style={{ backgroundColor: heatColorByScale(safeRatio(line.total), dailyHeatScale) }} className="px-2 py-2 text-center font-black text-slate-950">
                     {formatPercent(safeRatio(line.total))}
                   </td>
                 </tr>
@@ -1112,29 +1411,32 @@ const DemandDashboardView = () => {
             </div>
             
             <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setExportImageMode((prev) => (prev === 'combined' ? 'separate' : 'combined'))}
+                  className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-xl border border-cyan-200 bg-cyan-50 text-cyan-700 transition-all hover:bg-cyan-100 active:scale-95"
+                  title={exportImageMode === 'combined' ? 'Modo 1 imagem: salva combinado quando removidos estiver ativo.' : 'Modo 2 imagens: salva cada tabela em arquivo separado.'}
+                  aria-label={exportImageMode === 'combined' ? 'Modo de exportacao atual: uma imagem combinada' : 'Modo de exportacao atual: imagens separadas'}
+                >
+                  {exportImageMode === 'combined' ? <ImageIcon size={16} /> : <Images size={16} />}
+                </button>
                 <button 
                   onClick={handleExportImage}
                   className="inline-flex h-[44px] items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-xs font-black uppercase tracking-widest text-emerald-700 transition-all hover:bg-emerald-100 active:scale-95"
                 >
                   <Camera size={16} /> Salvar como Foto
                 </button>
-                <div className="h-8 w-px bg-slate-200" />
-                <div className="flex items-center gap-1.5 rounded-xl border border-red-100 bg-red-50/50 px-3 py-1.5 shadow-sm">
-                  <div className="h-2 w-2 animate-pulse rounded-full bg-red-600" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-red-700">Ao Vivo</span>
-                </div>
             </div>
           </div>
 
-          <div className="overflow-x-auto custom-scrollbar -mx-6 px-6" ref={tableRef}>
-          <table className="w-full min-w-[1450px] border-separate border-spacing-0 text-xs">
+          <div className="overflow-x-auto custom-scrollbar bg-white">
+          <table ref={tableRef} className="w-full min-w-[1340px] border-separate border-spacing-0 text-xs">
             <thead>
               <tr className="bg-slate-900 text-white">
-                <th className="sticky left-0 z-20 min-w-[290px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">
+                <th className="sticky left-0 z-20 w-[267px] min-w-[267px] max-w-[267px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">
                   Mercado
                 </th>
                 {hybridColumns.dayColumns.map((item) => (
-                  <th key={`hybrid-day-${item.date}`} className="min-w-[90px] px-2 py-2 text-center text-[10px] font-black uppercase tracking-wider">
+                  <th key={`hybrid-day-${item.date}`} className="min-w-[81px] px-2 py-2 text-center text-[10px] font-black uppercase tracking-wider">
                     <div>{formatDate(item.date)}</div>
                     <div className="text-[9px] text-slate-300">{item.offset >= 0 ? `D+${item.offset}` : `D${item.offset}`}</div>
                   </th>
@@ -1142,7 +1444,7 @@ const DemandDashboardView = () => {
                 {hybridColumns.bucketColumns.map((bucket) => (
                   <th 
                     key={`hybrid-week-${bucket}`} 
-                    className="min-w-[96px] border-l-2 border-dashed border-red-600 px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider"
+                    className="min-w-[87px] border-l-2 border-dashed border-red-600 px-2 py-2 text-center text-[11px] font-black uppercase tracking-wider"
                   >
                     {bucket}
                   </th>
@@ -1152,7 +1454,7 @@ const DemandDashboardView = () => {
             <tbody>
               {hybridTable.rows.map((line) => (
                 <tr key={line.market} className="border-b border-slate-100/50 transition-colors hover:bg-slate-50">
-                  <td className="sticky left-0 z-20 bg-white/95 px-3 py-2 text-[11px] font-black text-slate-700 backdrop-blur-sm group-hover:bg-slate-50 border-r border-slate-100">
+                  <td className="sticky left-0 z-20 w-[267px] min-w-[267px] max-w-[267px] bg-white px-3 py-2 text-[11px] font-black text-slate-700 border-r border-slate-100 shadow-[10px_0_12px_-12px_rgba(15,23,42,0.45)]">
                     <div className="flex items-center justify-between">
                       <span className="truncate">{line.market}</span>
                     </div>
@@ -1160,7 +1462,7 @@ const DemandDashboardView = () => {
                   {hybridColumns.dayColumns.map((column) => {
                     const ratio = safeRatio(line.dayAgg.get(column.date));
                     return (
-                      <td key={column.date} style={{ backgroundColor: heatColor(ratio) }} className="px-2 py-2 text-center text-[11px] font-bold text-slate-800">
+                      <td key={column.date} style={{ backgroundColor: heatColorByScale(ratio, hybridHeatScale) }} className="px-2 py-2 text-center text-[13px] font-bold text-slate-950">
                         {formatPercent(ratio)}
                       </td>
                     );
@@ -1170,8 +1472,8 @@ const DemandDashboardView = () => {
                     return (
                       <td 
                         key={`${line.market}-${bucket}`} 
-                        style={{ backgroundColor: heatColor(ratio) }}
-                        className="px-2 py-2 text-center font-black text-slate-800 border-l-2 border-dashed border-red-600"
+                        style={{ backgroundColor: heatColorByScale(ratio, hybridHeatScale) }}
+                        className="px-2 py-2 text-center text-[13px] font-black text-slate-950 border-l-2 border-dashed border-red-600"
                       >
                         {formatPercent(ratio)}
                       </td>
@@ -1182,25 +1484,25 @@ const DemandDashboardView = () => {
             </tbody>
             <tfoot className="border-t-2 border-slate-200">
               <tr className="bg-slate-900 text-white">
-                <td className="sticky left-0 z-20 bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Total</td>
+                <td className="sticky left-0 z-20 w-[267px] min-w-[267px] max-w-[267px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Total</td>
                 {hybridColumns.dayColumns.map((column, idx) => {
                   const isLastDay = idx === hybridColumns.dayColumns.length - 1;
                   const ratio = isLastDay ? safeRatio(hybridTable.total07Agg) : safeRatio(hybridTable.totalDayAgg.get(column.date));
                   return (
-                    <td key={`hybrid-total-day-${column.date}`} className="px-2 py-2 text-center text-[11px] font-black">
+                    <td key={`hybrid-total-day-${column.date}`} className="px-2 py-2 text-center text-[13px] font-black">
                       {formatPercent(ratio)}
                     </td>
                   );
                 })}
                 {hybridColumns.bucketColumns.map((bucket) => (
-                  <td key={`hybrid-total-bucket-${bucket}`} className="px-2 py-2 text-center text-[11px] font-black border-l-2 border-dashed border-red-600">
+                  <td key={`hybrid-total-bucket-${bucket}`} className="px-2 py-2 text-center text-[13px] font-black border-l-2 border-dashed border-red-600">
                     {formatPercent(safeRatio(hybridTable.totalBucketAgg[bucket]))}
                   </td>
                 ))}
               </tr>
 
               <tr className="bg-slate-100/80 text-slate-700">
-                <td className="sticky left-0 z-20 bg-slate-100 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Historico</td>
+                <td className="sticky left-0 z-20 w-[267px] min-w-[267px] max-w-[267px] bg-slate-100 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Historico</td>
                 {hybridColumns.dayColumns.map((column, idx) => {
                   const item = dailyColumns.find(d => d.date === column.date);
                   const isLastDay = idx === hybridColumns.dayColumns.length - 1;
@@ -1209,7 +1511,7 @@ const DemandDashboardView = () => {
                   const ratio = isLastDay ? safeRatio(hybridTable.history07Agg) : (isVisible ? safeRatio(hybridTable.historyDayAgg.get(column.date)) : 0);
                   
                   return (
-                    <td key={`hist-day-${column.date}`} style={isVisible ? { backgroundColor: 'transparent' } : {}} className="px-2 py-2 text-center text-[11px] font-bold">
+                    <td key={`hist-day-${column.date}`} style={isVisible ? { backgroundColor: 'transparent' } : {}} className="px-2 py-2 text-center text-[13px] font-bold">
                       {isVisible ? formatPercent(ratio) : '-'}
                     </td>
                   );
@@ -1217,7 +1519,7 @@ const DemandDashboardView = () => {
                 {hybridColumns.bucketColumns.map((bucket) => {
                   const ratio = safeRatio(hybridTable.historyBucketAgg[bucket]);
                   return (
-                    <td key={`hist-bucket-${bucket}`} className="px-2 py-2 text-center text-[11px] font-black border-l-2 border-dashed border-red-600">
+                    <td key={`hist-bucket-${bucket}`} className="px-2 py-2 text-center text-[13px] font-black border-l-2 border-dashed border-red-600">
                       {formatPercent(ratio)}
                     </td>
                   );
@@ -1225,7 +1527,7 @@ const DemandDashboardView = () => {
               </tr>
 
               <tr className="bg-cyan-50/80 text-cyan-900 border-t border-cyan-100">
-                <td className="sticky left-0 z-20 bg-cyan-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Atual</td>
+                <td className="sticky left-0 z-20 w-[267px] min-w-[267px] max-w-[267px] bg-cyan-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Atual</td>
                 {hybridColumns.dayColumns.map((column, idx) => {
                   const item = dailyColumns.find(d => d.date === column.date);
                   const isLastDay = idx === hybridColumns.dayColumns.length - 1;
@@ -1234,7 +1536,7 @@ const DemandDashboardView = () => {
                   const ratio = isLastDay ? safeRatio(hybridTable.total07Agg) : (isVisible ? safeRatio(hybridTable.totalDayAgg.get(column.date)) : 0);
                   
                   return (
-                    <td key={`atual-day-${column.date}`} style={isVisible ? { backgroundColor: 'transparent' } : {}} className="px-2 py-2 text-center text-[11px] font-bold">
+                    <td key={`atual-day-${column.date}`} style={isVisible ? { backgroundColor: 'transparent' } : {}} className="px-2 py-2 text-center text-[13px] font-bold">
                       {isVisible ? formatPercent(ratio) : '-'}
                     </td>
                   );
@@ -1242,7 +1544,7 @@ const DemandDashboardView = () => {
                 {hybridColumns.bucketColumns.map((bucket) => {
                   const ratio = safeRatio(hybridTable.totalBucketAgg[bucket]);
                   return (
-                    <td key={`atual-bucket-${bucket}`} className="px-2 py-2 text-center text-[11px] font-black border-l-2 border-dashed border-red-600">
+                    <td key={`atual-bucket-${bucket}`} className="px-2 py-2 text-center text-[13px] font-black border-l-2 border-dashed border-red-600">
                       {formatPercent(ratio)}
                     </td>
                   );
@@ -1250,20 +1552,20 @@ const DemandDashboardView = () => {
               </tr>
 
               <tr className="bg-amber-50/80 text-amber-900 border-t border-amber-100">
-                <td className="sticky left-0 z-20 bg-amber-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Meta</td>
+                <td className="sticky left-0 z-20 w-[267px] min-w-[267px] max-w-[267px] bg-amber-50 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Meta</td>
                 {hybridColumns.dayColumns.map((column, idx) => {
                   const item = dailyColumns.find(d => d.date === column.date);
                   const isLastDay = idx === hybridColumns.dayColumns.length - 1;
                   const isVisible = (item && item.offset >= 6) || isLastDay;
                   
                   return (
-                    <td key={`meta-day-${column.date}`} className="px-2 py-2 text-center text-[11px] font-bold">
+                    <td key={`meta-day-${column.date}`} className="px-2 py-2 text-center text-[13px] font-bold">
                       {isVisible ? formatPercent(0.5) : '-'}
                     </td>
                   );
                 })}
                 {hybridColumns.bucketColumns.map((bucket) => (
-                  <td key={`meta-bucket-${bucket}`} className="px-2 py-2 text-center text-[11px] font-black border-l-2 border-dashed border-red-600">
+                  <td key={`meta-bucket-${bucket}`} className="px-2 py-2 text-center text-[13px] font-black border-l-2 border-dashed border-red-600">
                     {formatPercent(META_BY_BUCKET[bucket] || 0)}
                   </td>
                 ))}

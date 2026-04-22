@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import Card from '../components/Card';
 import Button from '../components/Button';
+import { useDialog } from '../context/DialogContext';
 
 /** Formata número como moeda BRL. */
 const formatBRL = (val: number) => {
@@ -28,6 +29,7 @@ const formatBRL = (val: number) => {
 };
 
 const CalculatorView = () => {
+  const { showAlert } = useDialog();
   const [isCalculated, setIsCalculated] = useState(false);
   const [calculationResult, setCalculationResult] = useState<any>(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -120,10 +122,10 @@ const CalculatorView = () => {
         setCalculationResult(data.result);
         setIsCalculated(true);
       } else {
-        alert('Erro no cálculo: ' + data.error);
+        await showAlert({ title: 'Erro no Cálculo', message: 'Erro no cálculo: ' + data.error, tone: 'danger' });
       }
     } catch (error) {
-      alert('Erro ao conectar com o servidor de cálculo.');
+      await showAlert({ title: 'Erro de Conexão', message: 'Erro ao conectar com o servidor de cálculo.', tone: 'danger' });
     } finally {
       setIsCalculating(false);
     }
@@ -158,11 +160,11 @@ const CalculatorView = () => {
         setInputs({ ...inputs, tipo_onibus: customBusName });
         setCustomBusName('');
       } else {
-        alert('Erro ao salvar veículo personalizado.');
+        await showAlert({ title: 'Falha ao Salvar', message: 'Erro ao salvar veículo personalizado.', tone: 'danger' });
       }
     } catch (e) {
       console.error(e);
-      alert('Erro de conexão ao salvar veículo.');
+      await showAlert({ title: 'Erro de Conexão', message: 'Erro de conexão ao salvar veículo.', tone: 'danger' });
     } finally {
       setIsSavingBus(false);
     }

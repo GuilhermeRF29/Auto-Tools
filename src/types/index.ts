@@ -5,7 +5,7 @@
  */
 
 /** Identificador das views/telas disponíveis na navegação principal. */
-export type View = 'dashboard' | 'dashboards' | 'presentations' | 'demand' | 'reports' | 'vault' | 'calculator' | 'settings' | 'history';
+export type View = 'dashboard' | 'dashboards' | 'presentations' | 'demand' | 'rioShare' | 'channelShare' | 'reports' | 'vault' | 'calculator' | 'tools' | 'settings' | 'history';
 
 /** Usuário autenticado na aplicação. */
 export interface User {
@@ -29,6 +29,7 @@ export interface UiSettings {
   successAnimationStyle: SuccessAnimationStyle;
   successAnimationDurationSec: number;
   successAnimationIntensity: AnimationIntensity;
+  windowsHelloEnabled: boolean;
 }
 
 /**
@@ -48,6 +49,10 @@ export interface RunningTask {
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   /** Data/hora em que a tarefa foi iniciada no frontend. */
   startTime: Date;
+  /** Timestamp do último evento recebido via SSE. */
+  lastUpdateTime?: Date;
+  /** Timestamp da última mudança real de progresso. */
+  lastProgressChangeTime?: Date;
   /** Mensagem descritiva do passo atual (ex: "Baixando arquivo..."). */
   message?: string;
 }
@@ -59,4 +64,5 @@ export interface RunningTask {
 export const PREDEFINED_SITES = [
   { name: 'EBUS', host: 'connext.controlesoftware.com.br', url: 'http://10.61.65.84/auth/login' },
   { name: 'ADM de Vendas', host: 'adm.autobots.com.br', url: 'http://ttadm01.jcatlm.com.br:8080/ventaboletosadm/index.zul;jsessionid=xFIW8nh_t8n9-74topChhriraeW-2Y5y-MKUCIG3.gcp-pd-ttadm-01' },
+  { name: 'Busca Dados BI', host: 'app.powerinsight.com.br', url: 'https://app.powerinsight.com.br' },
 ];

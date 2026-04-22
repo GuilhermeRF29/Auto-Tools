@@ -8,15 +8,44 @@ print("PROGRESS:{\"p\": 1, \"m\": \"Carregando Modulos SR...\"}", flush=True)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import shutil
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
+import re
+import unicodedata
+import polars as pl
+from datetime import datetime, timedelta, date, time
 from pathlib import Path
 from core.banco import BASE_DIR, ASSETS_DIR
 from core.google_auth import obter_servico_gmail
-
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Side
+
+
+def normalizar_data_br(data_valor):
+    """Normaliza datas para dd/mm/YYYY aceitando ISO e variações comuns."""
+    if data_valor is None:
+        return None
+
+    if isinstance(data_valor, datetime):
+        return data_valor.strftime('%d/%m/%Y')
+
+    texto = str(data_valor).strip()
+    if not texto:
+        return None
+
+    if 'T' in texto:
+        try:
+            return datetime.fromisoformat(texto.replace('Z', '')).strftime('%d/%m/%Y')
+        except ValueError:
+            pass
+
+    for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%Y/%m/%d'):
+        try:
+            return datetime.strptime(texto, fmt).strftime('%d/%m/%Y')
+        except ValueError:
+            continue
+
+    raise ValueError(
+        f"Data inválida: {data_valor}. Use dd/mm/YYYY, YYYY-mm-dd, dd-mm-YYYY ou ISO."
+    )
 
 
 def baixar_anexos_especificos(service, pasta_alvo, nomes_procurados, data_inicio=None, data_fim=None, callback_progresso=None):
@@ -107,35 +136,282 @@ def baixar_anexos_especificos(service, pasta_alvo, nomes_procurados, data_inicio
 # TRATAMENTO DE DADOS
 # ==========================================
 
+MESES_PT = {
+    1: '01-JANEIRO', 2: '02-FEVEREIRO', 3: '03-MARÇO', 4: '04-ABRIL',
+    5: '05-MAIO', 6: '06-JUNHO', 7: '07-JULHO', 8: '08-AGOSTO',
+    9: '09-SETEMBRO', 10: '10-OUTUBRO', 11: '11-NOVEMBRO', 12: '12-DEZEMBRO'
+}
+
+
+def _normalizar_data_excel(valor):
+    if valor is None:
+        return None
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+
+    texto = str(valor).strip()
+    if not texto or texto.lower() in {'none', 'nan', 'nat'}:
+        return None
+
+    if 'T' in texto:
+        try:
+            return datetime.fromisoformat(texto.replace('Z', '')).date()
+        except ValueError:
+            pass
+
+    for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%Y-%m-%d %H:%M:%S'):
+        try:
+            return datetime.strptime(texto, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _normalizar_horario(valor):
+    if valor is None:
+        return ''
+    if isinstance(valor, datetime):
+        return valor.strftime('%H:%M')
+    if isinstance(valor, time):
+        return valor.strftime('%H:%M')
+
+    if isinstance(valor, (int, float)) and 0 <= float(valor) < 1:
+        segundos = int(round(float(valor) * 24 * 60 * 60))
+        horas = (segundos // 3600) % 24
+        minutos = (segundos % 3600) // 60
+        return f"{horas:02d}:{minutos:02d}"
+
+    texto = str(valor).strip()
+    if not texto or texto.lower() in {'none', 'nan', 'nat'}:
+        return ''
+
+    for fmt in ('%H:%M:%S', '%H:%M', '%H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
+        try:
+            return datetime.strptime(texto, fmt).strftime('%H:%M')
+        except ValueError:
+            continue
+
+    if re.match(r'^\d{2}:\d{2}', texto):
+        return texto[:5]
+    return texto
+
+
+def _normalizar_texto_sem_acento(valor):
+    texto = str(valor or '').strip().upper()
+    return unicodedata.normalize('NFKD', texto).encode('ascii', errors='ignore').decode('utf-8').strip()
+
+
+def _normalizar_cidade(valor):
+    texto = str(valor or '').strip().upper()
+    chave = _normalizar_texto_sem_acento(valor)
+
+    if chave in {'RIO', 'RJ', 'RIO JANEIRO', 'RIO DE JANEIRO', 'RIO DE JANERIO'}:
+        return 'RIO DE JANEIRO'
+    if chave in {'SP', 'SAO PAULO'}:
+        return 'SÃO PAULO'
+    if chave == 'SAO PAULO (BARRA FUNDA)':
+        return 'SÃO PAULO (BARRA FUNDA)'
+    return texto
+
+
+def _normalizar_empresa(valor):
+    texto = re.sub(r'\s*\(.*?\)\s*', ' ', str(valor or ''))
+    texto = unicodedata.normalize('NFKD', texto).encode('ascii', errors='ignore').decode('utf-8')
+    return ' '.join(texto.upper().split())
+
+
+def _ler_planilha_polars(caminho_arquivo, nome_aba):
+    try:
+        retorno = pl.read_excel(caminho_arquivo, sheet_name=nome_aba)
+    except Exception as e:
+        raise RuntimeError(
+            f"Falha ao ler planilha '{nome_aba}' em {caminho_arquivo}. "
+            f"Confirme suporte do polars.read_excel para o arquivo de origem."
+        ) from e
+
+    if isinstance(retorno, dict):
+        if nome_aba in retorno:
+            return retorno[nome_aba]
+        return next(iter(retorno.values()))
+    return retorno
+
+
+def _garantir_colunas(df, colunas):
+    faltantes = [c for c in colunas if c not in df.columns]
+    if faltantes:
+        df = df.with_columns([pl.lit(None).alias(c) for c in faltantes])
+    return df.select(colunas)
+
+
+def _gerar_chave_unica(row_dict):
+    data_val = row_dict.get('DATA')
+    if isinstance(data_val, datetime):
+        data_txt = data_val.date().isoformat()
+    elif isinstance(data_val, date):
+        data_txt = data_val.isoformat()
+    else:
+        data_norm = _normalizar_data_excel(data_val)
+        data_txt = data_norm.isoformat() if data_norm else ''
+
+    horario_txt = _normalizar_horario(row_dict.get('HORÁRIO'))
+    empresa = _normalizar_empresa(row_dict.get('EMPRESA'))
+    origem = _normalizar_cidade(row_dict.get('ORIGEM'))
+    destino = _normalizar_cidade(row_dict.get('DESTINO'))
+
+    try:
+        pax_txt = str(int(float(row_dict.get('PAX'))))
+    except Exception:
+        pax_txt = str(row_dict.get('PAX') or '').strip()
+
+    try:
+        ipv_txt = str(round(float(row_dict.get('IPV')), 4))
+    except Exception:
+        ipv_txt = str(row_dict.get('IPV') or '').strip()
+
+    try:
+        servico_txt = str(int(float(row_dict.get('SERVIÇO', 1))))
+    except Exception:
+        servico_txt = str(row_dict.get('SERVIÇO') or '1').strip()
+
+    ano_txt = str(row_dict.get('Ano') or '').strip()
+
+    return f"{data_txt}|{horario_txt}|{empresa}|{origem}|{destino}|{pax_txt}|{ipv_txt}|{servico_txt}|{ano_txt}"
+
+
+def _normalizar_df_chaves(df):
+    return df.with_columns([
+        pl.col('DATA').map_elements(_normalizar_data_excel, return_dtype=pl.Date).alias('DATA'),
+        pl.col('HORÁRIO').map_elements(_normalizar_horario, return_dtype=pl.Utf8).fill_null('').alias('HORÁRIO'),
+        pl.col('EMPRESA').map_elements(_normalizar_empresa, return_dtype=pl.Utf8).fill_null('').alias('EMPRESA'),
+        pl.col('ORIGEM').map_elements(_normalizar_cidade, return_dtype=pl.Utf8).fill_null('').alias('ORIGEM'),
+        pl.col('DESTINO').map_elements(_normalizar_cidade, return_dtype=pl.Utf8).fill_null('').alias('DESTINO'),
+        pl.col('SERVIÇO').cast(pl.Float64, strict=False).fill_null(1).round(0).cast(pl.Int64).alias('SERVIÇO'),
+        pl.col('PAX').cast(pl.Float64, strict=False).round(0).cast(pl.Int64).alias('PAX'),
+        pl.col('IPV').cast(pl.Float64, strict=False).alias('IPV'),
+        pl.col('Ano').cast(pl.Int64, strict=False).alias('Ano'),
+    ])
+
+
+def _expr_chave():
+    return pl.concat_str([
+        pl.col('DATA').dt.strftime('%Y-%m-%d').fill_null(''),
+        pl.col('HORÁRIO').fill_null(''),
+        pl.col('EMPRESA').fill_null(''),
+        pl.col('ORIGEM').fill_null(''),
+        pl.col('DESTINO').fill_null(''),
+        pl.col('PAX').cast(pl.Utf8).fill_null(''),
+        pl.col('IPV').round(4).cast(pl.Utf8).fill_null(''),
+        pl.col('SERVIÇO').cast(pl.Utf8).fill_null('1'),
+        pl.col('Ano').cast(pl.Utf8).fill_null(''),
+    ], separator='|').alias('KEY')
+
+
+def _aplicar_estilo_openpyxl(cell, col_idx, ordem_colunas):
+    estilo_borda = Side(border_style="thin", color="000000")
+    borda_fina = Border(top=estilo_borda, left=estilo_borda, right=estilo_borda, bottom=estilo_borda)
+    alinhamento_centro = Alignment(horizontal='center', vertical='center')
+
+    nome_coluna = ordem_colunas[col_idx - 1]
+    cell.alignment = alinhamento_centro
+    if nome_coluna != 'Ano':
+        cell.border = borda_fina
+    if nome_coluna == 'DATA':
+        cell.number_format = 'dd/mmm'
+    elif nome_coluna == 'HORÁRIO':
+        cell.number_format = 'hh:mm'
+    elif nome_coluna == 'IPV':
+        cell.number_format = '0%'
+
+
+def _converter_valor_planilha(nome_coluna, valor):
+    if nome_coluna == 'DATA':
+        return _normalizar_data_excel(valor)
+    if nome_coluna == 'HORÁRIO':
+        hora_txt = _normalizar_horario(valor)
+        if not hora_txt:
+            return None
+        try:
+            h, m = hora_txt.split(':')
+            return time(int(h), int(m))
+        except Exception:
+            return None
+    if nome_coluna == 'IPV':
+        try:
+            return float(valor)
+        except Exception:
+            return 0.0
+    if nome_coluna in {'Nº Mês', 'PAX', 'SEMANA', 'SERVIÇO', 'Ano'}:
+        try:
+            return int(float(valor))
+        except Exception:
+            return None
+    if valor is None:
+        return ''
+    return str(valor)
+
+
+def _append_openpyxl(caminho_arquivo, nome_aba, df_saida, ordem_colunas):
+    book = load_workbook(caminho_arquivo)
+    if nome_aba in book.sheetnames:
+        sheet = book[nome_aba]
+    else:
+        sheet = book.active
+        sheet.title = nome_aba
+        sheet.append(ordem_colunas)
+
+    start_row = sheet.max_row + 1
+    modelo_row = 2 if sheet.max_row >= 2 else None
+    estilos_coluna = None
+    if modelo_row:
+        estilos_coluna = [sheet.cell(row=modelo_row, column=i)._style for i in range(1, len(ordem_colunas) + 1)]
+
+    for row_idx, row_data in enumerate(df_saida.iter_rows(named=True), start=start_row):
+        for col_idx, col_name in enumerate(ordem_colunas, start=1):
+            valor = _converter_valor_planilha(col_name, row_data.get(col_name))
+            cell = sheet.cell(row=row_idx, column=col_idx, value=valor)
+            if estilos_coluna:
+                # Reusa exatamente o estilo de uma linha modelo para manter o design original.
+                cell._style = estilos_coluna[col_idx - 1]
+            else:
+                _aplicar_estilo_openpyxl(cell, col_idx, ordem_colunas)
+
+    book.save(caminho_arquivo)
+
+
 def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho_base_principal=None, datas_filtro=None, callback_progresso=None):
     if callback_progresso:
-        callback_progresso(0.60, "Iniciando leitura dos pacotes locais e preparação de consolidação pandas...")
+        callback_progresso(0.60, "Iniciando leitura dos pacotes locais e preparação de consolidação polars...")
     print("Iniciando leitura e tratamento dos dados...")
 
+    ordem_colunas = ['DATA', 'Nº Mês', 'MÊS', 'EMPRESA', 'ORIGEM', 'DESTINO', 'SERVIÇO', 'HORÁRIO', 'PAX', 'SEMANA', 'IPV', 'GRUPO', 'MODALIDADE', 'Ano']
     dfs = []
-    
+
     # 1. EXTRAÇÃO
     if caminho_base_rio and os.path.exists(caminho_base_rio):
-        df1 = pd.read_excel(caminho_base_rio, sheet_name='Planilha1')
-        df1.rename(columns={'PASSAGEIRO': 'PAX'}, inplace=True)
-        
-        # Normalização prévia para filtro de destino (para não perder variações como 'RIO')
-        df1['DESTINO'] = df1['DESTINO'].astype(str).str.strip().str.upper()
-        rio_variants = ['RIO', 'RJ', 'RIO JANEIRO', 'RIO DE JANEIRO', 'RIO DE JANERIO']
-        df1 = df1[df1['DESTINO'].isin(rio_variants)].copy()
-        
+        df1 = _ler_planilha_polars(caminho_base_rio, 'Planilha1')
+        if 'PASSAGEIRO' in df1.columns and 'PAX' not in df1.columns:
+            df1 = df1.rename({'PASSAGEIRO': 'PAX'})
+
         if 'ORIGEM' not in df1.columns:
-            df1['ORIGEM'] = 'SÃO PAULO'
+            df1 = df1.with_columns(pl.lit('SÃO PAULO').alias('ORIGEM'))
+
+        df1 = _garantir_colunas(df1, ordem_colunas)
+        df1 = df1.with_columns(pl.lit('BASE_RIO').alias('_FONTE_SR'))
         dfs.append(df1)
         print(f"[DATA] Base RIO carregada: {len(df1)} linhas.")
 
     if caminho_share and os.path.exists(caminho_share):
-        df2 = pd.read_excel(caminho_share, sheet_name='Base Relatorio   RIO x SAO')
+        df2 = _ler_planilha_polars(caminho_share, 'Base Relatorio   RIO x SAO')
         if 'DATA SP' in df2.columns:
-            df2['DATA'] = df2['DATA SP']
-        
-        cols_df2 = ['Nº Mês', 'MÊS', 'EMPRESA', 'ORIGEM', 'DESTINO', 'SERVIÇO', 'HORÁRIO', 'PAX', 'DATA']
-        df2 = df2[[c for c in cols_df2 if c in df2.columns]]
+            if 'DATA' in df2.columns:
+                df2 = df2.with_columns(pl.coalesce([pl.col('DATA'), pl.col('DATA SP')]).alias('DATA'))
+            else:
+                df2 = df2.with_columns(pl.col('DATA SP').alias('DATA'))
+
+        df2 = _garantir_colunas(df2, ordem_colunas)
+        df2 = df2.with_columns(pl.lit('SHARE').alias('_FONTE_SR'))
         dfs.append(df2)
         print(f"[DATA] Base Share carregada: {len(df2)} linhas.")
 
@@ -144,49 +420,60 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
         print("[AVISO] Nenhum dado encontrado para as bases especificadas.")
         return
 
-    df_consolidado = pd.concat(dfs, ignore_index=True)
+    df_consolidado = pl.concat(dfs, how='diagonal_relaxed')
     if callback_progresso:
         callback_progresso(0.65, f"Arquivos unificados com sucesso. Total bruto: {len(df_consolidado)} registros. Aplicando regras de negócio e validações...")
-    
+
     # FILTRO DE DATAS
+    df_consolidado = df_consolidado.with_columns(
+        pl.col('DATA').map_elements(_normalizar_data_excel, return_dtype=pl.Date).alias('DATA')
+    )
+
     if datas_filtro:
-        df_consolidado['DATA'] = pd.to_datetime(df_consolidado['DATA'], errors='coerce')
-        datas_limite = pd.to_datetime(datas_filtro)
-        df_consolidado = df_consolidado[df_consolidado['DATA'].isin(datas_limite)].copy()
-        
-        if df_consolidado.empty:
+        datas_limite = [d for d in (_normalizar_data_excel(x) for x in datas_filtro) if d is not None]
+        df_consolidado = df_consolidado.filter(pl.col('DATA').is_in(datas_limite))
+
+        if len(df_consolidado) == 0:
             print("[AVISO] Nenhum dado encontrado para as datas especificadas.")
             return
 
     # 2. LIMPEZA E REGRAS DE NEGÓCIO
-    df_consolidado['EMPRESA'] = df_consolidado['EMPRESA'].astype(str)
-    
-    # Normalização básica de cidades antes do tratamento das tags
-    for col in ['DESTINO', 'ORIGEM']:
-        df_consolidado[col] = df_consolidado[col].str.strip().str.upper()
-        # Padroniza variações de Rio de Janeiro
-        df_consolidado.loc[df_consolidado[col].isin(['RIO', 'RJ', 'RIO JANEIRO', 'RIO DE JANERIO']), col] = 'RIO DE JANEIRO'
-        # Padroniza variações de São Paulo
-        df_consolidado.loc[df_consolidado[col].isin(['SP', 'SAO PAULO', 'SÃO PAULO']), col] = 'SÃO PAULO'
+    df_consolidado = df_consolidado.with_columns([
+        pl.col('EMPRESA').cast(pl.Utf8, strict=False).fill_null('').alias('EMPRESA_BRUTA'),
+        pl.col('DESTINO').map_elements(_normalizar_cidade, return_dtype=pl.Utf8).alias('DESTINO'),
+        pl.col('ORIGEM').map_elements(_normalizar_cidade, return_dtype=pl.Utf8).alias('ORIGEM'),
+        pl.col('HORÁRIO').map_elements(_normalizar_horario, return_dtype=pl.Utf8).alias('HORÁRIO'),
+        pl.col('PAX').cast(pl.Float64, strict=False).alias('PAX'),
+        pl.col('SERVIÇO').cast(pl.Float64, strict=False).fill_null(1).round(0).cast(pl.Int64).alias('SERVIÇO'),
+    ])
 
-    # --- REGRAS ESPECÍFICAS DE LOCALIZAÇÃO (BARRA FUNDA E CATARINENSE) ---
-    mask_catarinense = df_consolidado['EMPRESA'].str.contains('CATARINENSE', case=False, na=False)
-    mask_bf = df_consolidado['EMPRESA'].str.contains(r'\(BF\)|\(BAF\)', na=False, regex=True, case=False)
-    
-    # Regra Barra Funda: Se houver tag (BF) ou (BAF) e a cidade for SÃO PAULO, expande para BARRA FUNDA
-    for col in ['DESTINO', 'ORIGEM']:
-        df_consolidado.loc[mask_bf & (df_consolidado[col] == 'SÃO PAULO'), col] = 'SÃO PAULO (BARRA FUNDA)'
+    mask_catarinense = pl.col('EMPRESA_BRUTA').str.to_uppercase().str.contains('CATARINENSE')
+    mask_bf = pl.col('EMPRESA_BRUTA').str.to_uppercase().str.contains(r'\(BF\)|\(BAF\)')
 
-    # Regra Específica CATARINENSE: Se não tiver tag BF/BAF, garantir que seja SÃO PAULO limpo
     for col in ['DESTINO', 'ORIGEM']:
-        df_consolidado.loc[mask_catarinense & ~mask_bf & (df_consolidado[col] == 'SÃO PAULO (BARRA FUNDA)'), col] = 'SÃO PAULO'
-    
-    # Correção específica para Itapemirim -> Kaissara
-    df_consolidado.loc[(df_consolidado['EMPRESA'].str.strip().str.upper() == 'ITAPEMIRIM'), 'EMPRESA'] = 'KAISSARA'
+        df_consolidado = df_consolidado.with_columns(
+            pl.when(mask_bf & (pl.col(col) == 'SÃO PAULO')).then(pl.lit('SÃO PAULO (BARRA FUNDA)')).otherwise(pl.col(col)).alias(col)
+        )
+        df_consolidado = df_consolidado.with_columns(
+            pl.when(mask_catarinense & ~mask_bf & (pl.col(col) == 'SÃO PAULO (BARRA FUNDA)')).then(pl.lit('SÃO PAULO')).otherwise(pl.col(col)).alias(col)
+        )
 
-    # Limpeza dos nomes das empresas (remove tags entre parênteses)
-    df_consolidado['EMPRESA'] = df_consolidado['EMPRESA'].str.replace(r'\s*\(.*?\)\s*', '', regex=True)
-    df_consolidado['EMPRESA'] = df_consolidado['EMPRESA'].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper().str.strip()
+    cidades_sp = ['SÃO PAULO', 'SÃO PAULO (BARRA FUNDA)']
+    df_consolidado = df_consolidado.filter(
+        ((pl.col('ORIGEM').is_in(cidades_sp)) & (pl.col('DESTINO') == 'RIO DE JANEIRO')) |
+        ((pl.col('ORIGEM') == 'RIO DE JANEIRO') & (pl.col('DESTINO').is_in(cidades_sp)))
+    )
+
+    df_consolidado = df_consolidado.with_columns(
+        pl.col('EMPRESA_BRUTA').map_elements(_normalizar_empresa, return_dtype=pl.Utf8).alias('EMPRESA')
+    )
+
+    df_consolidado = df_consolidado.with_columns(
+        pl.when(pl.col('EMPRESA') == 'ITAPEMIRIM').then(pl.lit('KAISSARA')).otherwise(pl.col('EMPRESA')).alias('EMPRESA')
+    )
+
+    if 'EMPRESA_BRUTA' in df_consolidado.columns:
+        df_consolidado = df_consolidado.drop(['EMPRESA_BRUTA'])
 
     mapa_regras = {
         '1001': {'GRUPO': 'JCA', 'MODALIDADE': 'RODOVIARIO'},
@@ -202,130 +489,100 @@ def tratar_e_consolidar_bases(caminho_base_rio=None, caminho_share=None, caminho
         'RIO DOCE': {'GRUPO': 'RIO DOCE', 'MODALIDADE': 'RODOVIARIO'},
         'NOTAVEL': {'GRUPO': 'NOTÁVEL', 'MODALIDADE': 'RODOVIARIO'}
     }
-    
-    df_consolidado['GRUPO'] = df_consolidado['EMPRESA'].map(lambda x: mapa_regras.get(x, {}).get('GRUPO', 'OUTROS'))
-    df_consolidado['MODALIDADE'] = df_consolidado['EMPRESA'].map(lambda x: mapa_regras.get(x, {}).get('MODALIDADE', 'OUTROS'))
 
-    empresas_nao_mapeadas = df_consolidado[df_consolidado['GRUPO'] == 'OUTROS']['EMPRESA'].unique()
+    df_consolidado = df_consolidado.with_columns([
+        pl.col('EMPRESA').map_elements(lambda x: mapa_regras.get(x, {}).get('GRUPO', 'OUTROS'), return_dtype=pl.Utf8).alias('GRUPO'),
+        pl.col('EMPRESA').map_elements(lambda x: mapa_regras.get(x, {}).get('MODALIDADE', 'OUTROS'), return_dtype=pl.Utf8).alias('MODALIDADE')
+    ])
+
+    empresas_nao_mapeadas = df_consolidado.filter(pl.col('GRUPO') == 'OUTROS').select('EMPRESA').unique().to_series().to_list()
     if len(empresas_nao_mapeadas) > 0:
         raise ValueError(f"[ERRO DE MAPEAMENTO] As seguintes empresas nao estao no sistema: {list(empresas_nao_mapeadas)}. Favor contatar o administrador para atualizar o mapa de regras.")
 
-    df_consolidado = df_consolidado[df_consolidado['PAX'] <= 69].copy()
-    df_consolidado.loc[df_consolidado['PAX'] == 69, 'PAX'] = 68
+    df_consolidado = df_consolidado.filter(pl.col('PAX').is_not_null() & (pl.col('PAX') <= 69))
+    df_consolidado = df_consolidado.with_columns(
+        pl.when(pl.col('PAX') == 69).then(pl.lit(68)).otherwise(pl.col('PAX')).alias('PAX')
+    )
+    df_consolidado = df_consolidado.with_columns([
+        pl.when(pl.col('PAX') > 54).then(pl.col('PAX') / 68).otherwise(pl.col('PAX') / 54).alias('IPV')
+    ])
+    df_consolidado = df_consolidado.with_columns([
+        pl.when(pl.col('IPV') > 1).then(pl.lit(1.0)).otherwise(pl.col('IPV')).alias('IPV'),
+        pl.col('PAX').round(0).cast(pl.Int64).alias('PAX')
+    ])
 
-    df_consolidado['IPV'] = np.where(df_consolidado['PAX'] > 54, 
-                                     df_consolidado['PAX'] / 68, 
-                                     df_consolidado['PAX'] / 54)
-    df_consolidado['IPV'] = df_consolidado['IPV'].clip(upper=1.0)
+    df_consolidado = df_consolidado.filter(pl.col('DATA').is_not_null())
+    df_consolidado = df_consolidado.with_columns([
+        pl.col('DATA').dt.month().alias('Nº Mês'),
+        pl.col('DATA').dt.year().alias('Ano'),
+        pl.col('DATA').dt.week().alias('SEMANA'),
+        pl.col('Nº Mês').map_elements(lambda x: MESES_PT.get(int(x)) if x is not None else None, return_dtype=pl.Utf8).alias('MÊS')
+    ])
 
-    df_consolidado['DATA'] = pd.to_datetime(df_consolidado['DATA'])
-    df_consolidado['HORÁRIO'] = pd.to_datetime(df_consolidado['HORÁRIO'].astype(str), errors='coerce').apply(lambda x: x.time() if pd.notnull(x) else None)
-    
-    df_consolidado['Nº Mês'] = df_consolidado['DATA'].dt.month
-    df_consolidado['Ano'] = df_consolidado['DATA'].dt.year
-    df_consolidado['SEMANA'] = df_consolidado['DATA'].dt.isocalendar().week 
-    
-    meses_pt = {1:'01-JANEIRO', 2:'02-FEVEREIRO', 3:'03-MARÇO', 4:'04-ABRIL', 
-                5:'05-MAIO', 6:'06-JUNHO', 7:'07-JULHO', 8:'08-AGOSTO', 
-                9:'09-SETEMBRO', 10:'10-OUTUBRO', 11:'11-NOVEMBRO', 12:'12-DEZEMBRO'}
-    df_consolidado['MÊS'] = df_consolidado['Nº Mês'].map(meses_pt)
-    df_consolidado['DATA'] = df_consolidado['DATA'].dt.date
-
-    # 4. EXPORTAÇÃO E FORMATAÇÃO (EVITANDO DUPLICATAS)
+    # 4. EVITA DUPLICATAS E ORDENA NOVAS LINHAS PARA ALINHAR DIAS ENTRE DOCUMENTOS
     if callback_progresso:
         callback_progresso(0.75, "Sanitização de caracteres completada. Verificando dados históricos e identificando eventuais duplicatas de viagem...")
     print("Verificando duplicatas e preparando salvamento...")
-    ordem_colunas = ['DATA', 'Nº Mês', 'MÊS', 'EMPRESA', 'ORIGEM', 'DESTINO', 'SERVIÇO', 'HORÁRIO', 'PAX', 'SEMANA', 'IPV', 'GRUPO', 'MODALIDADE', 'Ano']
-    
-    if 'SERVIÇO' not in df_consolidado.columns:
-        df_consolidado['SERVIÇO'] = 1
-    
-    # Garante que SERVIÇO seja inteiro (sem decimais)
-    df_consolidado['SERVIÇO'] = pd.to_numeric(df_consolidado['SERVIÇO'], errors='coerce').fillna(1).astype(int)
 
-    df_final = df_consolidado[ordem_colunas]
+    df_novos = _garantir_colunas(df_consolidado, ordem_colunas + ['_FONTE_SR'])
+    df_novos = _normalizar_df_chaves(df_novos).with_columns(_expr_chave())
 
-    # --- LÓGICA DE PREVENÇÃO DE DUPLICATAS ---
-    try:
-        colunas_checar = ['DATA', 'HORÁRIO', 'EMPRESA', 'ORIGEM', 'DESTINO', 'PAX', 'IPV', 'SERVIÇO', 'Ano']
-        df_existente = pd.read_excel(caminho_base_principal, sheet_name='Base Relatorio   RIO x SAO', usecols=lambda x: x in colunas_checar)
-        
-        # Função para gerar chave única de forma robusta
-        def gerar_chave(row):
-            d = str(row['DATA'])
-            h = str(row['HORÁRIO']).split('.')[0] if pd.notnull(row['HORÁRIO']) else "None"
-            e = str(row['EMPRESA']).strip().upper()
-            o = str(row['ORIGEM']).strip().upper()
-            dest = str(row['DESTINO']).strip().upper()
-            # Garante que PAX e IPV sejam strings normalizadas
-            try:
-                p = str(int(float(row['PAX'])))
-            except:
-                p = str(row['PAX'])
-            try:
-                ipv = str(round(float(row['IPV']), 4))
-            except:
-                ipv = str(row['IPV'])
-            
-            # Normalização de SERVIÇO na chave para evitar 1 vs 1.0
-            try:
-                srv = str(int(float(row.get('SERVIÇO', 1))))
-            except:
-                srv = str(row.get('SERVIÇO', '1')).strip().upper()
-                
-            ano = str(row.get('Ano', '')).strip()
-            return f"{d}|{h}|{e}|{o}|{dest}|{p}|{ipv}|{srv}|{ano}"
+    if os.path.exists(caminho_base_principal):
+        try:
+            df_existente = _ler_planilha_polars(caminho_base_principal, 'Base Relatorio   RIO x SAO')
+            df_existente = _garantir_colunas(df_existente, ordem_colunas)
+            df_existente = _normalizar_df_chaves(df_existente)
+            df_existente = df_existente.filter(pl.col('DATA').is_not_null())
+            df_existente = df_existente.with_columns([
+                pl.col('DATA').dt.month().alias('Nº Mês'),
+                pl.col('DATA').dt.year().alias('Ano'),
+                pl.col('DATA').dt.week().alias('SEMANA'),
+                pl.col('Nº Mês').map_elements(lambda x: MESES_PT.get(int(x)) if x is not None else None, return_dtype=pl.Utf8).alias('MÊS')
+            ])
 
-        # Lemos e padronizamos a base existente
-        df_existente['DATA'] = pd.to_datetime(df_existente['DATA']).dt.date
-        chaves_existentes = set(df_existente.apply(gerar_chave, axis=1))
+            df_existente_keys = df_existente.with_columns(_expr_chave()).select('KEY').unique()
+            df_novos = df_novos.join(df_existente_keys, on='KEY', how='anti')
 
-        # Criamos a mesma chave para o df_final
-        df_final_temp = df_final.copy()
-        df_final_temp['KEY'] = df_final_temp.apply(gerar_chave, axis=1)
-        
-        # Filtramos o df_final removendo o que já existe na base
-        df_final = df_final[~df_final_temp['KEY'].isin(chaves_existentes)].copy()
-        
-        if df_final.empty:
-            if callback_progresso: callback_progresso(0.85, "Nenhum dado novo encontrado. Toda a massa processada já se encontrava na base histórica.")
-            print("[INFO] Todos os dados processados ja constam na base principal. Nada a adicionar.")
-            return
-        else:
-            if callback_progresso: callback_progresso(0.85, f"Sucesso! Mapeadas {len(df_final)} novas viagens de ônibus inéditas para inclusão!")
-            print(f"[INFO] Adicionando {len(df_final)} novas linhas ineditas...")
-            
-    except Exception as e:
-        print(f"[AVISO] Não foi possível verificar duplicatas de forma detalhada: {e}. Prosseguindo com precaução.")
+            if len(df_novos) == 0:
+                if callback_progresso:
+                    callback_progresso(0.85, "Nenhum dado novo encontrado. Nada para inserir na base histórica.")
+                print("[INFO] Nenhum dado novo encontrado. Nada para inserir na base principal.")
+                return
+            else:
+                if callback_progresso:
+                    callback_progresso(0.85, f"Sucesso! Mapeadas {len(df_novos)} novas viagens de ônibus inéditas para inclusão!")
+                print(f"[INFO] Adicionando {len(df_novos)} novas linhas inéditas...")
+
+        except Exception as e:
+            print(f"[AVISO] Não foi possível verificar duplicatas de forma detalhada: {e}. Prosseguindo com precaução.")
+
+    df_novos = df_novos.with_columns([
+        pl.col('DATA').dt.month().alias('Nº Mês'),
+        pl.col('DATA').dt.year().alias('Ano'),
+        pl.col('DATA').dt.week().alias('SEMANA'),
+        pl.col('Nº Mês').map_elements(lambda x: MESES_PT.get(int(x)) if x is not None else None, return_dtype=pl.Utf8).alias('MÊS'),
+        pl.when(pl.col('_FONTE_SR') == 'BASE_RIO').then(pl.lit(0)).when(pl.col('_FONTE_SR') == 'SHARE').then(pl.lit(1)).otherwise(pl.lit(9)).alias('ORDEM_FONTE'),
+        pl.col('HORÁRIO').fill_null('').alias('HORARIO_SORT')
+    ])
+    df_novos = df_novos.sort(['DATA', 'ORDEM_FONTE', 'HORARIO_SORT', 'EMPRESA', 'ORIGEM', 'DESTINO', 'SERVIÇO'])
+    df_novos = df_novos.drop(['ORDEM_FONTE', 'HORARIO_SORT'])
+    if '_FONTE_SR' in df_novos.columns:
+        df_novos = df_novos.drop(['_FONTE_SR'])
+    if 'KEY' in df_novos.columns:
+        df_novos = df_novos.drop(['KEY'])
+    df_novos = _garantir_colunas(df_novos, ordem_colunas)
+
+    if len(df_novos) == 0:
+        if callback_progresso:
+            callback_progresso(0.85, "Nenhum dado novo encontrado. Nada para inserir na base histórica.")
+        print("[INFO] Nenhum dado novo encontrado. Nada para inserir na base principal.")
+        return
 
     if not os.path.exists(caminho_base_principal):
         raise FileNotFoundError(f"Base principal não encontrada para escrita: {caminho_base_principal}")
 
-    book = load_workbook(caminho_base_principal)
-    sheet = book['Base Relatorio   RIO x SAO']
-    start_row = sheet.max_row + 1
-
-    estilo_borda = Side(border_style="thin", color="000000")
-    borda_fina = Border(top=estilo_borda, left=estilo_borda, right=estilo_borda, bottom=estilo_borda)
-    alinhamento_centro = Alignment(horizontal='center', vertical='center')
-
     if callback_progresso: callback_progresso(0.92, "Descarregando células limpas no documento Excel (Aplicando Borders e Formatadores de Data)...")
-
-    for row_idx, row_data in enumerate(df_final.values, start=start_row):
-        for col_idx, value in enumerate(row_data, start=1):
-            cell = sheet.cell(row=row_idx, column=col_idx, value=value)
-            cell.alignment = alinhamento_centro
-            nome_coluna_atual = ordem_colunas[col_idx-1]
-            if nome_coluna_atual != 'Ano':
-                cell.border = borda_fina
-            if nome_coluna_atual == 'DATA':
-                cell.number_format = 'dd/mmm' 
-            elif nome_coluna_atual == 'HORÁRIO':
-                cell.number_format = 'hh:mm'
-            elif nome_coluna_atual == 'IPV':
-                cell.number_format = '0%'
-
-    book.save(caminho_base_principal)
+    _append_openpyxl(caminho_base_principal, 'Base Relatorio   RIO x SAO', df_novos, ordem_colunas)
     print(f"[OK] Sucesso! O arquivo foi atualizado com novos dados em: {caminho_base_principal}")
 
 # ==========================================
@@ -361,6 +618,11 @@ def executar_sr(
     }
     if modo_execucao not in modos_validos:
         raise ValueError("Modo selecionado não é suportado para esta automação SR.")
+
+    e_ini = normalizar_data_br(e_ini)
+    e_fim = normalizar_data_br(e_fim)
+    b_ini = normalizar_data_br(b_ini)
+    b_fim = normalizar_data_br(b_fim)
 
     try:
         pasta_downloads = Path.home() / "Downloads"
@@ -711,10 +973,9 @@ if __name__ == '__main__':
     
     # Datas podem vir em ISO do frontend, converter se necessário
     def fix_date(d):
-        if not d: return d
-        if 'T' in d: # ISO 2024-03-29T...
-            return datetime.fromisoformat(d.replace('Z', '')).strftime('%d/%m/%Y')
-        return d
+        if not d:
+            return d
+        return normalizar_data_br(d)
 
     e_ini = fix_date(e_ini)
     e_fim = fix_date(e_fim)

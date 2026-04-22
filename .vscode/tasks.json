@@ -70,6 +70,36 @@
 				"c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/tmp_validate_demand_rulecheck.py"
 			],
 			"isBackground": false
+		},
+		{
+			"label": "Build frontend for diagnostics",
+			"type": "shell",
+			"command": "npm.cmd",
+			"args": [
+				"run",
+				"build"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Build frontend after fix",
+			"type": "shell",
+			"command": "npm.cmd",
+			"args": [
+				"run",
+				"build"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Build after WebAuthn fix",
+			"type": "shell",
+			"command": "npm.cmd",
+			"args": [
+				"run",
+				"build"
+			],
+			"isBackground": false
 		}
 	]
 }

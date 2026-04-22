@@ -36,6 +36,9 @@ interface UIContextData {
   successAnimationIntensity: AnimationIntensity;
   setSuccessAnimationIntensity: (v: AnimationIntensity) => void;
 
+  windowsHelloEnabled: boolean;
+  setWindowsHelloEnabled: (v: boolean) => void;
+
   handleDeepSelect: (view: View, id: string) => void;
   handleReRunFromDashboard: (item: any) => void;
 }
@@ -58,6 +61,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [successAnimationStyle, setSuccessAnimationStyle] = useState<SuccessAnimationStyle>('premium');
   const [successAnimationDurationSec, setSuccessAnimationDurationSec] = useState(1.6);
   const [successAnimationIntensity, setSuccessAnimationIntensity] = useState<AnimationIntensity>('normal');
+  const [windowsHelloEnabled, setWindowsHelloEnabled] = useState(false);
 
   const SETTINGS_STORAGE_PREFIX = 'autotools:settings';
 
@@ -96,6 +100,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setSuccessAnimationStyle('premium');
         setSuccessAnimationDurationSec(1.6);
         setSuccessAnimationIntensity('normal');
+        setWindowsHelloEnabled(false);
         return;
       }
 
@@ -117,11 +122,13 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       } else {
         setSuccessAnimationIntensity('normal');
       }
+      setWindowsHelloEnabled(parsed.windowsHelloEnabled === true);
     } catch {
       setAnimationsEnabled(true);
       setSuccessAnimationStyle('premium');
       setSuccessAnimationDurationSec(1.6);
       setSuccessAnimationIntensity('normal');
+      setWindowsHelloEnabled(false);
     }
   }, [user?.id]);
 
@@ -135,12 +142,13 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
           successAnimationStyle,
           successAnimationDurationSec,
           successAnimationIntensity,
+          windowsHelloEnabled,
         } satisfies UiSettings)
       );
     } catch (e) {
       console.error('Falha ao persistir preferências locais', e);
     }
-  }, [user?.id, animationsEnabled, successAnimationStyle, successAnimationDurationSec, successAnimationIntensity]);
+  }, [user?.id, animationsEnabled, successAnimationStyle, successAnimationDurationSec, successAnimationIntensity, windowsHelloEnabled]);
 
   const handleDeepSelect = (view: View, id: string) => {
     setCurrentView(view);
@@ -159,6 +167,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       { id: 'adm_new', name: 'Relatório de Demandas' },
       { id: 'ebus_new', name: 'Relatório Revenue' },
       { id: 'sr_new', name: 'Relatório BASE RIO X SP' },
+      { id: 'busca_dados', name: 'Relatório Performance de Canais' },
     ];
     const report = reports.find(r => r.name === item.nome_automacao);
     if (report) setHighlightId(report.id);
@@ -177,6 +186,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       successAnimationStyle, setSuccessAnimationStyle,
       successAnimationDurationSec, setSuccessAnimationDurationSec,
       successAnimationIntensity, setSuccessAnimationIntensity,
+      windowsHelloEnabled, setWindowsHelloEnabled,
       handleDeepSelect, handleReRunFromDashboard
     }}>
       {children}

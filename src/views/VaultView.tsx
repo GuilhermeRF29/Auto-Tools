@@ -15,11 +15,26 @@ import { PREDEFINED_SITES } from '../types';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import Modal from '../components/Modal';
+import { useDialog } from '../context/DialogContext';
+import {
+  authenticateWithWindowsHello,
+  clearWindowsHelloHint,
+  getWindowsHelloHint,
+  isWindowsHelloAvailable,
+} from '../utils/windowsHello';
 
-const VaultView = ({ currentUser }: { currentUser: any }) => {
+const VaultView = ({
+  currentUser,
+  windowsHelloEnabled,
+}: {
+  currentUser: any;
+  windowsHelloEnabled?: boolean;
+}) => {
+  const { showAlert, showConfirm } = useDialog();
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isUnlocking, setIsUnlocking] = useState(false);
   const [isLocking, setIsLocking] = useState(false);
+  const [isWindowsHelloUnlocking, setIsWindowsHelloUnlocking] = useState(false);
   const [password, setPassword] = useState('');
   const [credentials, setCredentials] = useState<any[]>([]);
   const [showPassword, setShowPassword] = useState<number | null | string>(null);
@@ -27,6 +42,12 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
   const [newCred, setNewCred] = useState({ site: '', user: '', pass: '', customSite: '', customName: '' });
   const [isSiteDropdownOpen, setIsSiteDropdownOpen] = useState(false);
   const siteDropdownRef = useRef<HTMLDivElement>(null);
+  const windowsHelloHint = getWindowsHelloHint();
+  const canUseWindowsHello = Boolean(
+    isWindowsHelloAvailable()
+    && windowsHelloHint?.biometricToken
+    && windowsHelloHint.userId === currentUser?.id
+  );
 
   // Fecha dropdown ao clicar fora
   useEffect(() => {
@@ -60,6 +81,48 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
     if (isUnlocked) fetchCredentials();
   }, [isUnlocked]);
 
+  const handleWindowsHelloUnlock = async (silent = false) => {
+    const hint = getWindowsHelloHint();
+    if (!hint?.biometricToken || hint.userId !== currentUser?.id) {
+      if (!silent) {
+        await showAlert({
+          title: 'Windows Hello Indisponível',
+          message: 'Token do Windows Hello indisponível para este usuário. Reative em Configurações.',
+          tone: 'warning',
+        });
+      }
+      return;
+    }
+
+    setIsWindowsHelloUnlocking(true);
+    try {
+      const authenticatedUser = await authenticateWithWindowsHello(hint.biometricToken);
+      if (authenticatedUser?.id !== currentUser?.id) {
+        throw new Error('Credencial biométrica não corresponde ao usuário logado.');
+      }
+
+      setIsUnlocking(true);
+      setTimeout(() => {
+        setIsUnlocked(true);
+        setIsUnlocking(false);
+      }, 500);
+    } catch (e: any) {
+      const message = e?.message || 'Falha na autenticação biométrica do cofre.';
+      if (/token biométrico inválido|expirado|não encontrada|não encontrado|reative/i.test(message)) {
+        clearWindowsHelloHint();
+      }
+      if (!silent) {
+        await showAlert({
+          title: 'Falha no Desbloqueio',
+          message: 'Não foi possível desbloquear com Windows Hello: ' + message,
+          tone: 'danger',
+        });
+      }
+    } finally {
+      setIsWindowsHelloUnlocking(false);
+    }
+  };
+
   /** Valida a senha mestre (re-autentica com o backend). */
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,10 +140,10 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
           setIsUnlocking(false);
         }, 800);
       } else {
-        alert('Senha incorreta.');
+        await showAlert({ title: 'Senha Incorreta', message: 'A senha informada está incorreta.', tone: 'danger' });
       }
     } catch (error) {
-      alert('Erro ao validar senha.');
+      await showAlert({ title: 'Erro de Validação', message: 'Erro ao validar senha.', tone: 'danger' });
     }
   };
 
@@ -98,7 +161,10 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
   /** Adiciona uma nova credencial (sistema ou personalizada). */
   const handleAddCred = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCred.site) { alert('Selecione o destino'); return; }
+    if (!newCred.site) {
+      await showAlert({ title: 'Destino Obrigatório', message: 'Selecione o destino.', tone: 'warning' });
+      return;
+    }
 
     const isCustom = newCred.site === 'SITE PRÓPRIO';
     const siteDisplayName = isCustom ? (newCred.customName || newCred.customSite) : newCred.site;
@@ -121,16 +187,23 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
       setNewCred({ site: '', user: '', pass: '', customSite: '', customName: '' });
       fetchCredentials();
     } catch (error) {
-      alert('Erro ao salvar');
+      await showAlert({ title: 'Erro ao Salvar', message: 'Erro ao salvar.', tone: 'danger' });
     }
   };
 
   /** Exclui uma credencial com confirmação. */
   const handleDelete = async (id: number, type: string) => {
-    if (confirm('Excluir esta credencial?')) {
-      await fetch(`/api/credentials/${id}?type=${type}`, { method: 'DELETE' });
-      fetchCredentials();
-    }
+    const confirmed = await showConfirm({
+      title: 'Excluir Credencial',
+      message: 'Excluir esta credencial? Esta ação não pode ser desfeita.',
+      confirmText: 'Excluir',
+      cancelText: 'Cancelar',
+      tone: 'warning',
+    });
+    if (!confirmed) return;
+
+    await fetch(`/api/credentials/${id}?type=${type}`, { method: 'DELETE' });
+    fetchCredentials();
   };
 
   /** Abre o site associado à credencial em nova aba. */
@@ -195,6 +268,17 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
                 <Button type="submit" className="w-full py-4 text-xs font-black uppercase tracking-widest bg-slate-900 hover:bg-black shadow-xl shadow-slate-200 rounded-2xl transition-all active:scale-95">
                   DESBLOQUEAR COFRE
                 </Button>
+
+                {(windowsHelloEnabled || canUseWindowsHello) && (
+                  <Button
+                    type="button"
+                    disabled={isWindowsHelloUnlocking || isUnlocking}
+                    onClick={() => handleWindowsHelloUnlock(false)}
+                    className="w-full py-3 text-xs font-black uppercase tracking-widest border-2 !border-emerald-800 !bg-emerald-700 !text-white rounded-2xl hover:!bg-emerald-800 transition-all"
+                  >
+                    {isWindowsHelloUnlocking ? 'VALIDANDO BIOMETRIA...' : 'USAR WINDOWS HELLO / DIGITAL'}
+                  </Button>
+                )}
               </form>
             </div>
           </Card>
@@ -299,9 +383,9 @@ const VaultView = ({ currentUser }: { currentUser: any }) => {
                             <td className="px-8 py-5 text-right">
                               <div className="flex items-center justify-end gap-1">
                                 <button
-                                  onClick={() => {
+                                  onClick={async () => {
                                     navigator.clipboard.writeText(cred.pass);
-                                    alert('Senha copiada!');
+                                    await showAlert({ title: 'Copiado', message: 'Senha copiada!', tone: 'success' });
                                   }}
                                   className="p-2 text-slate-400 hover:text-blue-700 transition-all"
                                   title="Copiar"

@@ -3,10 +3,10 @@ import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import {
   Home, FileText, Lock, Search, User,
   CheckCircle, Loader2, Calculator, LogOut,
-  X, Settings, Menu, BarChart3
+  X, Settings, Menu, BarChart3, Wrench
 } from 'lucide-react';
 
-import logoApp from '../../logo_app.png';
+import logoApp from '../assets/logo_app.png';
 import { cn } from '../utils/cn';
 import type { View } from '../types';
 
@@ -24,6 +24,7 @@ const navItems = [
   { id: 'dashboards', label: 'Dashboards', icon: BarChart3 },
   { id: 'vault', label: 'Cofre de Senhas', icon: Lock },
   { id: 'calculator', label: 'Calculadora', icon: Calculator },
+  { id: 'tools', label: 'Ferramentas', icon: Wrench },
 ] as const;
 
 export default function MainLayout({ children }: MainLayoutProps) {
