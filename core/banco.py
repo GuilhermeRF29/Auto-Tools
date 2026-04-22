@@ -41,8 +41,15 @@ else:
     ASSETS_DIR = BASE_DIR
 
 # Caminhos do banco de dados e arquivo de variáveis de ambiente
-DB_PATH = BASE_DIR / "Userbank.db"
-ENV_PATH = BASE_DIR / ".env"
+DATA_DIR_ENV = os.getenv("AUTOTOOLS_DATA_DIR", "").strip()
+if DATA_DIR_ENV:
+    DATA_DIR = Path(DATA_DIR_ENV).expanduser().resolve()
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    DATA_DIR = BASE_DIR
+
+DB_PATH = DATA_DIR / "Userbank.db"
+ENV_PATH = DATA_DIR / ".env"
 
 
 # ============================================================

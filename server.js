@@ -15,6 +15,9 @@
  * diretamente pelo Express com express.static('dist').
  */
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { runPythonCmd } from './src_backend/utils/pythonProxy.js';
 import { PYTHON_PATH } from './src_backend/config.js';
 
@@ -26,9 +29,18 @@ import automationRoutes from './src_backend/routes/automationRoutes.js';
 import dashboardRoutes from './src_backend/routes/dashboardRoutes.js';
 import webauthnRoutes from './src_backend/routes/webauthnRoutes.js';
 import settingsRoutes from './src_backend/routes/settingsRoutes.js';
+import deviceAccessRoutes, { deviceAccessGuard } from './src_backend/routes/deviceAccessRoutes.js';
 
 const app = express();
-const port = 3001;
+const port = Number(process.env.AUTOTOOLS_SERVER_PORT || 3001);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distDir = path.join(__dirname, 'dist');
+const distIndexPath = path.join(distDir, 'index.html');
+const canServeFrontend = fs.existsSync(distIndexPath);
+
+process.env.AUTOTOOLS_SERVER_PORT = String(port);
 
 app.use(express.json());
 
@@ -66,6 +78,10 @@ app.get('/api/status', async (req, res) => {
     }
 });
 
+// Protecao central para acesso remoto/dispositivos.
+app.use('/api', deviceAccessGuard);
+app.use('/api', deviceAccessRoutes);
+
 // APIs modulares
 app.use('/api', authRoutes);
 app.use('/api/credentials', vaultRoutes);
@@ -77,10 +93,23 @@ app.use('/api', settingsRoutes);
 // Dashboards e relatorios (demanda, revenue, market share)
 app.use('/api', dashboardRoutes);
 
-// Fallback para rotas não encontradas
+// Fallback exclusivo da API
+app.use('/api', (req, res) => {
+    console.warn(`[SYSTEM] Rota API não encontrada: ${req.method} ${req.url}`);
+    res.status(404).json({ error: 'Rota API não encontrada no backend modular.', path: req.url });
+});
+
+if (canServeFrontend) {
+    app.use(express.static(distDir));
+    app.get(/^(?!\/api).*/, (req, res) => {
+        res.sendFile(distIndexPath);
+    });
+}
+
+// Fallback geral para rotas não encontradas fora da API
 app.use((req, res) => {
     console.warn(`[SYSTEM] Rota não encontrada: ${req.method} ${req.url}`);
-    res.status(404).json({ error: 'Rota API não encontrada no backend modular.', path: req.url });
+    res.status(404).json({ error: 'Rota não encontrada.', path: req.url });
 });
 
 // Tratamento de erros globais
@@ -92,4 +121,9 @@ app.use((err, req, res, next) => {
 app.listen(port, '0.0.0.0', () => {
     console.log(`[SYSTEM] Backend Express rodando em http://127.0.0.1:${port}`);
     console.log(`[SYSTEM] Python Path: ${PYTHON_PATH}`);
+    if (canServeFrontend) {
+        console.log(`[SYSTEM] Frontend estático habilitado em: ${distDir}`);
+    } else {
+        console.log(`[SYSTEM] Frontend estático não encontrado (dist/index.html ausente).`);
+    }
 });

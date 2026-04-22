@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion, MotionConfig } from 'motion/react';
-import { CheckCircle, Fingerprint, Loader2 } from 'lucide-react';
+import { CheckCircle, Fingerprint, Loader2, RefreshCw, ShieldAlert, ShieldCheck, Smartphone } from 'lucide-react';
 import logoApp from '../assets/logo_app.png';
 
 import { useAuth } from '../context/AuthContext';
@@ -14,12 +14,39 @@ import {
   getWindowsHelloHint,
   isWindowsHelloAvailable,
 } from '../utils/windowsHello';
+import {
+  clearStoredPendingDeviceRequest,
+  getStoredPendingDeviceRequest,
+  setStoredDeviceToken,
+  setStoredPendingDeviceRequest,
+  type PendingDeviceAccessRequest,
+} from '../utils/deviceAccess';
 
 interface LoginViewProps {
   serverStatus: 'checking' | 'online' | 'offline';
   serverInfo: { version?: string; dbStatus?: string; dbMessage?: string } | null;
   animationsEnabled: boolean;
 }
+
+type DeviceSessionReason = 'LOCAL_DESKTOP' | 'APPROVAL_NOT_REQUIRED' | 'TOKEN_VALID' | 'REMOTE_DISABLED' | 'TOKEN_REQUIRED' | 'IP_MISMATCH' | 'UNKNOWN';
+
+const createDeviceFingerprint = () => {
+  const payload = [
+    navigator.userAgent || '',
+    navigator.platform || '',
+    navigator.language || '',
+    `${window.screen?.width || 0}x${window.screen?.height || 0}`,
+    Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+  ].join('|');
+
+  let hash = 0;
+  for (let i = 0; i < payload.length; i += 1) {
+    hash = ((hash << 5) - hash) + payload.charCodeAt(i);
+    hash |= 0;
+  }
+
+  return `fp-${Math.abs(hash)}`;
+};
 
 export default function LoginView({ serverStatus, serverInfo, animationsEnabled }: LoginViewProps) {
   const { setUser, isLoggingIn } = useAuth(); // using global auth context
@@ -29,13 +56,192 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
   const [authData, setAuthData] = useState({ user: '', pass: '', name: '' });
   const [isWindowsHelloLoading, setIsWindowsHelloLoading] = useState(false);
   const [windowsHelloAvailable, setWindowsHelloAvailable] = useState(false);
+  const [deviceAccessState, setDeviceAccessState] = useState<'checking' | 'approved' | 'blocked' | 'pending' | 'rejected'>('checking');
+  const [deviceAccessReason, setDeviceAccessReason] = useState<DeviceSessionReason>('UNKNOWN');
+  const [deviceAccessMessage, setDeviceAccessMessage] = useState('');
+  const [pendingRequest, setPendingRequest] = useState<PendingDeviceAccessRequest | null>(() => getStoredPendingDeviceRequest());
+  const [isRequestingDeviceAccess, setIsRequestingDeviceAccess] = useState(false);
 
-  const loadingState = isLoggingIn || internalIsLoggingIn || isWindowsHelloLoading;
+  const loadingState = isLoggingIn || internalIsLoggingIn || isWindowsHelloLoading || isRequestingDeviceAccess;
+  const canUseAuthForms = deviceAccessState === 'approved';
+  const isPendingApproval = deviceAccessState === 'pending';
 
   useEffect(() => {
     const hint = getWindowsHelloHint();
     setWindowsHelloAvailable(Boolean(hint?.biometricToken) && isWindowsHelloAvailable());
   }, []);
+
+  const loadDeviceAccessSession = useCallback(async () => {
+    setDeviceAccessState('checking');
+    setDeviceAccessMessage('');
+
+    try {
+      const response = await fetch('/api/device-access/session', { cache: 'no-store' });
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || 'Falha ao consultar sessão de dispositivo.');
+      }
+
+      const reason = `${data?.session?.reason || 'UNKNOWN'}`.trim().toUpperCase() as DeviceSessionReason;
+      setDeviceAccessReason(reason);
+
+      if (data?.session?.isApproved === true) {
+        setDeviceAccessState('approved');
+        setDeviceAccessMessage('');
+        return;
+      }
+
+      if (reason === 'REMOTE_DISABLED') {
+        setDeviceAccessState('blocked');
+        setDeviceAccessMessage('O acesso remoto está desativado no desktop principal.');
+        return;
+      }
+
+      if (pendingRequest?.requestId && pendingRequest?.requestKey) {
+        setDeviceAccessState('pending');
+        setDeviceAccessMessage('Solicitação enviada. Aguarde aprovação no desktop.');
+        return;
+      }
+
+      if (reason === 'IP_MISMATCH') {
+        setDeviceAccessState('blocked');
+        setDeviceAccessMessage('O token salvo não corresponde ao IP aprovado. Solicite nova autorização.');
+        return;
+      }
+
+      setDeviceAccessState('blocked');
+      setDeviceAccessMessage('Este dispositivo ainda não foi autorizado pelo desktop.');
+    } catch (error: any) {
+      setDeviceAccessState('blocked');
+      setDeviceAccessReason('UNKNOWN');
+      setDeviceAccessMessage(error?.message || 'Não foi possível verificar o acesso do dispositivo.');
+    }
+  }, [pendingRequest]);
+
+  useEffect(() => {
+    loadDeviceAccessSession();
+  }, [loadDeviceAccessSession]);
+
+  const pollPendingRequest = useCallback(async () => {
+    if (!pendingRequest?.requestId || !pendingRequest?.requestKey) return;
+
+    try {
+      const query = new URLSearchParams({ requestKey: pendingRequest.requestKey });
+      const response = await fetch(`/api/device-access/request/${encodeURIComponent(pendingRequest.requestId)}/status?${query.toString()}`, {
+        cache: 'no-store',
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.success) {
+        if (response.status === 404) {
+          clearStoredPendingDeviceRequest();
+          setPendingRequest(null);
+          setDeviceAccessState('blocked');
+          setDeviceAccessMessage('Solicitação expirada. Gere uma nova solicitação de acesso.');
+        }
+        return;
+      }
+
+      const status = `${data?.status || ''}`.trim().toLowerCase();
+      if (status === 'approved') {
+        if (data?.deviceToken) {
+          setStoredDeviceToken(String(data.deviceToken));
+        }
+        clearStoredPendingDeviceRequest();
+        setPendingRequest(null);
+        setDeviceAccessReason('TOKEN_VALID');
+        setDeviceAccessState('approved');
+        setDeviceAccessMessage('');
+        return;
+      }
+
+      if (status === 'rejected') {
+        clearStoredPendingDeviceRequest();
+        setPendingRequest(null);
+        setDeviceAccessState('rejected');
+        setDeviceAccessMessage('Solicitação rejeitada pelo operador no desktop.');
+      }
+    } catch {
+      // Falha de polling não interrompe o estado atual; próximo ciclo tenta novamente.
+    }
+  }, [pendingRequest]);
+
+  useEffect(() => {
+    if (!isPendingApproval || !pendingRequest?.requestId || !pendingRequest?.requestKey) return;
+
+    pollPendingRequest();
+    const intervalId = window.setInterval(() => {
+      pollPendingRequest();
+    }, 3000);
+
+    return () => window.clearInterval(intervalId);
+  }, [isPendingApproval, pendingRequest, pollPendingRequest]);
+
+  const handleRequestDeviceAccess = async () => {
+    setIsRequestingDeviceAccess(true);
+    try {
+      const response = await fetch('/api/device-access/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceName: `Cliente ${navigator.platform || 'Web'}`,
+          deviceFingerprint: createDeviceFingerprint(),
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || 'Falha ao solicitar autorização para este dispositivo.');
+      }
+
+      if (data?.isLocalClient || data?.status === 'approved') {
+        if (data?.deviceToken) {
+          setStoredDeviceToken(String(data.deviceToken));
+        }
+        clearStoredPendingDeviceRequest();
+        setPendingRequest(null);
+        setDeviceAccessReason(data?.isLocalClient ? 'LOCAL_DESKTOP' : 'TOKEN_VALID');
+        setDeviceAccessState('approved');
+        setDeviceAccessMessage('');
+        return;
+      }
+
+      if (data?.status === 'pending' && data?.requestId && data?.requestKey) {
+        const nextPending: PendingDeviceAccessRequest = {
+          requestId: String(data.requestId),
+          requestKey: String(data.requestKey),
+          createdAt: typeof data.createdAt === 'string' ? data.createdAt : undefined,
+        };
+        setStoredPendingDeviceRequest(nextPending);
+        setPendingRequest(nextPending);
+        setDeviceAccessReason('TOKEN_REQUIRED');
+        setDeviceAccessState('pending');
+        setDeviceAccessMessage('Solicitação enviada. Aguarde aprovação no desktop.');
+        return;
+      }
+
+      throw new Error('Resposta inesperada ao solicitar acesso do dispositivo.');
+    } catch (error: any) {
+      setDeviceAccessState('blocked');
+      setDeviceAccessMessage(error?.message || 'Não foi possível solicitar autorização de dispositivo.');
+      await showAlert({
+        title: 'Falha na Solicitação',
+        message: error?.message || 'Não foi possível solicitar autorização de dispositivo.',
+        tone: 'danger',
+      });
+    } finally {
+      setIsRequestingDeviceAccess(false);
+    }
+  };
+
+  const handleCancelPendingRequest = () => {
+    clearStoredPendingDeviceRequest();
+    setPendingRequest(null);
+    setDeviceAccessState('blocked');
+    setDeviceAccessMessage('Solicitação local removida. Gere uma nova solicitação para continuar.');
+  };
 
   const handleWindowsHelloLogin = async () => {
     const hint = getWindowsHelloHint();
@@ -66,6 +272,14 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canUseAuthForms) {
+      await showAlert({
+        title: 'Acesso Bloqueado',
+        message: 'Este dispositivo precisa ser autorizado no desktop antes de efetuar login.',
+        tone: 'warning',
+      });
+      return;
+    }
     setInternalIsLoggingIn(true);
     try {
       const response = await fetch('/api/login', {
@@ -108,6 +322,14 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canUseAuthForms) {
+      await showAlert({
+        title: 'Acesso Bloqueado',
+        message: 'Este dispositivo precisa ser autorizado no desktop antes de criar usuário.',
+        tone: 'warning',
+      });
+      return;
+    }
     setInternalIsLoggingIn(true);
     try {
       const response = await fetch('/api/register', {
@@ -220,82 +442,165 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
             </div>
 
             <h3 className="text-2xl font-bold text-slate-800 mb-1 flex items-center justify-between">
-              <span>{isRegistering ? 'Nova Conta' : 'Acessar'}</span>
+              <span>{canUseAuthForms ? (isRegistering ? 'Nova Conta' : 'Acessar') : 'Acesso do Dispositivo'}</span>
             </h3>
             <p className="text-slate-500 text-sm mb-6">
-              {isRegistering ? 'Preencha os dados abaixo' : 'Insira suas credenciais ou use Windows Hello'}
+              {canUseAuthForms
+                ? (isRegistering ? 'Preencha os dados abaixo' : 'Insira suas credenciais ou use Windows Hello')
+                : 'Para continuar no celular, este dispositivo precisa de autorização do desktop.'}
             </p>
 
-            <form onSubmit={isRegistering ? handleRegister : handleLogin} className="space-y-4">
-              {isRegistering && (
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Seu Nome</label>
-                  <input
-                    required
-                    type="text"
-                    value={authData.name}
-                    onChange={e => setAuthData({ ...authData, name: e.target.value })}
-                    className="w-full border border-slate-200 rounded-lg p-3 text-base outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-slate-50 font-medium"
-                    placeholder="João Silva"
-                  />
+            {deviceAccessState === 'checking' && (
+              <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                <div className="flex items-center gap-2 text-blue-700 text-sm font-bold">
+                  <Loader2 size={16} className="animate-spin" />
+                  Validando autorização do dispositivo...
                 </div>
-              )}
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Usuário / ID</label>
-                <input
-                  required
-                  type="text"
-                  value={authData.user}
-                  onChange={e => setAuthData({ ...authData, user: e.target.value })}
-                  className="w-full border border-slate-200 rounded-lg p-3 text-base outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-slate-50 font-medium"
-                  placeholder="ex: admin"
-                />
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5 px-1 uppercase tracking-widest opacity-80">Senha</label>
-                <input
-                  required
-                  type="password"
-                  value={authData.pass}
-                  onChange={e => setAuthData({ ...authData, pass: e.target.value })}
-                  className="w-full border border-slate-200 rounded-lg p-3 text-base outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-slate-50 font-medium font-mono"
-                  placeholder="••••••••"
-                />
-              </div>
+            )}
 
-              <Button type="submit" disabled={loadingState} className="w-full py-4 text-sm font-black uppercase tracking-[0.15em] shadow-xl shadow-blue-500/30 mt-4 rounded-2xl hover:scale-[1.02] transition-all duration-300">
-                {loadingState ? (
-                  <><Loader2 size={18} className="animate-spin mr-2" /> Carregando...</>
-                ) : (
-                  isRegistering ? 'CADASTRAR CONTA' : 'ACESSAR AGORA'
-                )}
-              </Button>
+            {!canUseAuthForms && deviceAccessState !== 'checking' && (
+              <div className="space-y-3">
+                <div className={cn(
+                  'rounded-2xl border p-4',
+                  isPendingApproval ? 'border-amber-200 bg-amber-50/70' : 'border-rose-200 bg-rose-50/70'
+                )}>
+                  <div className="flex items-start gap-3">
+                    <div className={cn(
+                      'w-9 h-9 rounded-xl flex items-center justify-center',
+                      isPendingApproval ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'
+                    )}>
+                      {isPendingApproval ? <Smartphone size={17} /> : <ShieldAlert size={17} />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-black text-slate-700 uppercase tracking-wide">
+                        {isPendingApproval ? 'Aguardando aprovação' : 'Dispositivo não autorizado'}
+                      </p>
+                      <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                        {deviceAccessMessage || 'Solicite autorização para este dispositivo no app desktop.'}
+                      </p>
+                      {pendingRequest?.requestId && (
+                        <p className="text-[10px] text-slate-500 mt-2 font-mono">
+                          Solicitação: {pendingRequest.requestId.slice(0, 12)}...
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-              {!isRegistering && windowsHelloAvailable && (
-                <Button
-                  type="button"
-                  disabled={loadingState}
-                  onClick={handleWindowsHelloLogin}
-                  className="w-full py-3 text-xs font-black uppercase tracking-[0.15em] mt-2 rounded-2xl border-2 !border-emerald-800 !bg-emerald-700 !text-white hover:!bg-emerald-800 transition-all"
-                >
-                  {isWindowsHelloLoading ? (
-                    <><Loader2 size={16} className="animate-spin mr-2" /> VALIDANDO BIOMETRIA...</>
-                  ) : (
-                    <><Fingerprint size={16} className="mr-2" /> ENTRAR COM WINDOWS HELLO</>
+                <div className="flex items-center gap-2">
+                  {!isPendingApproval && (
+                    <Button
+                      type="button"
+                      onClick={handleRequestDeviceAccess}
+                      disabled={loadingState || deviceAccessReason === 'REMOTE_DISABLED'}
+                      className="flex-1 py-3 text-xs font-black uppercase tracking-[0.12em] rounded-2xl"
+                    >
+                      {isRequestingDeviceAccess ? (
+                        <><Loader2 size={15} className="animate-spin mr-2" /> SOLICITANDO...</>
+                      ) : (
+                        <><ShieldCheck size={15} className="mr-2" /> SOLICITAR ACESSO</>
+                      )}
+                    </Button>
                   )}
-                </Button>
-              )}
-            </form>
 
-            <div className="mt-4 text-center">
-              <button
-                onClick={() => setIsRegistering(!isRegistering)}
-                className="text-[11px] font-black uppercase tracking-widest text-blue-600 hover:text-blue-800 transition-colors"
-                type="button"
-              >
-                {isRegistering ? 'Voltar ao Login' : 'Criar nova conta corporativa'}
-              </button>
-            </div>
+                  {isPendingApproval && (
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() => pollPendingRequest()}
+                        disabled={loadingState}
+                        className="flex-1 py-3 text-xs font-black uppercase tracking-[0.12em] rounded-2xl"
+                      >
+                        <RefreshCw size={15} className="mr-2" /> ATUALIZAR STATUS
+                      </Button>
+                      <button
+                        type="button"
+                        onClick={handleCancelPendingRequest}
+                        className="px-3 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest text-slate-500 border border-slate-200 hover:bg-slate-50"
+                      >
+                        Cancelar
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {canUseAuthForms && (
+              <>
+                <form onSubmit={isRegistering ? handleRegister : handleLogin} className="space-y-4">
+                  {isRegistering && (
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1">Seu Nome</label>
+                      <input
+                        required
+                        type="text"
+                        value={authData.name}
+                        onChange={e => setAuthData({ ...authData, name: e.target.value })}
+                        className="w-full border border-slate-200 rounded-lg p-3 text-base outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-slate-50 font-medium"
+                        placeholder="João Silva"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Usuário / ID</label>
+                    <input
+                      required
+                      type="text"
+                      value={authData.user}
+                      onChange={e => setAuthData({ ...authData, user: e.target.value })}
+                      className="w-full border border-slate-200 rounded-lg p-3 text-base outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-slate-50 font-medium"
+                      placeholder="ex: admin"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 px-1 uppercase tracking-widest opacity-80">Senha</label>
+                    <input
+                      required
+                      type="password"
+                      value={authData.pass}
+                      onChange={e => setAuthData({ ...authData, pass: e.target.value })}
+                      className="w-full border border-slate-200 rounded-lg p-3 text-base outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-slate-50 font-medium font-mono"
+                      placeholder="••••••••"
+                    />
+                  </div>
+
+                  <Button type="submit" disabled={loadingState} className="w-full py-4 text-sm font-black uppercase tracking-[0.15em] shadow-xl shadow-blue-500/30 mt-4 rounded-2xl hover:scale-[1.02] transition-all duration-300">
+                    {loadingState ? (
+                      <><Loader2 size={18} className="animate-spin mr-2" /> Carregando...</>
+                    ) : (
+                      isRegistering ? 'CADASTRAR CONTA' : 'ACESSAR AGORA'
+                    )}
+                  </Button>
+
+                  {!isRegistering && windowsHelloAvailable && (
+                    <Button
+                      type="button"
+                      disabled={loadingState}
+                      onClick={handleWindowsHelloLogin}
+                      className="w-full py-3 text-xs font-black uppercase tracking-[0.15em] mt-2 rounded-2xl border-2 !border-emerald-800 !bg-emerald-700 !text-white hover:!bg-emerald-800 transition-all"
+                    >
+                      {isWindowsHelloLoading ? (
+                        <><Loader2 size={16} className="animate-spin mr-2" /> VALIDANDO BIOMETRIA...</>
+                      ) : (
+                        <><Fingerprint size={16} className="mr-2" /> ENTRAR COM WINDOWS HELLO</>
+                      )}
+                    </Button>
+                  )}
+                </form>
+
+                <div className="mt-4 text-center">
+                  <button
+                    onClick={() => setIsRegistering(!isRegistering)}
+                    className="text-[11px] font-black uppercase tracking-widest text-blue-600 hover:text-blue-800 transition-colors"
+                    type="button"
+                  >
+                    {isRegistering ? 'Voltar ao Login' : 'Criar nova conta corporativa'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
         </motion.div>

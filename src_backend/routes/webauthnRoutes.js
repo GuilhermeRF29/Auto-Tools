@@ -17,7 +17,10 @@ const RP_NAME = 'Auto Tools';
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
-const DATA_DIR = path.join(getRootDir(), 'src_backend', 'data');
+const runtimeDataDir = `${process.env.AUTOTOOLS_DATA_DIR || ''}`.trim();
+const DATA_DIR = runtimeDataDir
+  ? path.resolve(runtimeDataDir)
+  : path.join(getRootDir(), 'src_backend', 'data');
 const STORE_PATH = path.join(DATA_DIR, 'webauthn_store.json');
 
 const pendingChallenges = new Map();

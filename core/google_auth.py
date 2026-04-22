@@ -5,7 +5,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-from .banco import BASE_DIR, ASSETS_DIR
+from .banco import BASE_DIR, ASSETS_DIR, DATA_DIR
 
 # ==========================================
 # CONFIGURAÇÕES GMAIL & GOOGLE
@@ -39,7 +39,7 @@ def _resolver_caminhos_auth():
     token_env = os.getenv("GMAIL_TOKEN_PATH", "").strip()
     creds_env = os.getenv("GMAIL_CREDENTIALS_PATH", "").strip()
 
-    token_path = Path(token_env).expanduser() if token_env else (BASE_DIR / "token.json")
+    token_path = Path(token_env).expanduser() if token_env else (DATA_DIR / "token.json")
 
     creds_candidatos = _normalizar_caminhos([
         Path(creds_env).expanduser() if creds_env else None,

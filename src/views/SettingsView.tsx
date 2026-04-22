@@ -7,7 +7,24 @@
  *   - Animações e preferências visuais
  */
 import { useEffect, useState, useCallback } from 'react';
-import { FolderOpen, Loader2, ScanFace, SlidersHorizontal, Sparkles, Zap, Save, CheckCircle, Database, ChevronDown } from 'lucide-react';
+import {
+  FolderOpen,
+  Loader2,
+  ScanFace,
+  SlidersHorizontal,
+  Sparkles,
+  Zap,
+  Save,
+  CheckCircle,
+  Database,
+  ChevronDown,
+  Shield,
+  RefreshCw,
+  Ban,
+  Trash2,
+  Smartphone,
+  Wifi,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -29,6 +46,44 @@ const DEFAULT_BASE_PATHS: BasePaths = {
   rioSharePath: 'Z:\\Dash RIO',
   channelSharePath: 'Z:\\Forecast\\Forecast2',
 };
+
+interface DeviceAccessConfig {
+  remoteAccessEnabled: boolean;
+  approvalRequired: boolean;
+  enforceIpMatch: boolean;
+  tokenTtlDays: number;
+  updatedAt?: string | null;
+}
+
+interface DeviceAccessNetworkHints {
+  loopbackUrl: string;
+  lanUrls: string[];
+}
+
+interface DevicePendingRequest {
+  id: string;
+  status: string;
+  ip: string;
+  name: string;
+  fingerprint: string;
+  userAgent: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface DeviceApproved {
+  id: string;
+  name: string;
+  firstApprovedIp: string;
+  lastIp: string;
+  fingerprint: string;
+  userAgent: string;
+  createdAt: string;
+  approvedAt: string;
+  lastSeenAt: string | null;
+  expiresAt: string;
+  revokedAt: string | null;
+}
 
 interface SettingsViewProps {
   animationsEnabled: boolean;
@@ -111,6 +166,18 @@ const CollapsibleSection = ({
   );
 };
 
+const formatDateTime = (value?: string | null) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('pt-BR');
+};
+
+const clampTokenTtlDays = (value: number) => {
+  if (!Number.isFinite(value)) return 30;
+  return Math.min(365, Math.max(1, Math.round(value)));
+};
+
 const SettingsView = ({
   animationsEnabled,
   onAnimationsEnabledChange,
@@ -133,6 +200,192 @@ const SettingsView = ({
   const [pathsSaved, setPathsSaved] = useState(false);
   const [pathsError, setPathsError] = useState('');
 
+  // ======== Estado de acesso remoto/dispositivos ========
+  const [deviceConfig, setDeviceConfig] = useState<DeviceAccessConfig | null>(null);
+  const [networkHints, setNetworkHints] = useState<DeviceAccessNetworkHints | null>(null);
+  const [pendingDevices, setPendingDevices] = useState<DevicePendingRequest[]>([]);
+  const [approvedDevices, setApprovedDevices] = useState<DeviceApproved[]>([]);
+  const [deviceLoading, setDeviceLoading] = useState(false);
+  const [deviceSaving, setDeviceSaving] = useState(false);
+  const [deviceError, setDeviceError] = useState('');
+  const [deviceSuccess, setDeviceSuccess] = useState('');
+  const [deviceDesktopOnly, setDeviceDesktopOnly] = useState(false);
+  const [tokenTtlDraft, setTokenTtlDraft] = useState('30');
+
+  const parseApiError = useCallback(async (response: Response) => {
+    try {
+      const payload = await response.json();
+      return payload?.error || payload?.message || `Erro HTTP ${response.status}`;
+    } catch {
+      return `Erro HTTP ${response.status}`;
+    }
+  }, []);
+
+  const loadDeviceAccess = useCallback(async () => {
+    setDeviceLoading(true);
+    setDeviceError('');
+
+    try {
+      const publicResp = await fetch('/api/device-access/public-state', { cache: 'no-store' });
+      const publicData = await publicResp.json();
+
+      if (publicData?.config) {
+        setDeviceConfig(publicData.config as DeviceAccessConfig);
+        setTokenTtlDraft(String((publicData.config as DeviceAccessConfig).tokenTtlDays || 30));
+      }
+      if (publicData?.networkHints) {
+        setNetworkHints(publicData.networkHints as DeviceAccessNetworkHints);
+      }
+
+      const [configResp, pendingResp, approvedResp] = await Promise.all([
+        fetch('/api/device-access/config', { cache: 'no-store' }),
+        fetch('/api/device-access/pending', { cache: 'no-store' }),
+        fetch('/api/device-access/devices', { cache: 'no-store' }),
+      ]);
+
+      if (configResp.status === 403 || pendingResp.status === 403 || approvedResp.status === 403) {
+        setDeviceDesktopOnly(true);
+        setPendingDevices([]);
+        setApprovedDevices([]);
+        return;
+      }
+
+      if (!configResp.ok) {
+        throw new Error(await parseApiError(configResp));
+      }
+
+      const configData = await configResp.json();
+      const pendingData = pendingResp.ok ? await pendingResp.json() : { pending: [] };
+      const approvedData = approvedResp.ok ? await approvedResp.json() : { devices: [] };
+
+      if (configData?.config) {
+        const cfg = configData.config as DeviceAccessConfig;
+        setDeviceConfig(cfg);
+        setTokenTtlDraft(String(cfg.tokenTtlDays || 30));
+      }
+      if (configData?.networkHints) {
+        setNetworkHints(configData.networkHints as DeviceAccessNetworkHints);
+      }
+
+      setPendingDevices(Array.isArray(pendingData?.pending) ? pendingData.pending as DevicePendingRequest[] : []);
+      setApprovedDevices(Array.isArray(approvedData?.devices) ? approvedData.devices as DeviceApproved[] : []);
+      setDeviceDesktopOnly(false);
+    } catch (error: any) {
+      setDeviceError(error?.message || 'Falha ao carregar configurações de acesso remoto.');
+    } finally {
+      setDeviceLoading(false);
+    }
+  }, [parseApiError]);
+
+  const updateDeviceConfig = useCallback(async (patch: Partial<DeviceAccessConfig>) => {
+    if (!deviceConfig) return;
+
+    setDeviceSaving(true);
+    setDeviceError('');
+    setDeviceSuccess('');
+    try {
+      const response = await fetch('/api/device-access/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          remoteAccessEnabled: patch.remoteAccessEnabled ?? deviceConfig.remoteAccessEnabled,
+          approvalRequired: patch.approvalRequired ?? deviceConfig.approvalRequired,
+          enforceIpMatch: patch.enforceIpMatch ?? deviceConfig.enforceIpMatch,
+          tokenTtlDays: clampTokenTtlDays(patch.tokenTtlDays ?? deviceConfig.tokenTtlDays),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseApiError(response));
+      }
+
+      const data = await response.json();
+      if (data?.config) {
+        const cfg = data.config as DeviceAccessConfig;
+        setDeviceConfig(cfg);
+        setTokenTtlDraft(String(cfg.tokenTtlDays || 30));
+      }
+      if (data?.networkHints) {
+        setNetworkHints(data.networkHints as DeviceAccessNetworkHints);
+      }
+
+      setDeviceSuccess('Configurações de acesso remoto atualizadas.');
+    } catch (error: any) {
+      setDeviceError(error?.message || 'Falha ao atualizar configurações de acesso remoto.');
+    } finally {
+      setDeviceSaving(false);
+    }
+  }, [deviceConfig, parseApiError]);
+
+  const approvePendingDevice = useCallback(async (requestId: string) => {
+    setDeviceSaving(true);
+    setDeviceError('');
+    setDeviceSuccess('');
+    try {
+      const response = await fetch('/api/device-access/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+      });
+      if (!response.ok) {
+        throw new Error(await parseApiError(response));
+      }
+
+      await loadDeviceAccess();
+      setDeviceSuccess('Dispositivo aprovado com sucesso.');
+    } catch (error: any) {
+      setDeviceError(error?.message || 'Falha ao aprovar dispositivo.');
+    } finally {
+      setDeviceSaving(false);
+    }
+  }, [loadDeviceAccess, parseApiError]);
+
+  const rejectPendingDevice = useCallback(async (requestId: string) => {
+    setDeviceSaving(true);
+    setDeviceError('');
+    setDeviceSuccess('');
+    try {
+      const response = await fetch('/api/device-access/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+      });
+      if (!response.ok) {
+        throw new Error(await parseApiError(response));
+      }
+
+      await loadDeviceAccess();
+      setDeviceSuccess('Solicitação rejeitada.');
+    } catch (error: any) {
+      setDeviceError(error?.message || 'Falha ao rejeitar solicitação.');
+    } finally {
+      setDeviceSaving(false);
+    }
+  }, [loadDeviceAccess, parseApiError]);
+
+  const revokeApprovedDevice = useCallback(async (deviceId: string) => {
+    setDeviceSaving(true);
+    setDeviceError('');
+    setDeviceSuccess('');
+    try {
+      const response = await fetch('/api/device-access/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId }),
+      });
+      if (!response.ok) {
+        throw new Error(await parseApiError(response));
+      }
+
+      await loadDeviceAccess();
+      setDeviceSuccess('Dispositivo revogado com sucesso.');
+    } catch (error: any) {
+      setDeviceError(error?.message || 'Falha ao revogar dispositivo.');
+    } finally {
+      setDeviceSaving(false);
+    }
+  }, [loadDeviceAccess, parseApiError]);
+
   /** Carrega configurações salvas do backend (ao montar) */
   const loadSettings = useCallback(async () => {
     if (!currentUserId) return;
@@ -154,6 +407,7 @@ const SettingsView = ({
   }, [currentUserId]);
 
   useEffect(() => { loadSettings(); }, [loadSettings]);
+  useEffect(() => { loadDeviceAccess(); }, [loadDeviceAccess]);
 
   /** Salva os caminhos no banco de dados */
   const handleSavePaths = async () => {
@@ -310,7 +564,269 @@ const SettingsView = ({
         )}
       </CollapsibleSection>
 
-      {/* ======== SEÇÃO 2: Animações e Visual ======== */}
+      {/* ======== SEÇÃO 2: Acesso Remoto e Dispositivos ======== */}
+      <CollapsibleSection
+        title="Acesso Remoto e Dispositivos"
+        subtitle="Autorizações de celular/rede para acessar este desktop"
+        icon={<Shield size={18} />}
+        iconBg="bg-emerald-50"
+        iconColor="text-emerald-600"
+        defaultOpen={false}
+      >
+        {deviceLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 size={20} className="animate-spin text-slate-400 mr-2" />
+            <span className="text-sm text-slate-500">Carregando dados de acesso remoto...</span>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {networkHints && (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+                  <Wifi size={12} /> Endereços de Acesso
+                </p>
+                <p className="text-xs text-slate-600">
+                  Desktop local: <span className="font-mono text-slate-800">{networkHints.loopbackUrl}</span>
+                </p>
+                {networkHints.lanUrls?.length > 0 ? (
+                  <div className="space-y-1">
+                    {networkHints.lanUrls.map((url) => (
+                      <p key={url} className="text-xs text-slate-600">
+                        Rede local: <span className="font-mono text-slate-800">{url}</span>
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">Nenhum IP LAN detectado no momento.</p>
+                )}
+              </div>
+            )}
+
+            {deviceConfig && (
+              <div className="rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 p-4 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Acesso Remoto</p>
+                    <p className="text-xs text-slate-500 mt-1">Permite clientes fora do desktop local acessarem o sistema via rede.</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={deviceSaving || deviceDesktopOnly}
+                    onClick={() => updateDeviceConfig({ remoteAccessEnabled: !deviceConfig.remoteAccessEnabled })}
+                    className={cn(
+                      'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
+                      deviceConfig.remoteAccessEnabled
+                        ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
+                        : 'bg-slate-200 border-slate-300'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
+                        deviceConfig.remoteAccessEnabled ? 'translate-x-7' : 'translate-x-0'
+                      )}
+                    />
+                  </button>
+                </div>
+
+                <div className={cn('flex items-center justify-between gap-3', !deviceConfig.remoteAccessEnabled && 'opacity-50')}>
+                  <div>
+                    <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Exigir Aprovação de Dispositivo</p>
+                    <p className="text-xs text-slate-500 mt-1">Todo novo celular/IP entra como pendente até aprovação no desktop.</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
+                    onClick={() => updateDeviceConfig({ approvalRequired: !deviceConfig.approvalRequired })}
+                    className={cn(
+                      'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
+                      deviceConfig.approvalRequired
+                        ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
+                        : 'bg-slate-200 border-slate-300'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
+                        deviceConfig.approvalRequired ? 'translate-x-7' : 'translate-x-0'
+                      )}
+                    />
+                  </button>
+                </div>
+
+                <div className={cn('flex items-center justify-between gap-3', !deviceConfig.remoteAccessEnabled && 'opacity-50')}>
+                  <div>
+                    <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Amarrar Token ao IP</p>
+                    <p className="text-xs text-slate-500 mt-1">Se ativado, o token só funciona no IP aprovado inicialmente.</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
+                    onClick={() => updateDeviceConfig({ enforceIpMatch: !deviceConfig.enforceIpMatch })}
+                    className={cn(
+                      'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
+                      deviceConfig.enforceIpMatch
+                        ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
+                        : 'bg-slate-200 border-slate-300'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
+                        deviceConfig.enforceIpMatch ? 'translate-x-7' : 'translate-x-0'
+                      )}
+                    />
+                  </button>
+                </div>
+
+                <div className={cn('space-y-1.5', !deviceConfig.remoteAccessEnabled && 'opacity-50')}>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Validade do Token (dias)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
+                      value={tokenTtlDraft}
+                      onChange={(e) => setTokenTtlDraft(e.target.value)}
+                      className="w-28 px-3 py-2 rounded-xl border-2 border-slate-200 bg-white text-sm font-black text-slate-700 focus:outline-none focus:border-emerald-300"
+                    />
+                    <button
+                      type="button"
+                      disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
+                      onClick={() => updateDeviceConfig({ tokenTtlDays: clampTokenTtlDays(Number(tokenTtlDraft || 30)) })}
+                      className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      Salvar
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-slate-500">
+                  Última atualização da política: <span className="font-semibold text-slate-700">{formatDateTime(deviceConfig.updatedAt || null)}</span>
+                </p>
+              </div>
+            )}
+
+            {deviceDesktopOnly && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+                <p className="text-xs font-bold text-amber-700">
+                  Gerenciamento avançado disponível apenas no desktop local (127.0.0.1). Em clientes remotos, esta seção fica em modo leitura.
+                </p>
+              </div>
+            )}
+
+            {deviceSuccess && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
+                {deviceSuccess}
+              </div>
+            )}
+
+            {deviceError && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
+                {deviceError}
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={loadDeviceAccess}
+                disabled={deviceLoading || deviceSaving}
+                className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border-2 border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-60 flex items-center gap-2"
+              >
+                <RefreshCw size={13} className={cn(deviceLoading && 'animate-spin')} />
+                Atualizar Lista
+              </button>
+            </div>
+
+            {!deviceDesktopOnly && (
+              <>
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-black uppercase tracking-widest text-slate-700">Solicitações Pendentes</p>
+                    <span className="text-xs font-bold text-slate-500">{pendingDevices.length}</span>
+                  </div>
+
+                  {pendingDevices.length === 0 ? (
+                    <p className="text-xs text-slate-500">Nenhuma solicitação pendente no momento.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {pendingDevices.map((item) => (
+                        <div key={item.id} className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                                <Smartphone size={13} /> {item.name || 'Dispositivo remoto'}
+                              </p>
+                              <p className="text-[11px] text-slate-500 mt-1">IP: <span className="font-mono">{item.ip || '-'}</span></p>
+                              <p className="text-[11px] text-slate-500">Solicitado em: {formatDateTime(item.createdAt)}</p>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={deviceSaving}
+                                onClick={() => approvePendingDevice(item.id)}
+                                className="px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                Aprovar
+                              </button>
+                              <button
+                                type="button"
+                                disabled={deviceSaving}
+                                onClick={() => rejectPendingDevice(item.id)}
+                                className="px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest border border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-60 flex items-center gap-1"
+                              >
+                                <Ban size={12} /> Rejeitar
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-black uppercase tracking-widest text-slate-700">Dispositivos Autorizados</p>
+                    <span className="text-xs font-bold text-slate-500">{approvedDevices.length}</span>
+                  </div>
+
+                  {approvedDevices.length === 0 ? (
+                    <p className="text-xs text-slate-500">Nenhum dispositivo autorizado ainda.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {approvedDevices.map((item) => (
+                        <div key={item.id} className="rounded-xl border border-slate-100 bg-white p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-black text-slate-700">{item.name || 'Dispositivo autorizado'}</p>
+                              <p className="text-[11px] text-slate-500 mt-1">IP inicial: <span className="font-mono">{item.firstApprovedIp || '-'}</span></p>
+                              <p className="text-[11px] text-slate-500">Último acesso: {formatDateTime(item.lastSeenAt)}</p>
+                              <p className="text-[11px] text-slate-500">Expira em: {formatDateTime(item.expiresAt)}</p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={deviceSaving}
+                              onClick={() => revokeApprovedDevice(item.id)}
+                              className="px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest border border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-60 flex items-center gap-1"
+                            >
+                              <Trash2 size={12} /> Revogar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </CollapsibleSection>
+
+      {/* ======== SEÇÃO 3: Animações e Visual ======== */}
       <CollapsibleSection
         title="Animações e Visual"
         subtitle="Configurações de animação, biometria e tempo"

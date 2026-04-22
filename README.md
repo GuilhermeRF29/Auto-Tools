@@ -176,6 +176,66 @@ Se os caminhos padrão não estiverem acessíveis, o sistema utiliza fallbacks l
 | `npm run build` | Build de produção do frontend |
 | `npm run lint` | Verificação de tipos TypeScript |
 | `npm run preview` | Preview do build de produção |
+| `npm run electron:start` | Inicia a shell Electron apontando para o backend local |
+| `npm run electron:dev` | Fluxo dev do Electron (Vite + Electron) |
+| `npm run electron:build` | Gera instalador Windows (NSIS) |
+| `npm run electron:build:portable` | Gera executável portátil Windows |
+
+---
+
+## 🖥️ Compilação Electron (.exe)
+
+### Objetivo
+
+Gerar um `.exe` que funcione em máquinas sem Python, Node.js, VS Code ou IDEs instaladas.
+
+### Pré-requisitos na máquina de build
+
+1. Dependências Node instaladas (`npm install`)
+2. Ambiente Python do projeto criado em `venv/`
+3. Dependências Python instaladas com `pip install -r requirements.txt`
+
+> O pacote final inclui a pasta `venv` como runtime Python embutido.
+
+### Gerar instalador
+
+```bash
+npm run electron:build
+```
+
+### Gerar versão portátil
+
+```bash
+npm run electron:build:portable
+```
+
+Artefatos são gerados em `release/`.
+
+### Como o runtime funciona no app empacotado
+
+- Electron inicia `server.js` automaticamente ao abrir o app.
+- O backend usa o Python embutido em `resources/venv/Scripts/python.exe`.
+- Dados de execução (banco SQLite, `.env`, store de WebAuthn e autorização de dispositivos) são gravados no diretório de dados do usuário, não na pasta de instalação.
+
+---
+
+## 🔐 Acesso Remoto com Aprovação de Dispositivo
+
+Foi adicionada uma seção em **Configurações → Acesso Remoto e Dispositivos** com:
+
+- Habilitar/desabilitar acesso remoto
+- Exigir aprovação de novos dispositivos
+- Amarrar token ao IP de aprovação
+- Definir validade do token de dispositivo
+- Aprovar/rejeitar solicitações pendentes
+- Revogar dispositivos autorizados
+
+### Fluxo remoto
+
+1. Cliente remoto abre o app via IP/URL do desktop.
+2. Se não autorizado, fica em estado de "Aguardando aprovação".
+3. Operador aprova no desktop na seção de configurações.
+4. O cliente remoto recebe token e passa a acessar normalmente.
 
 ---
 
@@ -232,7 +292,7 @@ Project_Automation3/
 
 ## 🔮 Roadmap
 
-- [ ] Compilação como aplicativo desktop via **Electron**
+- [x] Compilação como aplicativo desktop via **Electron**
 - [ ] Configurações de caminhos persistidas no banco
 - [ ] Sistema de notificações para conclusão de automações
 - [ ] Suporte a múltiplos usuários com perfis
