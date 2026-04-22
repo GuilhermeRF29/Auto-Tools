@@ -455,8 +455,8 @@ const ReportsView = ({
                   )}
                 </div>
 
-                <div className="relative z-10 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                <div className="relative z-10 flex items-center justify-between gap-3 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className={`p-2 rounded-xl text-white shadow-sm flex-shrink-0 transition-colors
                       ${task.status === 'completed' ? 'bg-green-500 shadow-green-200' :
                         (task.status === 'failed' || task.status === 'cancelled') ? 'bg-red-500 shadow-red-200' : 'bg-blue-600 shadow-blue-200'}`}
@@ -464,8 +464,8 @@ const ReportsView = ({
                       {task.status === 'completed' ? <CheckCircle size={16} /> :
                         (task.status === 'failed' || task.status === 'cancelled') ? <X size={16} /> : <Loader2 size={16} className="animate-spin" />}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="font-bold text-slate-800 text-sm">{task.name}</h4>
                         {task.status === 'completed' && <span className="text-[10px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full uppercase tracking-widest">Concluído</span>}
                         {(task.status === 'failed' || task.status === 'cancelled') && <span className="text-[10px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded-full uppercase tracking-widest">{task.status === 'failed' ? 'Falha' : 'Cancelado'}</span>}
@@ -475,14 +475,14 @@ const ReportsView = ({
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] font-bold text-slate-500 uppercase tracking-tight mt-0.5">
+                      <p className="text-[11px] font-bold text-slate-500 uppercase tracking-tight mt-0.5 break-all leading-relaxed">
                         {parseTaskStage(task.message) || (task.status === 'running' ? 'Processando...' :
                           task.status === 'completed' ? 'Relatório gerado com sucesso!' : 'Operação interrompida')}
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
                       Tempo: {elapsed}
                     </span>

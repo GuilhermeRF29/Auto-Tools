@@ -5,13 +5,14 @@ Script executado via spawn pelo backend Node.js para ler dados de arquivos
 DuckDB (.duckdb), com suporte a filtragem por colunas de observação e
 normalização de valores para JSON seguro.
 
-Argumentos posicionais (sys.argv):
-  1: Caminho do arquivo .duckdb
-  2: Limite máximo de linhas (padrão: 1500000)
-  3: Tamanho do batch de leitura (padrão: 5000)
-  4: JSON array de aliases de colunas a selecionar
-  5: JSON array de aliases de colunas de observação
-  6: JSON array de datas de observação permitidas (allowlist)
+Argumentos posicionais (sys.argv — via exec no Node.js):
+  1: Caminho deste script (consumido automaticamente pelo exec)
+  2: Caminho do arquivo .duckdb
+  3: Limite máximo de linhas (padrão: 1500000)
+  4: Tamanho do batch de leitura (padrão: 5000)
+  5: JSON array de aliases de colunas a selecionar
+  6: JSON array de aliases de colunas de observação
+  7: JSON array de datas de observação permitidas (allowlist)
 
 Saída (stdout): JSON com { ok: bool, rows: [...], rowsRead: int }
 """
@@ -39,17 +40,14 @@ def parse_iso_from_text(raw):
         return None
 
     # Formato YYYY-MM-DD ou YYYY/MM/DD
-    m = re.match(r"^(20\d{2})[-/.](\\d{1,2})[-/.](\\d{1,2})", text)
-    if not m:
-        m = re.match(r"^(20\d{2})[-/.](\\d{1,2})[-/.](\\d{1,2})", text)
-    m = re.match(r"^(20\d{2})[-/.](\\d{1,2})[-/.](\\d{1,2})", text)
+    m = re.search(r"(?:^|[^\d])(20\d{2})[-_./]?(\d{1,2})[-_./]?(\d{1,2})(?!\d)", text)
     if m:
         y, mm, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if 1 <= mm <= 12 and 1 <= dd <= 31:
             return f"{y:04d}-{mm:02d}-{dd:02d}"
 
     # Formato DD-MM-YYYY ou DD/MM/YYYY
-    m = re.match(r"^(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2}|\d{2})", text)
+    m = re.search(r"(?:^|[^\d])(\d{1,2})[-_./]?(\d{1,2})[-_./]?(20\d{2}|\d{2})(?!\d)", text)
     if m:
         dd, mm, y = int(m.group(1)), int(m.group(2)), m.group(3)
         yy = int(y if len(y) == 4 else f"20{y}")
@@ -88,12 +86,14 @@ def main():
         print(json.dumps({"ok": False, "error": "duckdb_python_missing", "details": str(e)}))
         raise SystemExit(0)
 
-    db_path = sys.argv[1]
-    max_rows = int(sys.argv[2]) if len(sys.argv) > 2 else 1500000
-    fetch_batch = int(sys.argv[3]) if len(sys.argv) > 3 else 5000
-    aliases = json.loads(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else []
-    observation_aliases = json.loads(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else []
-    observation_allowlist = json.loads(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else []
+    # NOTA: sys.argv[1] é o caminho deste script (usado pelo exec() no Node.js).
+    #        Os argumentos reais começam em sys.argv[2].
+    db_path = sys.argv[2]
+    max_rows = int(sys.argv[3]) if len(sys.argv) > 3 else 1500000
+    fetch_batch = int(sys.argv[4]) if len(sys.argv) > 4 else 5000
+    aliases = json.loads(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else []
+    observation_aliases = json.loads(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else []
+    observation_allowlist = json.loads(sys.argv[7]) if len(sys.argv) > 7 and sys.argv[7] else []
 
     alias_tokens = set(normalize_token(v) for v in aliases)
     obs_tokens = set(normalize_token(v) for v in observation_aliases)
@@ -105,6 +105,7 @@ def main():
         fetch_batch = 5000
 
     con = duckdb.connect(database=db_path, read_only=True)
+    con.execute("PRAGMA disable_progress_bar;")
     tables = con.execute(
         "SELECT table_schema, table_name FROM information_schema.tables "
         "WHERE table_type = 'BASE TABLE' "
@@ -112,7 +113,6 @@ def main():
         "ORDER BY table_schema, table_name"
     ).fetchall()
 
-    rows = []
     total_rows = 0
 
     for schema_name, table_name in tables:
@@ -146,6 +146,8 @@ def main():
             batch = cursor.fetchmany(fetch_batch)
             if not batch:
                 break
+                
+            batch_rows = []
 
             for value_row in batch:
                 # Resolver data de observação da linha
@@ -162,16 +164,16 @@ def main():
                 if allowlist and obs_iso not in allowlist:
                     continue
 
-                # Verificar limite de linhas
-                if max_rows > 0 and total_rows >= max_rows:
+                # Verificar limite estremo seguro de streaming de linhas
+                if max_rows > 0 and total_rows >= 20000000:
                     con.close()
                     print(json.dumps({
                         "ok": False,
                         "error": "duckdb_too_many_rows",
-                        "details": f"Arquivo DuckDB excede o limite ({max_rows} linhas).",
-                        "rowsRead": total_rows,
-                        "maxRows": max_rows
+                        "details": f"Arquivo DuckDB excede o limite (20M linhas).",
+                        "rowsRead": total_rows
                     }))
+                    sys.stdout.flush()
                     raise SystemExit(0)
 
                 # Montar objeto da linha com normalização de tipos
@@ -192,15 +194,19 @@ def main():
                             pass
                     row[column] = value
 
-                rows.append(row)
+                batch_rows.append(row)
                 total_rows += 1
+                
+            if batch_rows:
+                print(json.dumps({"rows": batch_rows}, default=str, allow_nan=False))
+                sys.stdout.flush()
 
     con.close()
     print(json.dumps({
         "ok": True,
-        "rows": rows,
         "rowsRead": total_rows
     }, default=str, allow_nan=False))
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

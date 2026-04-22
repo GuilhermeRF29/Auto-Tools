@@ -17,8 +17,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import XLSX from 'xlsx';
 import initSqlJs from 'sql.js';
-import { asyncBufferFromFile, parquetReadObjects } from 'hyparquet';
-import { runPythonCmd } from '../../utils/pythonProxy.js';
+import { runPythonCmd, runPythonCmdStream } from '../../utils/pythonProxy.js';
 
 // ============================================================
 // RESOLUÇÃO DE CAMINHOS (ESM __dirname polyfill)
@@ -91,19 +90,19 @@ export const RIO_SHARE_COLUMN_ALIASES = [
 export const DEMAND_COLUMN_ALIASES = [
     'Data Observação', 'Data Observacao', 'DATA OBSERVACAO', 'Data Observacao Arquivo',
     'Data Referencia', 'Data Referência', 'DATA REFERENCIA',
-    'Data Base', 'DATA BASE', 'Snapshot Date', 'Data_Observacao',
-    'Data Viagem', 'DATA VIAGEM', 'DATA', 'Data',
-    'LINHA', 'Linha', 'Cod Linha', 'Cod_Linha', 'SERVIÇO', 'SERVICO', 'Num. Serviço', 'Num. Servico',
-    'EMPRESA', 'Empresa',
-    'PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao', 'Pax Total', 'TRANSITADO', 'Pax_Total', 'Ocup',
-    'Capacidade', 'CAPACIDADE', 'Oferta', 'OFERTA', 'Vagas', 'VAGAS', 'Cap', 'Cap_Total',
-    '%Ocupação', '% Ocupação', 'APV', 'IPV', 'IPV 3', 'IPV3', '% APV', 'Aproveitamento', 'APROVEITAMENTO'
+    'Data Base', 'DATA BASE', 'Snapshot Date', 'Data_Observacao', 'Data Observao', 'DATA OBSERVAO',
+    'Data Viagem', 'DATA VIAGEM', 'DATA', 'Data', 'DT_VIAGEM', 'data_viagem', 'dt_viagem', 'DATA DA VIAGEM',
+    'LINHA', 'Linha', 'Cod Linha', 'Cod_Linha', 'SERVIÇO', 'SERVICO', 'Num. Serviço', 'Num. Servico', 'Servio', 'SERVIO', 'servico', 'id_linha',
+    'EMPRESA', 'Empresa', 'empresa', 'EMPRESA EXECUTANTE', 'Cia',
+    'PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao', 'Ocupao', 'OCUPAO', 'Pax Total', 'TRANSITADO', 'Pax_Total', 'Ocup', 'pax',
+    'Capacidade', 'CAPACIDADE', 'Oferta', 'OFERTA', 'Vagas', 'VAGAS', 'Cap', 'Cap_Total', 'oferta',
+    '%Ocupação', '% Ocupação', 'APV', 'IPV', 'IPV 3', 'IPV3', '% APV', 'Aproveitamento', 'APROVEITAMENTO', '%Ocupao', '% OCUPAO', 'apv'
 ];
 
 export const DEMAND_OBSERVATION_ALIASES = [
     'Data Observação', 'Data Observacao', 'DATA OBSERVACAO', 'Data Observacao Arquivo',
     'Data Referencia', 'Data Referência', 'DATA REFERENCIA',
-    'Data Base', 'DATA BASE', 'Snapshot Date', 'Data_Observacao'
+    'Data Base', 'DATA BASE', 'Snapshot Date', 'Data_Observacao', 'Data Observao', 'DATA OBSERVAO'
 ];
 
 // ============================================================
@@ -338,27 +337,99 @@ const getSqlJsRuntime = async () => {
 const quoteSqlIdentifier = (value) => `"${String(value || '').replace(/"/g, '""')}"`;
 
 /**
- * Lê linhas de arquivo Excel/CSV usando xlsx.
+ * Lê linhas de arquivo Excel/CSV usando xlsx para arquivos minúsculos 
+ * ou Polars Streaming (Python) para eficiência estrondosa.
  * @param {string} filePath - Caminho do arquivo.
  * @param {function} [sheetResolver] - Função para selecionar aba (workbook => string).
- * @returns {object[]} Array de objetos (uma linha = um objeto).
+ * @returns {Promise<object[]>} Array de objetos (uma linha = um objeto).
  */
-export const readRowsFromExcelOrCsv = (filePath, sheetResolver) => {
+export const readRowsFromExcelOrCsv = async (filePath, sheetResolver) => {
+    let selectedSheet = '';
+
+    // Mesmo com leitura via Python, preservar o contrato de seleção de aba.
+    if (typeof sheetResolver === 'function') {
+        try {
+            const workbookMeta = XLSX.readFile(filePath, { bookSheets: true });
+            const firstSheet = Array.isArray(workbookMeta?.SheetNames) ? workbookMeta.SheetNames[0] : null;
+            selectedSheet = sheetResolver(workbookMeta) || firstSheet || '';
+        } catch (error) {
+            console.warn(`[EXCEL_READER] Falha ao resolver aba para ${path.basename(filePath)}: ${error?.message || error}`);
+        }
+    }
+
+    try {
+        const stat = fs.statSync(filePath);
+        // Se Arquivo > 1MB ou for XLSX/XLS (Extremamente pesado em Node JS), usar Polars(Python) Stream.
+        // O SheetJS engasga profundamente com strings e layouts do Excel. 
+        if (filePath.toLowerCase().endsWith('.xlsx') || filePath.toLowerCase().endsWith('.xls') || stat.size > 2 * 1024 * 1024) {
+            console.log(`[EXCEL_READER] Lendo Excel via Polars Stream: ${(stat.size / 1024 / 1024).toFixed(2)}MB => ${path.basename(filePath)}`);
+            return await readRowsFromExcelViaPython(filePath, selectedSheet);
+        }
+    } catch (e) {
+        // Ignora erro de stat
+    }
+
+    // Fallback original para arquivos diminutos ou caso ocorra problemas.
     const workbook = XLSX.readFile(filePath, { cellDates: true });
     const firstSheet = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames[0] : null;
-    const selectedSheet = typeof sheetResolver === 'function' ? sheetResolver(workbook) : firstSheet;
-    if (!selectedSheet) return [];
-    const sheet = workbook.Sheets[selectedSheet];
+    const fallbackSheet = selectedSheet || (typeof sheetResolver === 'function' ? sheetResolver(workbook) : firstSheet);
+    if (!fallbackSheet) return [];
+    const sheet = workbook.Sheets[fallbackSheet];
     if (!sheet) return [];
     return XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
 };
 
 /**
+ * Lê Excel via Python streaming usando Polars/Calamine.
+ * @param {string} filePath - Caminho do arquivo .xlsx ou .xls.
+ * @returns {Promise<object[]>} Array de objetos.
+ */
+const readRowsFromExcelViaPython = async (filePath, sheetName = '') => {
+    const scriptPath = path.join(PROJECT_ROOT, 'src_backend', 'scripts', 'excel_reader.py');
+    const pyCmd = `import sys; exec(open(sys.argv[1], encoding='utf-8').read())`;
+
+    const args = [scriptPath, filePath, String(sheetName || '')];
+
+    const stream = runPythonCmdStream(pyCmd, args);
+    const rows = [];
+    
+    try {
+        for await (const chunk of stream) {
+            if (Array.isArray(chunk?.rows)) {
+                rows.push(...chunk.rows);
+            } 
+            else if (chunk?.ok === false) {
+                console.warn('[EXCEL_PY_STREAM] Erro no stream:', chunk);
+                // Se o Polars falhar porque não está instalado, ele manda alertando.
+                // Mas continuamos para caso tenha fallback
+                throw new Error(chunk?.details || chunk?.error || 'Erro ao ler Excel via Polars.');
+            }
+        }
+    } catch (e) {
+        console.error('[EXCEL_PY_STREAM] Falha no consumo da stream Excel:', e);
+        throw e; // Repassa erro 
+    }
+
+    return rows;
+};
+
+/**
  * Lê todas as linhas de um banco SQLite usando sql.js (WASM).
+ * Para arquivos > 500MB, delega para Python (streaming nativo) para evitar OOM.
  * @param {string} filePath - Caminho do arquivo .db/.sqlite.
  * @returns {Promise<object[]>} Array de objetos com _tableName.
  */
 export const readRowsFromSqlite = async (filePath) => {
+    const MAX_WASM_SIZE_BYTES = 500 * 1024 * 1024; // 500MB
+
+    // Verificar tamanho do arquivo
+    const stats = fs.statSync(filePath);
+    if (stats.size > MAX_WASM_SIZE_BYTES) {
+        console.log(`[SQLITE] Arquivo grande detectado (${(stats.size / (1024 * 1024)).toFixed(0)}MB). Usando leitor Python streaming.`);
+        return readRowsFromSqliteViaPython(filePath);
+    }
+
+    // Leitura padrão via sql.js (WASM) — arquivos até 500MB
     const SQL = await getSqlJsRuntime();
     const dbBuffer = fs.readFileSync(filePath);
     const db = new SQL.Database(new Uint8Array(dbBuffer));
@@ -382,6 +453,44 @@ export const readRowsFromSqlite = async (filePath) => {
     } finally {
         db.close();
     }
+};
+
+/**
+ * Lê SQLite via Python streaming — usado para arquivos > 500MB.
+ * Processa as saídas usando JSON-Lines streaming infinito (nunca sobrecarrega Node args).
+ * @param {string} filePath - Caminho do arquivo .db/.sqlite.
+ * @returns {Promise<object[]>} Array de objetos com _tableName.
+ */
+const readRowsFromSqliteViaPython = async (filePath) => {
+    const scriptPath = path.join(PROJECT_ROOT, 'src_backend', 'scripts', 'sqlite_reader.py');
+    const pyCmd = `import sys; exec(open(sys.argv[1], encoding='utf-8').read())`;
+    const args = [scriptPath, filePath, String(DUCKDB_FETCH_BATCH), String(DUCKDB_MAX_ROWS)];
+
+    const stream = runPythonCmdStream(pyCmd, args);
+    const rows = [];
+    
+    try {
+        for await (const chunk of stream) {
+            // Se o chunk contiver rows (ex: se o script python mandou 5000 linhas juntas)
+            if (Array.isArray(chunk?.rows)) {
+                rows.push(...chunk.rows);
+            } 
+            // Se o chunk for um objeto de erro
+            else if (chunk?.ok === false) {
+                console.warn('[SQLITE_PY_STREAM] Erro no stream:', chunk);
+                throw new Error(chunk?.details || chunk?.error || 'Erro ao ler SQLite via Python streaming.');
+            }
+            // Se o script foi atualizado para mandar direto a linha formatada (row individual)
+            else if (chunk && typeof chunk === 'object' && chunk.ok === undefined) {
+                rows.push(chunk);
+            }
+        }
+    } catch (e) {
+        console.error('[SQLITE_PY_STREAM] Falha no consumo da stream:', e);
+        throw e;
+    }
+
+    return rows;
 };
 
 /**
@@ -414,17 +523,27 @@ export const readRowsFromDuckDb = async (filePath, columnAliases = [], duckdbOpt
         JSON.stringify(observationDateAllowlist)
     ];
 
-    const rawOutput = await runPythonCmd(pyCmd, args);
-    const parsed = JSON.parse(rawOutput);
-
-    if (parsed?.ok === false) {
-        if (parsed?.error === 'duckdb_too_many_rows') {
-            console.warn(`[DUCKDB] Arquivo excede limite: ${parsed.rowsRead} linhas.`);
+    const stream = runPythonCmdStream(pyCmd, args);
+    const rows = [];
+    
+    try {
+        for await (const chunk of stream) {
+            if (Array.isArray(chunk?.rows)) {
+                rows.push(...chunk.rows);
+            } 
+            else if (chunk?.ok === false) {
+                if (chunk?.error === 'duckdb_too_many_rows') {
+                    console.warn(`[DUCKDB_PY_STREAM] Arquivo excede limite extremo fixado: ${chunk.rowsRead} linhas.`);
+                }
+                throw new Error(chunk?.details || chunk?.error || 'Erro ao ler DuckDB via Python streaming.');
+            }
         }
-        throw new Error(parsed?.details || parsed?.error || 'Erro ao ler DuckDB.');
+    } catch (e) {
+        console.error('[DUCKDB_PY_STREAM] Falha no consumo da stream DuckDB:', e);
+        throw e;
     }
 
-    return Array.isArray(parsed?.rows) ? parsed.rows : [];
+    return rows;
 };
 
 /**
@@ -444,7 +563,17 @@ export const listObservationDatesFromDuckDb = async (filePath, observationAliase
     ];
 
     const rawOutput = await runPythonCmd(pyCmd, args);
-    const parsed = JSON.parse(rawOutput);
+
+    // runPythonCmd pode retornar um objeto já parseado ou uma string JSON
+    let parsed;
+    if (typeof rawOutput === 'string') {
+        try { parsed = JSON.parse(rawOutput); } catch (e) {
+            console.error('[DUCKDB_OBS] Falha ao interpretar saída:', rawOutput?.substring?.(0, 500));
+            throw new Error('Erro ao interpretar resposta do leitor de observações DuckDB.');
+        }
+    } else {
+        parsed = rawOutput;
+    }
 
     if (parsed?.ok === false) {
         throw new Error(parsed?.details || parsed?.error || 'Erro ao listar datas DuckDB.');
@@ -457,14 +586,33 @@ export const listObservationDatesFromDuckDb = async (filePath, observationAliase
 };
 
 /**
- * Lê linhas de arquivo Parquet usando hyparquet.
+ * Lê linhas de arquivo Parquet usando Polars via script Python em streaming.
  * @param {string} filePath - Caminho do arquivo .parquet.
  * @returns {Promise<object[]>} Array de objetos.
  */
 export const readRowsFromParquet = async (filePath) => {
-    const buffer = await asyncBufferFromFile(filePath);
+    const scriptPath = path.join(PROJECT_ROOT, 'src_backend', 'scripts', 'parquet_reader.py');
+    const pyCmd = `import sys; exec(open(sys.argv[1], encoding='utf-8').read())`;
+    const args = [scriptPath, filePath];
+
+    const stream = runPythonCmdStream(pyCmd, args);
     const rows = [];
-    await parquetReadObjects({ file: buffer, onComplete: (data) => { rows.push(...data); } });
+    
+    try {
+        for await (const chunk of stream) {
+            if (Array.isArray(chunk?.rows)) {
+                rows.push(...chunk.rows);
+            } 
+            else if (chunk?.ok === false) {
+                console.warn('[PARQUET_PY_STREAM] Erro no stream:', chunk);
+                throw new Error(chunk?.details || chunk?.error || 'Erro ao ler Parquet via Polars streaming.');
+            }
+        }
+    } catch (error) {
+        console.error(`[PARQUET_PY_STREAM] Falha ao ler arquivo ${filePath}:`, error?.message || error);
+        throw new Error(`Erro ao ler Parquet: ${error?.message || 'formato inválido ou arquivo corrompido.'}`);
+    }
+
     return rows;
 };
 
@@ -483,7 +631,7 @@ export const readTabularRows = async (filePath, { sheetResolver, columnAliases, 
     const ext = path.extname(filePath).toLowerCase();
 
     if (EXCEL_LIKE_EXTENSIONS.has(ext)) {
-        return readRowsFromExcelOrCsv(filePath, sheetResolver);
+        return await readRowsFromExcelOrCsv(filePath, sheetResolver);
     }
     if (SQLITE_EXTENSIONS.has(ext)) {
         return readRowsFromSqlite(filePath);

@@ -12,20 +12,20 @@
         {
           "id": "9W3Pe_zGiLqb5pPjVRw0-R3LPDYy4quzyjZrib_Bn9E",
           "publicKey": "pQECAyYgASFYIBg2oTxt_6uGr4M_I5OYRRgeehNdW66jSUdlbmljuR6vIlggGd88Of-lp7m60YYRTNSw6Qq_Y_ezCKvEiDztLznR0a4",
-          "counter": 1,
+          "counter": 2,
           "deviceType": "singleDevice",
           "backedUp": false,
           "transports": [
             "internal"
           ],
           "createdAt": "2026-04-18T21:24:56.134Z",
-          "updatedAt": "2026-04-18T21:25:08.340Z"
+          "updatedAt": "2026-04-21T19:47:01.557Z"
         }
       ],
       "biometricTokenHash": "55cb2fd50ce0fb6a540dd045f577303d16a81d3514fbfd260e7c59d338e5b279",
       "tokenExpiresAt": "2026-10-15T21:24:56.135Z",
       "createdAt": "2026-04-18T21:24:56.134Z",
-      "updatedAt": "2026-04-18T21:25:08.340Z"
+      "updatedAt": "2026-04-21T19:47:01.557Z"
     }
   }
 }

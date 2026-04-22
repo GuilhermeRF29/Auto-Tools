@@ -54,11 +54,15 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const clampedProgress = Math.max(0, Math.min(100, incomingProgress));
             const isRunning = data.status === 'running';
             const previousProgress = typeof t.progressTarget === 'number' ? t.progressTarget : t.progress;
-            const progressed = clampedProgress > previousProgress;
+            // Progresso nunca regride: usa o máximo entre valor atual e novo
+            const safeProgress = Math.max(previousProgress, clampedProgress);
+            const progressed = safeProgress > previousProgress;
             return {
               ...t,
-              progress: isRunning ? t.progress : clampedProgress,
-              progressTarget: clampedProgress,
+              // Quando running, mantém o progress atual (smoothing anima até o target)
+              // Quando finalizado, salta direto para o máximo
+              progress: isRunning ? t.progress : Math.max(t.progress, safeProgress),
+              progressTarget: safeProgress,
               status: data.status,
               message: data.message,
               lastUpdateTime: receivedAt,
@@ -142,9 +146,11 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           const target = typeof task.progressTarget === 'number' ? task.progressTarget : task.progress;
 
           if (task.status !== 'running') {
-            if (task.progress !== target) {
+            // Tarefa finalizada: salta direto para o target (sem regredir)
+            const finalTarget = Math.max(task.progress, target);
+            if (task.progress !== finalTarget) {
               changed = true;
-              return { ...task, progress: target };
+              return { ...task, progress: finalTarget };
             }
             return task;
           }

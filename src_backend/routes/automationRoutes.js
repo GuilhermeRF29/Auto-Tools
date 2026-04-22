@@ -9,6 +9,7 @@ import { runPythonCmd, spawnPythonScript } from '../utils/pythonProxy.js';
 import { BACKUP_DIR, getRootDir } from '../config.js';
 import path from 'path';
 import fs from 'fs';
+import { execSync } from 'child_process';
 
 const router = Router();
 
@@ -233,15 +234,31 @@ router.get('/automation-progress/:jobId', (req, res) => {
     }
 });
 
-router.post('/cancel-automation/:jobId', (req, res) => {
+router.post('/cancel-automation/:jobId', async (req, res) => {
     const { jobId } = req.params;
     const job = jobs.get(jobId);
 
     if (job && job.process && job.status === 'running') {
         job.status = 'cancelled';
         job.message = "Cancelado pelo usuário.";
-        job.process.kill('SIGINT');
-        setTimeout(() => { if (job.process) job.process.kill('SIGKILL'); }, 2000);
+
+        const pid = job.process.pid;
+        if (pid) {
+            // No Windows, SIGINT não funciona para processos child.
+            // Usa taskkill /T para matar toda a árvore de processos.
+            if (process.platform === 'win32') {
+                try {
+                    execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' });
+                } catch (e) {
+                    // Processo pode já ter finalizado
+                    console.warn(`[CANCEL] taskkill falhou para PID ${pid}:`, e.message);
+                }
+            } else {
+                // Unix: SIGINT + fallback SIGKILL
+                job.process.kill('SIGINT');
+                setTimeout(() => { try { job.process.kill('SIGKILL'); } catch (e) {} }, 2000);
+            }
+        }
         
         job.events.forEach(client => {
             client.write(`data: ${JSON.stringify({ progress: job.progress, message: job.message, status: job.status })}\n\n`);

@@ -441,7 +441,7 @@ def run(
     dados_tabela_excel = []
     
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--start-maximized"])
+        browser = p.chromium.launch(headless=False, args=["--start-maximized"])
         context = browser.new_context(no_viewport=True)
         page = context.new_page()
 

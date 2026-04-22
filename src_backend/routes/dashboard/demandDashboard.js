@@ -195,22 +195,22 @@ const buildDemandDataset = async (effectiveDir, { sourceFiles = null, observatio
 
                 if (onlyObservationDates) { if (!groupedByObservation.has(obsIso)) groupedByObservation.set(obsIso, []); continue; }
 
-                const travelDateRaw = getRowValue(row, ['Data Viagem', 'DATA VIAGEM', 'DATA', 'Data']);
+                const travelDateRaw = getRowValue(row, ['Data Viagem', 'DATA VIAGEM', 'DATA', 'Data', 'DT_VIAGEM', 'data_viagem', 'dt_viagem', 'DATA DA VIAGEM']);
                 const travelDate = parseBrDate(travelDateRaw);
                 if (!travelDate) { stats.skippedDate++; continue; }
 
-                const linhaRaw = getRowValue(row, ['LINHA', 'Linha', 'Cod Linha', 'Cod_Linha', 'SERVIÇO', 'SERVICO', 'Num. Serviço', 'Num. Servico']);
+                const linhaRaw = getRowValue(row, ['LINHA', 'Linha', 'Cod Linha', 'Cod_Linha', 'SERVIÇO', 'SERVICO', 'Num. Serviço', 'Num. Servico', 'servico', 'id_linha']);
                 const linhaRawValue = linhaRaw !== null && linhaRaw !== undefined ? String(linhaRaw).trim() : '';
                 const normLinha = linhaRawValue ? (linhaRawValue.replace(/^0+/, '') || '0') : 'SEM LINHA';
                 const deParaEntry = (linhaRawValue ? deParaMap.get(`RAW:${linhaRawValue}`) : null) || deParaMap.get(`NORM:${normLinha}`);
 
-                const empresaRaw = getRowValue(row, ['EMPRESA', 'Empresa']);
+                const empresaRaw = getRowValue(row, ['EMPRESA', 'Empresa', 'empresa', 'EMPRESA EXECUTANTE', 'Cia']);
                 const empresa = normalizeDemandToken(deParaEntry?.empresa || empresaRaw || 'SEM EMPRESA');
                 const mercado = normalizeDemandToken(deParaEntry?.mercado || '') || 'OUTROS MERCADOS';
 
-                const ocupacaoRaw = getRowValue(row, ['PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao', 'Pax Total', 'TRANSITADO', 'Pax_Total', 'Ocup']);
-                const capacidadeRaw = getRowValue(row, ['Capacidade', 'CAPACIDADE', 'Oferta', 'OFERTA', 'Vagas', 'VAGAS', 'Cap', 'Cap_Total']);
-                const apvRaw = getRowValue(row, ['%Ocupação', '% Ocupação', 'APV', 'IPV', 'IPV 3', 'IPV3', '% APV', 'Aproveitamento', 'APROVEITAMENTO']);
+                const ocupacaoRaw = getRowValue(row, ['PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao', 'Pax Total', 'TRANSITADO', 'Pax_Total', 'pax']);
+                const capacidadeRaw = getRowValue(row, ['Capacidade', 'CAPACIDADE', 'Oferta', 'OFERTA', 'Vagas', 'VAGAS', 'Cap', 'Cap_Total', 'oferta']);
+                const apvRaw = getRowValue(row, ['%Ocupação', '% Ocupação', 'APV', 'IPV', 'IPV 3', 'IPV3', '% APV', 'Aproveitamento', 'APROVEITAMENTO', 'apv']);
 
                 let ocupacao = toNumber(ocupacaoRaw);
                 let capacidade = toNumber(capacidadeRaw);

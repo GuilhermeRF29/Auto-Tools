@@ -325,9 +325,39 @@ const buildDefaultScreenFilters = (payload: RioSharePayload): ScreenFilterMap =>
   const currentMonthNumber = currentDate.getMonth() + 1;
   const currentMonthLabel = payload.filters?.months?.find((month) => Number(month.number) === currentMonthNumber)?.label || '';
 
+  const monthAvailabilityByYear = new Map<string, Map<number, string>>();
+  (payload.rows || []).forEach((row) => {
+    const year = String(row?.ano || '').trim();
+    const monthNumber = Number(row?.mesNumero || 0);
+    const monthLabel = String(row?.mes || '').trim();
+    if (!year || !monthLabel || !Number.isFinite(monthNumber) || monthNumber < 1 || monthNumber > 12) return;
+
+    const yearMap = monthAvailabilityByYear.get(year) || new Map<number, string>();
+    if (!yearMap.has(monthNumber)) yearMap.set(monthNumber, monthLabel);
+    monthAvailabilityByYear.set(year, yearMap);
+  });
+
   const chooseYear = (preferredYear: string) => {
     if (allYears.includes(preferredYear)) return preferredYear;
     return allYears[0] || '';
+  };
+
+  const chooseMonthForYear = (year: string) => {
+    const available = monthAvailabilityByYear.get(year);
+    if (!available || available.size === 0) {
+      return currentMonthLabel || allMonths[0] || '';
+    }
+
+    if (currentMonthLabel && Array.from(available.values()).includes(currentMonthLabel)) {
+      return currentMonthLabel;
+    }
+
+    if (available.has(currentMonthNumber)) {
+      return available.get(currentMonthNumber) || '';
+    }
+
+    const latestMonth = Array.from(available.keys()).sort((a, b) => b - a)[0];
+    return available.get(latestMonth) || currentMonthLabel || allMonths[0] || '';
   };
 
   const buildBase = (): ScreenFilters => ({
@@ -345,28 +375,30 @@ const buildDefaultScreenFilters = (payload: RioSharePayload): ScreenFilterMap =>
   });
 
   const shareEmpresa = buildBase();
-  shareEmpresa.years = chooseYear(currentYear) ? toSet([chooseYear(currentYear)]) : toSet(allYears);
-  shareEmpresa.months = currentMonthLabel ? toSet([currentMonthLabel]) : toSet(allMonths);
+  const selectedCurrentYear = chooseYear(currentYear);
+  shareEmpresa.years = selectedCurrentYear ? toSet([selectedCurrentYear]) : toSet(allYears);
+  const selectedMonthCurrentYear = chooseMonthForYear(selectedCurrentYear);
+  shareEmpresa.months = selectedMonthCurrentYear ? toSet([selectedMonthCurrentYear]) : toSet(allMonths);
 
   const shareGrupo = buildBase();
-  shareGrupo.years = chooseYear(currentYear) ? toSet([chooseYear(currentYear)]) : toSet(allYears);
-  shareGrupo.months = currentMonthLabel ? toSet([currentMonthLabel]) : toSet(allMonths);
+  shareGrupo.years = selectedCurrentYear ? toSet([selectedCurrentYear]) : toSet(allYears);
+  shareGrupo.months = selectedMonthCurrentYear ? toSet([selectedMonthCurrentYear]) : toSet(allMonths);
 
   const paxViagens = buildBase();
   paxViagens.years = chooseYear(previousYear) ? toSet([chooseYear(previousYear)]) : toSet(allYears);
   paxViagens.months = toSet(allMonths);
 
   const comparativoSemanal = buildBase();
-  comparativoSemanal.years = chooseYear(currentYear) ? toSet([chooseYear(currentYear)]) : toSet(allYears);
-  comparativoSemanal.months = currentMonthLabel ? toSet([currentMonthLabel]) : toSet(allMonths);
+  comparativoSemanal.years = selectedCurrentYear ? toSet([selectedCurrentYear]) : toSet(allYears);
+  comparativoSemanal.months = selectedMonthCurrentYear ? toSet([selectedMonthCurrentYear]) : toSet(allMonths);
 
   const acompanhamentoDiario = buildBase();
-  acompanhamentoDiario.years = chooseYear(currentYear) ? toSet([chooseYear(currentYear)]) : toSet(allYears);
-  acompanhamentoDiario.months = currentMonthLabel ? toSet([currentMonthLabel]) : toSet(allMonths);
+  acompanhamentoDiario.years = selectedCurrentYear ? toSet([selectedCurrentYear]) : toSet(allYears);
+  acompanhamentoDiario.months = selectedMonthCurrentYear ? toSet([selectedMonthCurrentYear]) : toSet(allMonths);
 
   const quadroHorarios = buildBase();
-  quadroHorarios.years = chooseYear(currentYear) ? toSet([chooseYear(currentYear)]) : toSet(allYears);
-  quadroHorarios.months = currentMonthLabel ? toSet([currentMonthLabel]) : toSet(allMonths);
+  quadroHorarios.years = selectedCurrentYear ? toSet([selectedCurrentYear]) : toSet(allYears);
+  quadroHorarios.months = selectedMonthCurrentYear ? toSet([selectedMonthCurrentYear]) : toSet(allMonths);
 
   return {
     share_empresas: shareEmpresa,

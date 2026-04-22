@@ -5,10 +5,11 @@ Script auxiliar que lista apenas as datas de observação únicas de um arquivo
 DuckDB, sem carregar todos os dados. Utilizado para preencher o dropdown
 de seleção de data no dashboard de Demanda.
 
-Argumentos posicionais (sys.argv):
-  1: Caminho do arquivo .duckdb
-  2: Tamanho do batch de leitura (padrão: 5000)
-  3: JSON array de aliases de colunas de observação
+Argumentos posicionais (sys.argv — via exec no Node.js):
+  1: Caminho deste script (consumido automaticamente pelo exec)
+  2: Caminho do arquivo .duckdb
+  3: Tamanho do batch de leitura (padrão: 5000)
+  4: JSON array de aliases de colunas de observação
 
 Saída (stdout): JSON com { ok: bool, observationDates: [...], totalRows: int }
 """
@@ -34,13 +35,13 @@ def parse_iso_from_text(raw):
     if not text:
         return None
 
-    m = re.match(r"^(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})", text)
+    m = re.search(r"(?:^|[^\d])(20\d{2})[-_./]?(\d{1,2})[-_./]?(\d{1,2})(?!\d)", text)
     if m:
         y, mm, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if 1 <= mm <= 12 and 1 <= dd <= 31:
             return f"{y:04d}-{mm:02d}-{dd:02d}"
 
-    m = re.match(r"^(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2}|\d{2})", text)
+    m = re.search(r"(?:^|[^\d])(\d{1,2})[-_./]?(\d{1,2})[-_./]?(20\d{2}|\d{2})(?!\d)", text)
     if m:
         dd, mm, y = int(m.group(1)), int(m.group(2)), m.group(3)
         yy = int(y if len(y) == 4 else f"20{y}")
@@ -68,15 +69,18 @@ def main():
         print(json.dumps({"ok": False, "error": "duckdb_python_missing", "details": str(e)}))
         raise SystemExit(0)
 
-    db_path = sys.argv[1]
-    fetch_batch = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
-    aliases = json.loads(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else []
+    # NOTA: sys.argv[1] é o caminho deste script (usado pelo exec() no Node.js).
+    #        Os argumentos reais começam em sys.argv[2].
+    db_path = sys.argv[2]
+    fetch_batch = int(sys.argv[3]) if len(sys.argv) > 3 else 5000
+    aliases = json.loads(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else []
     obs_tokens = set(normalize_token(v) for v in aliases)
 
     if fetch_batch <= 0:
         fetch_batch = 5000
 
     con = duckdb.connect(database=db_path, read_only=True)
+    con.execute("PRAGMA disable_progress_bar;")
     tables = con.execute(
         "SELECT table_schema, table_name FROM information_schema.tables "
         "WHERE table_type = 'BASE TABLE' "

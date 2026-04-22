@@ -2,14 +2,14 @@
  * @module SettingsView
  * @description Tela de configurações do sistema.
  * 
- * Seções disponíveis:
+ * Seções colapsáveis:
  *   - Caminhos Base dos Dashboards (persistidos no banco por usuário)
  *   - Animações e preferências visuais
- *   - Windows Hello / Biometria
  */
 import { useEffect, useState, useCallback } from 'react';
-import { FolderOpen, Loader2, ScanFace, SlidersHorizontal, Sparkles, Zap, Save, CheckCircle, Database } from 'lucide-react';
+import { FolderOpen, Loader2, ScanFace, SlidersHorizontal, Sparkles, Zap, Save, CheckCircle, Database, ChevronDown } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
 import Card from '../components/Card';
 import type { SuccessAnimationStyle, AnimationIntensity } from '../types';
@@ -44,6 +44,72 @@ interface SettingsViewProps {
   windowsHelloBusy?: boolean;
   currentUserId?: number | null;
 }
+
+/** Header clicável e colapsável para seções de configuração */
+const CollapsibleSection = ({
+  title,
+  subtitle,
+  icon,
+  iconBg,
+  iconColor,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: ReactNode;
+  iconBg: string;
+  iconColor: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <Card className="overflow-hidden">
+      {/* Header clicável */}
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center gap-3 p-5 sm:p-6 text-left hover:bg-slate-50/50 transition-colors group"
+      >
+        <div className={cn('w-9 h-9 rounded-xl flex items-center justify-center shrink-0', iconBg, iconColor)}>
+          {icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">{title}</h3>
+          <p className="text-xs text-slate-400 mt-0.5 truncate">{subtitle}</p>
+        </div>
+        <motion.div
+          animate={{ rotate: isOpen ? 180 : 0 }}
+          transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+          className="shrink-0 text-slate-300 group-hover:text-slate-500 transition-colors"
+        >
+          <ChevronDown size={20} />
+        </motion.div>
+      </button>
+
+      {/* Conteúdo colapsável */}
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="px-5 sm:px-6 pb-5 sm:pb-6 pt-0 border-t border-slate-100">
+              <div className="pt-5">
+                {children}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Card>
+  );
+};
 
 const SettingsView = ({
   animationsEnabled,
@@ -136,7 +202,7 @@ const SettingsView = ({
     { key: 'channelSharePath', label: 'Channel Share (YoY)', description: 'Pasta das planilhas de performance de canais', placeholder: DEFAULT_BASE_PATHS.channelSharePath },
   ];
 
-  const options: Array<{
+  const animationOptions: Array<{
     id: SuccessAnimationStyle;
     title: string;
     description: string;
@@ -157,32 +223,27 @@ const SettingsView = ({
   ];
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
+    <div className="space-y-4 animate-in fade-in duration-300">
       {/* Header */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 mb-2">
         <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-sm">
           <SlidersHorizontal size={20} />
         </div>
         <div>
           <h2 className="text-2xl font-black text-slate-800 tracking-tight">Configurações</h2>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Preferências visuais, caminhos e comportamento</p>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Clique em cada seção para expandir</p>
         </div>
       </div>
 
-      {/* ======== SEÇÃO: Caminhos Base dos Dashboards ======== */}
-      <Card className="p-5 sm:p-6">
-        <div className="flex items-center gap-3 mb-5 pb-4 border-b border-slate-100">
-          <div className="w-9 h-9 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center">
-            <Database size={18} />
-          </div>
-          <div>
-            <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Caminhos Base dos Dashboards</h3>
-            <p className="text-xs text-slate-500 mt-1">
-              Defina os diretórios onde cada dashboard buscará os arquivos de dados. Se vazio, o sistema usará o caminho padrão.
-            </p>
-          </div>
-        </div>
-
+      {/* ======== SEÇÃO 1: Caminhos Base dos Dashboards ======== */}
+      <CollapsibleSection
+        title="Caminhos Base dos Dashboards"
+        subtitle="Diretórios onde cada dashboard busca os dados"
+        icon={<Database size={18} />}
+        iconBg="bg-violet-50"
+        iconColor="text-violet-600"
+        defaultOpen={false}
+      >
         {pathsLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 size={20} className="animate-spin text-slate-400 mr-2" />
@@ -247,10 +308,18 @@ const SettingsView = ({
             </div>
           </div>
         )}
-      </Card>
+      </CollapsibleSection>
 
-      {/* ======== SEÇÃO: Animações e Visual ======== */}
-      <Card className="p-5 sm:p-6">
+      {/* ======== SEÇÃO 2: Animações e Visual ======== */}
+      <CollapsibleSection
+        title="Animações e Visual"
+        subtitle="Configurações de animação, biometria e tempo"
+        icon={<Sparkles size={18} />}
+        iconBg="bg-blue-50"
+        iconColor="text-blue-600"
+        defaultOpen={true}
+      >
+        {/* Toggle Animações */}
         <div className="mb-5 pb-5 border-b border-slate-100">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -284,6 +353,7 @@ const SettingsView = ({
           </div>
         </div>
 
+        {/* Toggle Windows Hello */}
         <div className="mb-5 pb-5 border-b border-slate-100">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -323,17 +393,17 @@ const SettingsView = ({
           </div>
         </div>
 
+        {/* Estilo de confirmação */}
         <div className="mb-4">
           <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Animação de Confirmação</h3>
           <p className="text-xs text-slate-500 mt-2">
             Escolha como o card de confirmação deve aparecer ao iniciar um relatório.
-            A escolha é salva automaticamente para este usuário.
           </p>
         </div>
 
         <div className={cn('space-y-5', !animationsEnabled && 'opacity-50')}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {options.map(option => {
+          {animationOptions.map(option => {
             const isActive = successAnimationStyle === option.id;
             return (
               <button
@@ -375,6 +445,7 @@ const SettingsView = ({
           })}
           </div>
 
+          {/* Duração */}
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Duração da Confirmação</label>
             <div className="rounded-2xl border-2 border-slate-100 p-4 bg-slate-50/60">
@@ -395,6 +466,7 @@ const SettingsView = ({
             </div>
           </div>
 
+          {/* Intensidade */}
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Intensidade da Animação</label>
             <div className="flex items-center gap-1 p-1 bg-slate-50 border-2 border-slate-100 rounded-2xl w-full">
@@ -422,7 +494,7 @@ const SettingsView = ({
             </div>
           </div>
         </div>
-      </Card>
+      </CollapsibleSection>
     </div>
   );
 };
