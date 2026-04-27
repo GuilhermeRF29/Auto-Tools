@@ -39,6 +39,10 @@ interface UIContextData {
   windowsHelloEnabled: boolean;
   setWindowsHelloEnabled: (v: boolean) => void;
 
+  updateStatus: { hasUpdate: boolean; currentVersion: string; remoteVersion: string; isUpdating: boolean; isCompleted: boolean };
+  checkForUpdates: () => Promise<void>;
+  applyUpdate: () => Promise<void>;
+
   handleDeepSelect: (view: View, id: string) => void;
   handleReRunFromDashboard: (item: any) => void;
 }
@@ -62,6 +66,14 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [successAnimationDurationSec, setSuccessAnimationDurationSec] = useState(1.6);
   const [successAnimationIntensity, setSuccessAnimationIntensity] = useState<AnimationIntensity>('normal');
   const [windowsHelloEnabled, setWindowsHelloEnabled] = useState(false);
+
+  const [updateStatus, setUpdateStatus] = useState({
+    hasUpdate: false,
+    currentVersion: '',
+    remoteVersion: '',
+    isUpdating: false,
+    isCompleted: false
+  });
 
   const SETTINGS_STORAGE_PREFIX = 'autotools:settings';
 
@@ -173,6 +185,49 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     if (report) setHighlightId(report.id);
   };
 
+  const checkForUpdates = async () => {
+    try {
+      const response = await fetch('/api/system/update/check');
+      const data = await response.json();
+      if (data.success) {
+        setUpdateStatus(prev => ({
+          ...prev,
+          hasUpdate: data.hasUpdate,
+          currentVersion: data.currentVersion,
+          remoteVersion: data.remoteVersion
+        }));
+      }
+    } catch (err) {
+      console.error('[UPDATE] Erro ao verificar atualizações:', err);
+    }
+  };
+
+  const applyUpdate = async () => {
+    setUpdateStatus(prev => ({ ...prev, isUpdating: true }));
+    try {
+      // Pequeno delay para mostrar o "Atualizando..." antes de matar o servidor
+      await new Promise(r => setTimeout(r, 1500));
+      const response = await fetch('/api/system/update/apply', { method: 'POST' });
+      if (response.ok) {
+        // O servidor vai fechar agora. O frontend ficará em um estado de "Atualizando"
+        // até que o updater.ps1 termine e reinicie o app.
+        // Simulamos o "Completado" caso o script demore a matar o processo,
+        // mas na prática o app fechará antes.
+        setUpdateStatus(prev => ({ ...prev, isCompleted: true }));
+      }
+    } catch (err) {
+      console.error('[UPDATE] Erro ao aplicar atualização:', err);
+      setUpdateStatus(prev => ({ ...prev, isUpdating: false }));
+    }
+  };
+
+  useEffect(() => {
+    checkForUpdates();
+    // Verifica a cada 1 hora se houver usuários logados
+    const intervalId = window.setInterval(checkForUpdates, 3600000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   return (
     <UIContext.Provider value={{
       currentView, setCurrentView,
@@ -187,6 +242,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       successAnimationDurationSec, setSuccessAnimationDurationSec,
       successAnimationIntensity, setSuccessAnimationIntensity,
       windowsHelloEnabled, setWindowsHelloEnabled,
+      updateStatus, checkForUpdates, applyUpdate,
       handleDeepSelect, handleReRunFromDashboard
     }}>
       {children}

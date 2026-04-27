@@ -21,7 +21,12 @@ pandas>=2.1.0               # Manipulação de DataFrames
 
 # === Automação Web ===
 playwright>=1.40.0          # Browser automation (substitui Selenium)
+selenium>=4.15.0            # Automação legado
+webdriver-manager>=4.0.0    # Gerenciamento de drivers Selenium
 requests>=2.31.0            # Requisições HTTP
 
 # === Utilitários ===
 Pillow>=10.0.0              # Manipulação de imagens (se necessário)
+
+# === Cloud / Firebase ===
+firebase-admin>=6.4.0       # Integração com Google Firebase (Nuvem)

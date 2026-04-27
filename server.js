@@ -30,6 +30,8 @@ import dashboardRoutes from './src_backend/routes/dashboardRoutes.js';
 import webauthnRoutes from './src_backend/routes/webauthnRoutes.js';
 import settingsRoutes from './src_backend/routes/settingsRoutes.js';
 import deviceAccessRoutes, { deviceAccessGuard } from './src_backend/routes/deviceAccessRoutes.js';
+import tunnelRoutes, { initTunnel, shutdownTunnel } from './src_backend/routes/tunnelRoutes.js';
+import updateRoutes from './src_backend/routes/updateRoutes.js';
 
 const app = express();
 const port = Number(process.env.AUTOTOOLS_SERVER_PORT || 3001);
@@ -49,7 +51,8 @@ const initDbCmd = `import os; from core import banco; banco.configurar_banco(); 
 runPythonCmd(initDbCmd).then(() => {
     console.log(`[SYSTEM] Banco de dados verificado/inicializado.`);
 }).catch((e) => {
-    console.error(`[SYSTEM] Erro ao inicializar banco: ${e.message}`);
+    console.error(`[SYSTEM] ERRO CRÍTICO ao inicializar banco: ${e.message}`);
+    console.error(`[SYSTEM] Verifique se o Python Path (${PYTHON_PATH}) é válido.`);
 });
 
 app.get('/api/status', async (req, res) => {
@@ -58,9 +61,12 @@ app.get('/api/status', async (req, res) => {
         const dbResult = await runPythonCmd(dbCheckCmd);
         const dbStatus = dbResult?.dbStatus === 'ok' ? 'ok' : 'error';
 
+        const localVersionPath = path.join(getRootDir(), 'version.json');
+        const localVersion = JSON.parse(fs.readFileSync(localVersionPath, 'utf8'));
+
         return res.json({
             status: dbStatus === 'ok' ? 'ok' : 'degraded',
-            version: 'AutoTools API v3.0 (Modular)',
+            version: `v${localVersion.version}`,
             python: PYTHON_PATH,
             dbStatus,
             dbMessage: dbResult?.dbMessage || 'Sem resposta da checagem de banco.',
@@ -69,7 +75,7 @@ app.get('/api/status', async (req, res) => {
     } catch (e) {
         return res.status(503).json({
             status: 'offline',
-            version: 'AutoTools API v3.0 (Modular)',
+            version: 'v1.5.0 (Offline)',
             python: PYTHON_PATH,
             dbStatus: 'offline',
             dbMessage: e?.message || 'Falha ao verificar conexão do banco.',
@@ -89,6 +95,8 @@ app.use('/api', systemRoutes);
 app.use('/api', automationRoutes);
 app.use('/api', webauthnRoutes);
 app.use('/api', settingsRoutes);
+app.use('/api', tunnelRoutes);
+app.use('/api/system', updateRoutes);
 
 // Dashboards e relatorios (demanda, revenue, market share)
 app.use('/api', dashboardRoutes);
@@ -118,12 +126,32 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Erro interno no backend Express.', details: err.message });
 });
 
-app.listen(port, '0.0.0.0', () => {
+const server = app.listen(port, '0.0.0.0', () => {
     console.log(`[SYSTEM] Backend Express rodando em http://127.0.0.1:${port}`);
     console.log(`[SYSTEM] Python Path: ${PYTHON_PATH}`);
-    if (canServeFrontend) {
-        console.log(`[SYSTEM] Frontend estático habilitado em: ${distDir}`);
+    // Inicia o túnel se estava ativado
+    initTunnel();
+});
+
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.error(`[SYSTEM] PORTA ${port} JÁ EM USO. Tentando limpar processos anteriores...`);
+        // O Electron matará este processo em seguida, mas avisamos o motivo no log
     } else {
-        console.log(`[SYSTEM] Frontend estático não encontrado (dist/index.html ausente).`);
+        console.error(`[SYSTEM] Erro ao iniciar servidor Express:`, err);
     }
 });
+
+// Tratamento para fechar o túnel ao encerrar o servidor (evita processos zumbis)
+const gracefulShutdown = () => {
+    console.log('[SYSTEM] Encerrando servidor e limpando túneis...');
+    try {
+        shutdownTunnel();
+    } catch (e) {
+        console.error('[SYSTEM] Erro ao fechar túneis:', e.message);
+    }
+    setTimeout(() => process.exit(0), 500);
+};
+
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);

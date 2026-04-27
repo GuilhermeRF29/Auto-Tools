@@ -280,7 +280,7 @@ const DemandDashboardView = () => {
   const removedTableRef = useRef<HTMLTableElement>(null);
 
   const lastObservationRef = useRef<string>('');
-  const stats = payload?.meta?.stats || {};
+  const stats = payload?.meta?.stats || { totalRead: 0, processed: 0, skippedDate: 0, skippedEmpty: 0, skippedAdvp: 0 };
 
   const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
@@ -615,7 +615,7 @@ const DemandDashboardView = () => {
         const cmp = (safeRatio(a.total) || 0) - (safeRatio(b.total) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }
-      if (sortConfig && WEEK_BUCKETS.includes(sortConfig.key)) {
+      if (sortConfig && (WEEK_BUCKETS as readonly string[]).includes(sortConfig.key)) {
         const cmp = (safeRatio(a.buckets[sortConfig.key]) || 0) - (safeRatio(b.buckets[sortConfig.key]) || 0);
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       }

@@ -23,6 +23,15 @@ import sys
 from pathlib import Path
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
+from datetime import datetime
+
+# Firebase Integration
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore, auth
+    HAS_FIREBASE = True
+except ImportError:
+    HAS_FIREBASE = False
 
 
 # ============================================================
@@ -50,6 +59,46 @@ else:
 
 DB_PATH = DATA_DIR / "Userbank.db"
 ENV_PATH = DATA_DIR / ".env"
+FIREBASE_CREDS_PATH = BASE_DIR / "firebase-credentials.json"
+
+# Global Firebase app instance
+_firebase_app = None
+
+def inicializar_firebase():
+    """Inicializa o SDK do Firebase se as credenciais existirem."""
+    global _firebase_app
+    if not HAS_FIREBASE:
+        return None
+    if _firebase_app:
+        return _firebase_app
+    
+    # Procurar credenciais em múltiplos locais
+    paths = [
+        FIREBASE_CREDS_PATH,
+        DATA_DIR / "firebase-credentials.json",
+        Path.cwd() / "firebase-credentials.json"
+    ]
+    
+    creds_file = next((p for p in paths if p.exists()), None)
+    if not creds_file:
+        return None
+        
+    try:
+        cred = credentials.Certificate(str(creds_file))
+        _firebase_app = firebase_admin.initialize_app(cred)
+        return _firebase_app
+    except Exception as e:
+        print(f"[FIREBASE] Erro ao inicializar: {e}")
+        return None
+
+def get_firestore():
+    """Retorna cliente do Firestore se disponível."""
+    if not inicializar_firebase():
+        return None
+    try:
+        return firestore.client()
+    except Exception:
+        return None
 
 
 # ============================================================
@@ -197,6 +246,20 @@ def cadastrar_usuario_principal(nome, usuario, senha):
             (nome, usuario, hash_senha)
         )
         conexao.commit()
+        
+        # --- Sincronização Nuvem (Firebase) ---
+        db = get_firestore()
+        if db:
+            try:
+                db.collection("usuarios").document(usuario).set({
+                    "nome": nome,
+                    "usuario": usuario,
+                    "senha": hash_senha.decode('utf-8'), # Hash espelhado para fallback offline
+                    "criado_em": firestore.SERVER_TIMESTAMP
+                })
+            except Exception as e:
+                print(f"[FIREBASE] Erro ao sincronizar usuário: {e}")
+        
         return True
     except sqlite3.IntegrityError:
         return False  # Usuário já existe
@@ -215,6 +278,23 @@ def login_principal(usuario, senha):
     Returns:
         tuple: (id, nome) se autenticado, (None, None) se inválido.
     """
+    # 1. Tentar Sincronizar da Nuvem para o Local (se online)
+    db = get_firestore()
+    if db:
+        try:
+            doc = db.collection("usuarios").document(usuario).get()
+            if doc.exists:
+                data = doc.to_dict()
+                # Atualizar/Inserir no banco local para permitir login offline futuro
+                with sqlite3.connect(DB_PATH) as conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO usuarios (nome, usuario, senha) VALUES (?, ?, ?)",
+                        (data['nome'], data['usuario'], data['senha'].encode('utf-8'))
+                    )
+        except Exception as e:
+            print(f"[FIREBASE] Erro ao sincronizar login: {e}")
+
+    # 2. Verificação Local (Funciona Online e Offline)
     conexao = sqlite3.connect(DB_PATH)
     cursor = conexao.cursor()
     cursor.execute(
@@ -304,6 +384,30 @@ def adicionar_credencial_site(user_id, servico, login_site, senha_site,
     conexao.commit()
     conexao.close()
 
+    # --- Sincronização Nuvem (Firebase) ---
+    db = get_firestore()
+    if db:
+        try:
+            # Pegar o nome de usuário para usar como ID na nuvem (IDs numéricos mudam entre máquinas)
+            username = None
+            with sqlite3.connect(DB_PATH) as conn:
+                res = conn.execute("SELECT usuario FROM usuarios WHERE id = ?", (user_id,)).fetchone()
+                if res: username = res[0]
+            
+            if username:
+                payload = {
+                    "servico": servico,
+                    "login": login_site,
+                    "senha": senha_cripto,
+                    "type": "custom" if eh_personalizado else "system",
+                    "url": url_site,
+                    "updated_at": firestore.SERVER_TIMESTAMP
+                }
+                # Salvar em vault/{username}/items/{servico}
+                db.collection("vault").document(username).collection("items").document(servico).set(payload)
+        except Exception as e:
+            print(f"[FIREBASE] Erro ao sincronizar credencial: {e}")
+
 
 def listar_credenciais(user_id):
     """
@@ -337,7 +441,34 @@ def listar_credenciais(user_id):
     lista = []
     fernet = obter_fernet()
 
-    # Processar credenciais de sistemas
+    # --- Sincronização Nuvem -> Local ---
+    db = get_firestore()
+    if db:
+        try:
+            username = None
+            with sqlite3.connect(DB_PATH) as conn:
+                res = conn.execute("SELECT usuario FROM usuarios WHERE id = ?", (user_id,)).fetchone()
+                if res: username = res[0]
+            
+            if username:
+                docs = db.collection("vault").document(username).collection("items").stream()
+                with sqlite3.connect(DB_PATH) as conn:
+                    for doc in docs:
+                        d = doc.to_dict()
+                        if d.get("type") == "custom":
+                            conn.execute(
+                                "INSERT OR REPLACE INTO acessos_personalizados (nome_site, url_site, login_acesso, senha_acesso, user_id) VALUES (?, ?, ?, ?, ?)",
+                                (d['servico'], d['url'], d['login'], d['senha'], user_id)
+                            )
+                        else:
+                            conn.execute(
+                                "INSERT OR REPLACE INTO acessos (servico, login_acesso, senha_acesso, user_id) VALUES (?, ?, ?, ?)",
+                                (d['servico'], d['login'], d['senha'], user_id)
+                            )
+        except Exception as e:
+            print(f"[FIREBASE] Erro ao sincronizar cofre: {e}")
+
+    # Buscar credenciais de sistemas pré-definidos
     for d in dados_sist:
         try:
             token = d[3]
@@ -556,6 +687,28 @@ def salvar_historico_relatorio(user_id, nome_automacao, parametros,
     )
     conexao.commit()
     conexao.close()
+
+    # --- Sincronização Nuvem (Firebase) ---
+    db = get_firestore()
+    if db:
+        try:
+            username = "sistema"
+            if user_id:
+                with sqlite3.connect(DB_PATH) as conn:
+                    res = conn.execute("SELECT usuario FROM usuarios WHERE id = ?", (user_id,)).fetchone()
+                    if res: username = res[0]
+            
+            doc_id = str(job_id) if job_id else f"hist_{int(datetime.now().timestamp())}"
+            db.collection("history").document(doc_id).set({
+                "username": username,
+                "automacao": nome_automacao,
+                "parametros": params_str,
+                "arquivo": arquivo_nome,
+                "status": status,
+                "timestamp": firestore.SERVER_TIMESTAMP
+            })
+        except Exception as e:
+            print(f"[FIREBASE] Erro ao sincronizar histórico: {e}")
 
 
 def listar_historico_relatorios(limit=None, user_id=None):

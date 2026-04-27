@@ -9,6 +9,9 @@ import { runPythonCmd, execCmd, spawnPythonScript } from '../utils/pythonProxy.j
 import { getRootDir, BACKUP_DIR } from '../config.js';
 import path from 'path';
 import fs from 'fs';
+import { getLocalIp } from '../utils/networkUtils.js';
+import { getTunnelUrl } from './tunnelRoutes.js';
+import QRCode from 'qrcode';
 
 const router = Router();
 
@@ -208,6 +211,48 @@ router.post('/clean-backups', async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ success: false });
+    }
+});
+
+// SYSTEM: Informações de rede para acesso remoto
+router.get('/network-info', (req, res) => {
+    const ip = getLocalIp();
+    const port = process.env.AUTOTOOLS_SERVER_PORT || 3001;
+    const tunnelUrl = getTunnelUrl();
+    
+    res.json({
+        localIp: ip,
+        port: port,
+        localUrl: `http://${ip}:${port}`,
+        tunnelUrl: tunnelUrl,
+        url: tunnelUrl || `http://${ip}:${port}`,
+        isTunnelActive: !!tunnelUrl,
+        lanUrls: ip ? [`http://${ip}:${port}`] : []
+    });
+});
+
+// NOVO: Gerador de QR Code Local
+router.get('/qr-code', async (req, res) => {
+    try {
+        const { url } = req.query;
+        if (!url) return res.status(400).send('URL faltante');
+
+        // Gera o buffer da imagem PNG
+        const qrBuffer = await QRCode.toBuffer(url, {
+            type: 'png',
+            margin: 2,
+            scale: 8,
+            color: {
+                dark: '#0f172a', // Slate 900
+                light: '#ffffff'
+            }
+        });
+
+        res.type('png');
+        res.send(qrBuffer);
+    } catch (error) {
+        console.error('[QR] Erro ao gerar:', error);
+        res.status(500).send('Erro ao gerar QR Code');
     }
 });
 

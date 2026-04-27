@@ -16,19 +16,25 @@ const DATA_ROOT = envDataRoot
   : ROOT_DIR;
 
 const resolvePythonPath = () => {
-  const candidates = [
-    process.resourcesPath ? path.join(process.resourcesPath, 'venv', 'Scripts', 'python.exe') : null,
-    path.join(ROOT_DIR, 'venv', 'Scripts', 'python.exe'),
-    path.join(ROOT_DIR, 'backup_pyside', 'venv', 'Scripts', 'python.exe'),
-  ].filter(Boolean);
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
+  // 1. Prioridade total para a variável enviada pelo Electron/Sistema
+  if (process.env.AUTOTOOLS_PYTHON_PATH) {
+    return process.env.AUTOTOOLS_PYTHON_PATH;
   }
 
-  // Last-resort fallback to PATH when local venvs are missing.
+  // 2. Fallback para estrutura portátil (python-runtime) - RECOMENDADO para produção
+  const portablePath = path.join(ROOT_DIR, 'python-runtime', 'python.exe');
+  if (fs.existsSync(portablePath)) {
+    return portablePath;
+  }
+
+  // 3. Fallback para estrutura de venv (desenvolvimento ou legado)
+  const relativeVenv = path.join('..', 'venv', 'Scripts', 'python.exe');
+  const absoluteVenv = path.join(ROOT_DIR, relativeVenv);
+  
+  if (fs.existsSync(absoluteVenv)) {
+    return absoluteVenv;
+  }
+
   return 'python';
 };
 

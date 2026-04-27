@@ -10,6 +10,7 @@ padrao/
 
 # Credenciais e tokens sensíveis (NUNCA commitar)
 token.json
+firebase-credentials.json
 core/credentials.json
 src_backend/data/webauthn_store.json
 .env
@@ -31,6 +32,7 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+release/
 downloads/
 eggs/
 .eggs/

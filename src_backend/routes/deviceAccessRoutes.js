@@ -400,21 +400,51 @@ router.post('/device-access/request', (req, res) => {
     }
 
     const createdAt = new Date().toISOString();
+    
+    // Tenta encontrar um dispositivo já aprovado com a mesma assinatura (fingerprint + UA)
+    const knownDevice = (store.approvedDevices || []).find(d => 
+        !d.revokedAt && 
+        d.fingerprint === fingerprint && 
+        d.userAgent === userAgent &&
+        fingerprint // Garante que não auto-aprove se o fingerprint for vazio
+    );
+
+    const isAutoApproved = !!knownDevice;
+    const status = isAutoApproved ? 'approved' : 'pending';
+    
+    let issuedToken = null;
+    let tokenExpiresAt = null;
+    let approvedDeviceId = null;
+
+    if (isAutoApproved) {
+        console.log(`[DEVICE] Auto-aprovando dispositivo conhecido: ${knownDevice.name}`);
+        issuedToken = createDeviceToken();
+        const config = normalizeConfig(store.config);
+        tokenExpiresAt = new Date(Date.now() + config.tokenTtlDays * 24 * 60 * 60 * 1000).toISOString();
+        approvedDeviceId = knownDevice.id;
+        
+        // Atualiza dados do dispositivo original
+        knownDevice.lastIp = ip;
+        knownDevice.lastSeenAt = createdAt;
+        knownDevice.tokenHash = hashToken(issuedToken);
+        knownDevice.expiresAt = tokenExpiresAt;
+    }
+
     const requestEntry = {
         id: crypto.randomUUID(),
         requestKey: crypto.randomBytes(18).toString('base64url'),
-        status: 'pending',
+        status,
         ip,
         fingerprint,
-        name: parseDeviceName(req),
+        name: isAutoApproved ? knownDevice.name : parseDeviceName(req),
         userAgent,
         createdAt,
         updatedAt: createdAt,
-        approvedAt: null,
+        approvedAt: isAutoApproved ? createdAt : null,
         rejectedAt: null,
-        approvedDeviceId: null,
-        issuedToken: null,
-        tokenExpiresAt: null,
+        approvedDeviceId,
+        issuedToken,
+        tokenExpiresAt,
     };
 
     store.pendingRequests.push(requestEntry);
@@ -422,11 +452,14 @@ router.post('/device-access/request', (req, res) => {
 
     return res.json({
         success: true,
-        status: 'pending',
+        status,
         requestId: requestEntry.id,
         requestKey: requestEntry.requestKey,
-        pollIntervalMs: 3000,
+        pollIntervalMs: isAutoApproved ? 500 : 3000,
         createdAt: requestEntry.createdAt,
+        // Se já aprovou (auto-aprovação), envia os dados de acesso imediatamente
+        deviceToken: isAutoApproved ? issuedToken : undefined,
+        tokenExpiresAt: isAutoApproved ? tokenExpiresAt : undefined,
     });
 });
 

@@ -10,6 +10,7 @@ import {
 } from '@simplewebauthn/server';
 import { getRootDir } from '../config.js';
 import { runPythonCmd } from '../utils/pythonProxy.js';
+import { getTunnelUrl } from './tunnelRoutes.js';
 
 const router = Router();
 
@@ -93,26 +94,46 @@ const getRpId = (req) => {
   const host = req.headers['x-forwarded-host'] || req.headers.host || '';
   const hostSource = `${host}`.trim() || req.hostname || '127.0.0.1';
   const hostHostname = hostSource.split(':')[0].toLowerCase();
+  
   const hostname = originHostname || hostHostname;
-
   if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
     return 'localhost';
   }
 
+  // Se for um túnel Cloudflare, retorna o domínio completo
+  if (hostname.endsWith('.trycloudflare.com')) {
+    return hostname;
+  }
+
+  // Para qualquer outro caso (IP de rede local, etc), retornamos o hostname detectado.
+  // Nota: WebAuthn provavelmente falhará em IPs, mas não dará erro de "RP ID mismatch".
   return hostname;
 };
 
 const getExpectedOrigins = (req) => {
   const rpId = getRpId(req);
   const providedOrigin = req.headers.origin ? `${req.headers.origin}`.trim() : '';
+  const isTunnel = rpId.endsWith('.trycloudflare.com');
+  
   const defaults = [
     `http://${rpId}:3000`,
     `http://${rpId}:5173`,
-    'http://127.0.0.1:3000',
-    'http://localhost:3000',
-    'http://127.0.0.1:5173',
-    'http://localhost:5173',
+    `http://localhost:3000`,
+    `http://localhost:5173`,
+    `http://127.0.0.1:3000`,
+    `http://127.0.0.1:5173`,
   ];
+
+  if (isTunnel) {
+    defaults.push(`https://${rpId}`);
+  }
+
+  // No caso de localhost, o browser pode mandar http://localhost:3000
+  if (rpId === 'localhost') {
+    defaults.push('http://localhost:3000');
+    defaults.push('http://127.0.0.1:3000');
+  }
+
   if (!providedOrigin) {
     return defaults;
   }
@@ -155,10 +176,23 @@ const findRecordByToken = (store, biometricToken) => {
   const now = Date.now();
   for (const [userId, record] of Object.entries(store.users || {})) {
     if (!record || record.enabled !== true) continue;
-    if (record.biometricTokenHash !== tokenHash) continue;
-    if (!record.tokenExpiresAt) continue;
-    if (new Date(record.tokenExpiresAt).getTime() <= now) continue;
-    return { userId, record, tokenHash };
+    
+    // Agora buscamos dentro do array de sessões
+    const session = (record.sessions || []).find(s => 
+      s.tokenHash === tokenHash && 
+      new Date(s.expiresAt).getTime() > now
+    );
+    
+    if (session) {
+      return { userId, record, tokenHash, session };
+    }
+
+    // Compatibilidade com tokens antigos (legado)
+    if (record.biometricTokenHash === tokenHash) {
+      if (!record.tokenExpiresAt || new Date(record.tokenExpiresAt).getTime() > now) {
+        return { userId, record, tokenHash };
+      }
+    }
   }
   return null;
 };
@@ -277,12 +311,29 @@ router.post('/webauthn/register/verify', async (req, res) => {
     }
 
     const biometricToken = generateBiometricToken();
+    const tokenHash = sha256(biometricToken);
+    const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString();
+
     record.user = challengeData.user;
     record.enabled = true;
-    record.biometricTokenHash = sha256(biometricToken);
-    record.tokenExpiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString();
-    record.updatedAt = new Date().toISOString();
+    
+    if (!Array.isArray(record.sessions)) {
+      record.sessions = [];
+    }
 
+    // Adiciona a nova sessão (token) para este dispositivo
+    record.sessions.push({
+      tokenHash,
+      expiresAt,
+      createdAt: new Date().toISOString(),
+      // Vincula ao ID da credencial que acabou de ser criada/atualizada
+      credentialId
+    });
+
+    // Limpa sessões expiradas para não crescer infinitamente
+    record.sessions = record.sessions.filter(s => new Date(s.expiresAt).getTime() > Date.now());
+
+    record.updatedAt = new Date().toISOString();
     writeStore(store);
     pendingChallenges.delete(transactionId);
 
@@ -413,18 +464,51 @@ router.post('/webauthn/auth/verify', async (req, res) => {
 });
 
 router.post('/webauthn/disable', async (req, res) => {
-  const { usuario, senha } = req.body || {};
+  const { usuario, senha, biometricToken } = req.body || {};
   try {
-    const user = await resolveUserFromPassword(usuario, senha);
-    if (!user) {
-      return res.status(401).json({ success: false, error: 'Senha inválida para desativar Windows Hello.' });
+    const store = readStore();
+    
+    // Caso 1: Desativação específica por Token (apenas este dispositivo)
+    if (biometricToken) {
+      const tokenHash = sha256(biometricToken);
+      let found = false;
+      
+      for (const record of Object.values(store.users || {})) {
+        if (Array.isArray(record.sessions)) {
+          const initialCount = record.sessions.length;
+          record.sessions = record.sessions.filter(s => s.tokenHash !== tokenHash);
+          if (record.sessions.length < initialCount) {
+            found = true;
+            record.updatedAt = new Date().toISOString();
+          }
+        }
+        // Também limpa legado
+        if (record.biometricTokenHash === tokenHash) {
+          record.biometricTokenHash = null;
+          record.tokenExpiresAt = null;
+          found = true;
+        }
+      }
+
+      if (found) {
+        writeStore(store);
+        return res.json({ success: true, message: 'Dispositivo desvinculado com sucesso.' });
+      }
     }
 
-    const store = readStore();
-    delete store.users[String(user.id)];
-    writeStore(store);
+    // Caso 2: Desativação Global (por senha)
+    if (usuario && senha) {
+      const user = await resolveUserFromPassword(usuario, senha);
+      if (!user) {
+        return res.status(401).json({ success: false, error: 'Senha inválida para desativar Windows Hello.' });
+      }
 
-    return res.json({ success: true });
+      delete store.users[String(user.id)];
+      writeStore(store);
+      return res.json({ success: true, message: 'Biometria desativada em todos os dispositivos.' });
+    }
+
+    return res.status(400).json({ success: false, error: 'Credenciais ou token não fornecidos.' });
   } catch (e) {
     console.error('[WEBAUTHN_DISABLE_ERROR]', e);
     return res.status(500).json({ success: false, error: 'Falha ao desativar Windows Hello.' });

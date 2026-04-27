@@ -24,6 +24,10 @@ import {
   Trash2,
   Smartphone,
   Wifi,
+  Globe,
+  Lock,
+  ExternalLink,
+  Copy,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -96,6 +100,7 @@ interface SettingsViewProps {
   onSuccessAnimationIntensityChange: (intensity: AnimationIntensity) => void;
   windowsHelloEnabled: boolean;
   onWindowsHelloEnabledChange: (enabled: boolean) => void | Promise<void>;
+  onWindowsHelloReset: () => void;
   windowsHelloBusy?: boolean;
   currentUserId?: number | null;
 }
@@ -189,6 +194,7 @@ const SettingsView = ({
   onSuccessAnimationIntensityChange,
   windowsHelloEnabled,
   onWindowsHelloEnabledChange,
+  onWindowsHelloReset,
   windowsHelloBusy = false,
   currentUserId = null,
 }: SettingsViewProps) => {
@@ -211,6 +217,13 @@ const SettingsView = ({
   const [deviceSuccess, setDeviceSuccess] = useState('');
   const [deviceDesktopOnly, setDeviceDesktopOnly] = useState(false);
   const [tokenTtlDraft, setTokenTtlDraft] = useState('30');
+
+  // ======== Estado do Túnel (Acesso Global) ========
+  const [tunnelActive, setTunnelActive] = useState(false);
+  const [tunnelUrl, setTunnelUrl] = useState('');
+  const [tunnelStarting, setTunnelStarting] = useState(false);
+  const [authtoken, setAuthtoken] = useState('');
+  const [hasAuthtoken, setHasAuthtoken] = useState(false);
 
   const parseApiError = useCallback(async (response: Response) => {
     try {
@@ -386,6 +399,56 @@ const SettingsView = ({
     }
   }, [loadDeviceAccess, parseApiError]);
 
+  const loadTunnelStatus = useCallback(async () => {
+    try {
+      const resp = await fetch('/api/tunnel/status');
+      const data = await resp.json();
+      setTunnelActive(data.isActive);
+      setTunnelUrl(data.url || '');
+      setTunnelStarting(data.isStarting);
+      setHasAuthtoken(data.hasAuthtoken);
+    } catch (e) {
+      console.warn('Erro ao carregar status do túnel:', e);
+    }
+  }, []);
+
+  const handleStartTunnel = async () => {
+    setTunnelStarting(true);
+    setDeviceError('');
+    try {
+      const resp = await fetch('/api/tunnel/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ authtoken })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Falha ao iniciar túnel');
+      
+      setTunnelActive(true);
+      setTunnelUrl(data.url);
+      setDeviceSuccess('Túnel Ngrok iniciado com sucesso!');
+      await loadDeviceAccess(); // Refresh network hints
+    } catch (e: any) {
+      setDeviceError(e.message);
+    } finally {
+      setTunnelStarting(false);
+    }
+  };
+
+  const handleStopTunnel = async () => {
+    setDeviceError('');
+    try {
+      const resp = await fetch('/api/tunnel/stop', { method: 'POST' });
+      if (!resp.ok) throw new Error('Falha ao parar túnel');
+      setTunnelActive(false);
+      setTunnelUrl('');
+      setDeviceSuccess('Túnel parado.');
+      await loadDeviceAccess();
+    } catch (e: any) {
+      setDeviceError(e.message);
+    }
+  };
+
   /** Carrega configurações salvas do backend (ao montar) */
   const loadSettings = useCallback(async () => {
     if (!currentUserId) return;
@@ -407,7 +470,10 @@ const SettingsView = ({
   }, [currentUserId]);
 
   useEffect(() => { loadSettings(); }, [loadSettings]);
-  useEffect(() => { loadDeviceAccess(); }, [loadDeviceAccess]);
+  useEffect(() => { 
+    loadDeviceAccess(); 
+    loadTunnelStatus();
+  }, [loadDeviceAccess, loadTunnelStatus]);
 
   /** Salva os caminhos no banco de dados */
   const handleSavePaths = async () => {
@@ -580,132 +646,257 @@ const SettingsView = ({
           </div>
         ) : (
           <div className="space-y-4">
-            {networkHints && (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-2">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
-                  <Wifi size={12} /> Endereços de Acesso
-                </p>
-                <p className="text-xs text-slate-600">
-                  Desktop local: <span className="font-mono text-slate-800">{networkHints.loopbackUrl}</span>
-                </p>
-                {networkHints.lanUrls?.length > 0 ? (
-                  <div className="space-y-1">
-                    {networkHints.lanUrls.map((url) => (
-                      <p key={url} className="text-xs text-slate-600">
-                        Rede local: <span className="font-mono text-slate-800">{url}</span>
-                      </p>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500">Nenhum IP LAN detectado no momento.</p>
-                )}
-              </div>
-            )}
-
             {deviceConfig && (
-              <div className="rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 p-4 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Acesso Remoto</p>
-                    <p className="text-xs text-slate-500 mt-1">Permite clientes fora do desktop local acessarem o sistema via rede.</p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={deviceSaving || deviceDesktopOnly}
-                    onClick={() => updateDeviceConfig({ remoteAccessEnabled: !deviceConfig.remoteAccessEnabled })}
-                    className={cn(
-                      'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
-                      deviceConfig.remoteAccessEnabled
-                        ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
-                        : 'bg-slate-200 border-slate-300'
+              <>
+                {/* Seção de IPs e QR Code (Integrada com Acesso Externo) */}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Wifi size={12} className="text-slate-400" />
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Endereços de Acesso</p>
+                    </div>
+                    
+                    {tunnelActive ? (
+                      <div className="flex items-center gap-2">
+                         <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                         <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Acesso Externo Ativo</span>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Conexão em Rede Local</span>
                     )}
-                  >
-                    <span
-                      className={cn(
-                        'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
-                        deviceConfig.remoteAccessEnabled ? 'translate-x-7' : 'translate-x-0'
-                      )}
-                    />
-                  </button>
+                  </div>
+
+                  <div className="flex flex-col md:flex-row items-start gap-6">
+                    <div className="flex-1 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Desktop local</p>
+                          <code className="block text-xs font-bold text-slate-800 bg-white px-2.5 py-2 rounded-xl border border-slate-200 shadow-sm">{networkHints?.loopbackUrl || '-'}</code>
+                        </div>
+
+                        {networkHints?.lanUrls?.length > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">IP de Rede</p>
+                            <div className="relative group">
+                              <code className="block text-xs font-bold text-slate-800 bg-white px-2.5 py-2 rounded-xl border border-slate-200 shadow-sm">{networkHints.lanUrls[0]}</code>
+                              <a 
+                                href={networkHints.lanUrls[0]} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="absolute right-1.5 top-1.5 p-1 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Abrir no navegador"
+                              >
+                                <ExternalLink size={12} />
+                              </a>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Botão de Acesso Externo e Link */}
+                      <div className="pt-4 border-t border-slate-200 mt-2 space-y-4">
+                        {tunnelActive && tunnelUrl && (
+                          <div className="bg-emerald-600 text-white p-3.5 rounded-2xl shadow-xl shadow-emerald-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-[9px] font-black uppercase tracking-widest opacity-80 flex items-center gap-1">
+                                <Globe size={10} /> Link Externo Seguro (HTTPS)
+                              </p>
+                              <button 
+                                onClick={() => {
+                                  navigator.clipboard.writeText(tunnelUrl);
+                                }}
+                                className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+                              >
+                                <Copy size={14} />
+                              </button>
+                            </div>
+                            <code className="text-xs font-black break-all select-all">{tunnelUrl}</code>
+                          </div>
+                        )}
+
+                        <div className="flex flex-col gap-2.5">
+                          {tunnelActive ? (
+                            <button
+                              onClick={handleStopTunnel}
+                              className="w-full sm:w-auto px-5 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest bg-rose-600 text-white hover:bg-rose-700 shadow-lg shadow-rose-100 transition-all flex items-center justify-center gap-2 group"
+                            >
+                              <Ban size={14} className="group-hover:scale-110 transition-transform" /> 
+                              Desativar Acesso Externo
+                            </button>
+                          ) : (
+                            <button
+                              onClick={handleStartTunnel}
+                              disabled={tunnelStarting}
+                              className="w-full sm:w-auto px-5 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-100 disabled:opacity-50 transition-all flex items-center justify-center gap-2 group"
+                            >
+                              {tunnelStarting ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Globe size={14} className="group-hover:rotate-12 transition-transform" />
+                              )}
+                              {tunnelStarting ? 'Estabelecendo conexão...' : 'Ativar Acesso Externo'}
+                            </button>
+                          )}
+                          
+                          <p className="text-[10px] text-slate-400 font-medium px-1">
+                            {tunnelActive 
+                              ? 'O app está visível na internet. Use este link para acesso remoto seguro com biometria.'
+                              : 'Gera um link seguro temporário para acessar via celular de qualquer lugar sem configurar o roteador.'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* QR Code Lateral - Compacto e Elegante */}
+                    <div className="shrink-0 flex flex-col items-center gap-3">
+                      <div className="p-4 bg-white rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col items-center justify-center gap-3 group min-w-[180px] min-h-[180px] relative overflow-hidden pb-10">
+                        {networkHints?.lanUrls?.[0] || tunnelUrl ? (
+                          <>
+                            <img 
+                              src={`/api/qr-code?url=${encodeURIComponent(tunnelUrl || networkHints.lanUrls[0])}&t=${Date.now()}`}
+                              alt="QR Code de Acesso"
+                              className="w-32 h-32 group-hover:scale-110 transition-transform duration-700 ease-out"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'https://placehold.co/160x160?text=Erro+QR';
+                              }}
+                            />
+                            <div className="absolute inset-x-0 bottom-0 py-2.5 bg-slate-50/95 backdrop-blur-sm border-t border-slate-100 flex items-center justify-center">
+                              <span className="text-[10px] font-black uppercase tracking-tighter text-slate-500">Escaneie para acessar</span>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center gap-3 text-slate-300">
+                            <div className="w-10 h-10 rounded-full border-2 border-slate-100 border-t-blue-500 animate-spin" />
+                            <span className="text-[9px] font-black uppercase tracking-widest text-center px-4 text-slate-400">Detectando rede...</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <button
+                        type="button"
+                        onClick={() => loadDeviceAccess()}
+                        disabled={deviceLoading}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-600 bg-white hover:bg-slate-50 transition-all border border-slate-200 shadow-sm disabled:opacity-50"
+                      >
+                        <RefreshCw size={12} className={cn(deviceLoading && 'animate-spin')} />
+                        Recarregar IPs
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-amber-50 border border-amber-100 p-3.5">
+                    <p className="text-[10px] text-amber-700 leading-relaxed font-bold flex items-start gap-2">
+                      <Shield size={14} className="shrink-0 mt-0.5" />
+                      <span>Nota: A biometria (Windows Hello) requer que o app seja acessado via <strong>localhost</strong> ou link <strong>HTTPS</strong> para segurança.</span>
+                    </p>
+                  </div>
                 </div>
 
-                <div className={cn('flex items-center justify-between gap-3', !deviceConfig.remoteAccessEnabled && 'opacity-50')}>
-                  <div>
-                    <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Exigir Aprovação de Dispositivo</p>
-                    <p className="text-xs text-slate-500 mt-1">Todo novo celular/IP entra como pendente até aprovação no desktop.</p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
-                    onClick={() => updateDeviceConfig({ approvalRequired: !deviceConfig.approvalRequired })}
-                    className={cn(
-                      'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
-                      deviceConfig.approvalRequired
-                        ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
-                        : 'bg-slate-200 border-slate-300'
-                    )}
-                  >
-                    <span
+                {/* Configurações de Acesso Remoto */}
+                <div className="rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 p-4 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Acesso Remoto</p>
+                      <p className="text-xs text-slate-500 mt-1">Permite clientes fora do desktop local acessarem o sistema via rede.</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={deviceSaving || deviceDesktopOnly}
+                      onClick={() => updateDeviceConfig({ remoteAccessEnabled: !deviceConfig.remoteAccessEnabled })}
                       className={cn(
-                        'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
-                        deviceConfig.approvalRequired ? 'translate-x-7' : 'translate-x-0'
+                        'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
+                        deviceConfig.remoteAccessEnabled
+                          ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
+                          : 'bg-slate-200 border-slate-300'
                       )}
-                    />
-                  </button>
-                </div>
-
-                <div className={cn('flex items-center justify-between gap-3', !deviceConfig.remoteAccessEnabled && 'opacity-50')}>
-                  <div>
-                    <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Amarrar Token ao IP</p>
-                    <p className="text-xs text-slate-500 mt-1">Se ativado, o token só funciona no IP aprovado inicialmente.</p>
+                    >
+                      <span
+                        className={cn(
+                          'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
+                          deviceConfig.remoteAccessEnabled ? 'translate-x-7' : 'translate-x-0'
+                        )}
+                      />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
-                    onClick={() => updateDeviceConfig({ enforceIpMatch: !deviceConfig.enforceIpMatch })}
-                    className={cn(
-                      'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
-                      deviceConfig.enforceIpMatch
-                        ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
-                        : 'bg-slate-200 border-slate-300'
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
-                        deviceConfig.enforceIpMatch ? 'translate-x-7' : 'translate-x-0'
-                      )}
-                    />
-                  </button>
-                </div>
 
-                <div className={cn('space-y-1.5', !deviceConfig.remoteAccessEnabled && 'opacity-50')}>
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Validade do Token (dias)</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={1}
-                      max={365}
-                      disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
-                      value={tokenTtlDraft}
-                      onChange={(e) => setTokenTtlDraft(e.target.value)}
-                      className="w-28 px-3 py-2 rounded-xl border-2 border-slate-200 bg-white text-sm font-black text-slate-700 focus:outline-none focus:border-emerald-300"
-                    />
+                  <div className={cn('flex items-center justify-between gap-3', !deviceConfig.remoteAccessEnabled && 'opacity-50')}>
+                    <div>
+                      <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Exigir Aprovação de Dispositivo</p>
+                      <p className="text-xs text-slate-500 mt-1">Todo novo celular/IP entra como pendente até aprovação no desktop.</p>
+                    </div>
                     <button
                       type="button"
                       disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
-                      onClick={() => updateDeviceConfig({ tokenTtlDays: clampTokenTtlDays(Number(tokenTtlDraft || 30)) })}
-                      className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                      onClick={() => updateDeviceConfig({ approvalRequired: !deviceConfig.approvalRequired })}
+                      className={cn(
+                        'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
+                        deviceConfig.approvalRequired
+                          ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
+                          : 'bg-slate-200 border-slate-300'
+                      )}
                     >
-                      Salvar
+                      <span
+                        className={cn(
+                          'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
+                          deviceConfig.approvalRequired ? 'translate-x-7' : 'translate-x-0'
+                        )}
+                      />
                     </button>
                   </div>
-                </div>
 
-                <p className="text-[11px] text-slate-500">
-                  Última atualização da política: <span className="font-semibold text-slate-700">{formatDateTime(deviceConfig.updatedAt || null)}</span>
-                </p>
-              </div>
+                  <div className={cn('flex items-center justify-between gap-3', !deviceConfig.remoteAccessEnabled && 'opacity-50')}>
+                    <div>
+                      <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Amarrar Token ao IP</p>
+                      <p className="text-xs text-slate-500 mt-1">Se ativado, o token só funciona no IP aprovado inicialmente.</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
+                      onClick={() => updateDeviceConfig({ enforceIpMatch: !deviceConfig.enforceIpMatch })}
+                      className={cn(
+                        'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
+                        deviceConfig.enforceIpMatch
+                          ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
+                          : 'bg-slate-200 border-slate-300'
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
+                          deviceConfig.enforceIpMatch ? 'translate-x-7' : 'translate-x-0'
+                        )}
+                      />
+                    </button>
+                  </div>
+
+                  <div className={cn('space-y-1.5', !deviceConfig.remoteAccessEnabled && 'opacity-50')}>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Validade do Token (dias)</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={365}
+                        disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
+                        value={tokenTtlDraft}
+                        onChange={(e) => setTokenTtlDraft(e.target.value)}
+                        className="w-28 px-3 py-2 rounded-xl border-2 border-slate-200 bg-white text-sm font-black text-slate-700 focus:outline-none focus:border-emerald-300"
+                      />
+                      <button
+                        type="button"
+                        disabled={deviceSaving || deviceDesktopOnly || !deviceConfig.remoteAccessEnabled}
+                        onClick={() => updateDeviceConfig({ tokenTtlDays: clampTokenTtlDays(Number(tokenTtlDraft || 30)) })}
+                        className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                      >
+                        Salvar
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500">
+                    Última atualização da política: <span className="font-semibold text-slate-700">{formatDateTime(deviceConfig.updatedAt || null)}</span>
+                  </p>
+                </div>
+              </>
             )}
 
             {deviceDesktopOnly && (
@@ -826,72 +1017,31 @@ const SettingsView = ({
         )}
       </CollapsibleSection>
 
-      {/* ======== SEÇÃO 3: Animações e Visual ======== */}
+      {/* ======== SEÇÃO 3: Segurança e Biometria ======== */}
       <CollapsibleSection
-        title="Animações e Visual"
-        subtitle="Configurações de animação, biometria e tempo"
-        icon={<Sparkles size={18} />}
-        iconBg="bg-blue-50"
-        iconColor="text-blue-600"
-        defaultOpen={true}
+        title="Segurança e Biometria"
+        subtitle="Configurações de Windows Hello e proteção de dados"
+        icon={<Lock size={18} />}
+        iconBg="bg-rose-50"
+        iconColor="text-rose-600"
+        defaultOpen={false}
       >
-        {/* Toggle Animações */}
-        <div className="mb-5 pb-5 border-b border-slate-100">
-          <div className="flex items-center justify-between gap-4">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Ativar Animações</h3>
-              <p className="text-xs text-slate-500 mt-2">
-                Quando desativado, todas as animações do sistema são reduzidas para melhorar desempenho em máquinas antigas.
-              </p>
+              <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Windows Hello (WebAuthn)</p>
+              <p className="text-xs text-slate-500 mt-1">Exigir biometria ou PIN do Windows para logins e ações críticas.</p>
             </div>
-
             <button
               type="button"
-              onClick={() => onAnimationsEnabledChange(!animationsEnabled)}
-              className={cn(
-                'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border',
-                animationsEnabled
-                  ? 'bg-blue-600 border-blue-500 shadow-lg shadow-blue-200'
-                  : 'bg-slate-200 border-slate-300'
-              )}
-              aria-pressed={animationsEnabled}
-              aria-label="Ativar ou desativar animações"
-            >
-              <span
-                className={cn(
-                  'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
-                  animationsEnabled ? 'translate-x-7' : 'translate-x-0'
-                )}
-              >
-                <span className={cn('w-1.5 h-1.5 rounded-full transition-colors', animationsEnabled ? 'bg-blue-600' : 'bg-slate-300')} />
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {/* Toggle Windows Hello */}
-        <div className="mb-5 pb-5 border-b border-slate-100">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Windows Hello / Biometria</h3>
-              <p className="text-xs text-slate-500 mt-2">
-                Ativa login com PIN, reconhecimento facial ou digital. Ao desativar, a credencial e o token local
-                são removidos e será necessário validar novamente para reativar.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => onWindowsHelloEnabledChange(!windowsHelloEnabled)}
               disabled={windowsHelloBusy}
+              onClick={() => onWindowsHelloEnabledChange(!windowsHelloEnabled)}
               className={cn(
                 'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
                 windowsHelloEnabled
-                  ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-200'
+                  ? 'bg-rose-600 border-rose-500 shadow-lg shadow-rose-200'
                   : 'bg-slate-200 border-slate-300'
               )}
-              aria-pressed={windowsHelloEnabled}
-              aria-label="Ativar ou desativar Windows Hello"
             >
               <span
                 className={cn(
@@ -902,112 +1052,112 @@ const SettingsView = ({
                 {windowsHelloBusy ? (
                   <Loader2 size={12} className="animate-spin text-slate-500" />
                 ) : (
-                  <ScanFace size={12} className={cn(windowsHelloEnabled ? 'text-emerald-600' : 'text-slate-400')} />
+                  <ScanFace size={12} className={cn(windowsHelloEnabled ? 'text-rose-600' : 'text-slate-400')} />
                 )}
               </span>
             </button>
           </div>
-        </div>
-
-        {/* Estilo de confirmação */}
-        <div className="mb-4">
-          <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Animação de Confirmação</h3>
-          <p className="text-xs text-slate-500 mt-2">
-            Escolha como o card de confirmação deve aparecer ao iniciar um relatório.
-          </p>
-        </div>
-
-        <div className={cn('space-y-5', !animationsEnabled && 'opacity-50')}>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {animationOptions.map(option => {
-            const isActive = successAnimationStyle === option.id;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                disabled={!animationsEnabled}
-                onClick={() => onSuccessAnimationStyleChange(option.id)}
-                className={cn(
-                  'w-full text-left p-4 rounded-2xl border-2 transition-all duration-300',
-                  isActive
-                    ? 'border-blue-500 bg-blue-50/60 shadow-md shadow-blue-100'
-                    : 'border-slate-100 bg-white hover:border-blue-200 hover:bg-blue-50/30',
-                  !animationsEnabled && 'cursor-not-allowed'
-                )}
-              >
-                <div className="flex items-start gap-3">
-                  <div
-                    className={cn(
-                      'w-9 h-9 rounded-xl flex items-center justify-center transition-colors',
-                      isActive ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'
-                    )}
-                  >
-                    {option.icon}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-black text-slate-800">{option.title}</p>
-                      {isActive && (
-                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-white px-2 py-0.5 rounded-full border border-blue-100">
-                          Ativo
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">{option.description}</p>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
+          
+          <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 flex items-center justify-between gap-3">
+            <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+              <Shield size={10} className="inline mr-1" />
+              Nota: A biometria requer que o app seja acessado via <strong>localhost</strong> ou <strong>Acesso Externo (HTTPS)</strong>.
+            </p>
+            <button
+              type="button"
+              onClick={() => onWindowsHelloReset()}
+              className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest text-rose-600 bg-white border border-rose-100 hover:bg-rose-50 transition-all shrink-0"
+              title="Use se o switch acima travar ou a biometria parar de funcionar"
+            >
+              Resetar Local
+            </button>
           </div>
+        </div>
+      </CollapsibleSection>
 
-          {/* Duração */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Duração da Confirmação</label>
-            <div className="rounded-2xl border-2 border-slate-100 p-4 bg-slate-50/60">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold text-slate-600">Tempo de permanência do card</span>
-                <span className="text-xs font-black text-blue-600">{successAnimationDurationSec.toFixed(1)}s</span>
-              </div>
-              <input
-                type="range"
-                min={0.8}
-                max={4}
-                step={0.1}
-                disabled={!animationsEnabled}
-                value={successAnimationDurationSec}
-                onChange={(e) => onSuccessAnimationDurationSecChange(Number(e.target.value))}
-                className="w-full accent-blue-600 disabled:cursor-not-allowed"
-              />
+      {/* ======== SEÇÃO 4: Animações e Visual ======== */}
+      <CollapsibleSection
+        title="Animações e Visual"
+        subtitle="Configurações de animação e tempo de interface"
+        icon={<Sparkles size={18} />}
+        iconBg="bg-blue-50"
+        iconColor="text-blue-600"
+        defaultOpen={false}
+      >
+        <div className="space-y-6">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-black text-slate-700 uppercase tracking-widest">Animações da Interface</p>
+              <p className="text-xs text-slate-500 mt-1">Habilita transições suaves e efeitos visuais em toda a plataforma.</p>
             </div>
+            <button
+              type="button"
+              onClick={() => onAnimationsEnabledChange(!animationsEnabled)}
+              className={cn(
+                'relative w-16 h-9 rounded-full transition-all duration-300 ease-out shrink-0 border disabled:opacity-60 disabled:cursor-not-allowed',
+                animationsEnabled
+                  ? 'bg-blue-600 border-blue-500 shadow-lg shadow-blue-200'
+                  : 'bg-slate-200 border-slate-300'
+              )}
+            >
+              <span
+                className={cn(
+                  'absolute top-1 left-1 w-7 h-7 rounded-full bg-white shadow-md transition-all duration-300 ease-out flex items-center justify-center',
+                  animationsEnabled ? 'translate-x-7' : 'translate-x-0'
+                )}
+              />
+            </button>
           </div>
 
-          {/* Intensidade */}
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Intensidade da Animação</label>
-            <div className="flex items-center gap-1 p-1 bg-slate-50 border-2 border-slate-100 rounded-2xl w-full">
-              {[
-                { id: 'suave', label: 'Suave' },
-                { id: 'normal', label: 'Normal' },
-                { id: 'intensa', label: 'Intensa' },
-              ].map(option => (
+          <div className="space-y-4 pt-4 border-t border-slate-100">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Estilo de Confirmação</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {animationOptions.map(option => (
                 <button
                   key={option.id}
                   type="button"
                   disabled={!animationsEnabled}
-                  onClick={() => onSuccessAnimationIntensityChange(option.id as AnimationIntensity)}
+                  onClick={() => onSuccessAnimationStyleChange(option.id)}
                   className={cn(
-                    'flex-1 text-center py-2.5 rounded-xl text-xs font-bold transition-all',
-                    successAnimationIntensity === option.id
-                      ? 'bg-white shadow-sm text-blue-600'
-                      : 'text-slate-500 hover:text-slate-700',
-                    !animationsEnabled && 'cursor-not-allowed'
+                    'w-full text-left p-4 rounded-2xl border-2 transition-all duration-300',
+                    successAnimationStyle === option.id
+                      ? 'border-blue-500 bg-blue-50/60 shadow-md shadow-blue-100'
+                      : 'border-slate-100 bg-white hover:border-blue-200 hover:bg-blue-50/30',
+                    !animationsEnabled && 'opacity-50 cursor-not-allowed'
                   )}
                 >
-                  {option.label}
+                  <div className="flex items-start gap-3">
+                    <div className={cn(
+                      'w-9 h-9 rounded-xl flex items-center justify-center transition-colors',
+                      successAnimationStyle === option.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'
+                    )}>
+                      {option.icon}
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-slate-800">{option.title}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">{option.description}</p>
+                    </div>
+                  </div>
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="space-y-2 pt-4 border-t border-slate-100">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Duração do Card</label>
+              <span className="text-xs font-black text-blue-600">{successAnimationDurationSec}s</span>
+            </div>
+            <input
+              type="range"
+              min="1"
+              max="10"
+              step="0.5"
+              disabled={!animationsEnabled}
+              value={successAnimationDurationSec}
+              onChange={(e) => onSuccessAnimationDurationSecChange(parseFloat(e.target.value))}
+              className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600 disabled:opacity-50"
+            />
           </div>
         </div>
       </CollapsibleSection>

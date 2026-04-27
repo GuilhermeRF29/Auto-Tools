@@ -614,7 +614,40 @@ def run(
             print("Aguardando montagem do Dashboard inicial...")
             dashboard_frame = page.frame_locator("iframe").first
             time.sleep(15) 
+
+            # --- NAVEGAÇÃO PARA ABA R$ HORA ---
+            print("Navegando para a aba 'R$ Hora'...")
             
+            # 1. Clicar na seta esquerda até o início do carrossel
+            seletor_seta_esq = 'button[data-testid="carousel-previous-page"]'
+            for _ in range(10): # Limite de segurança
+                seta_esq = dashboard_frame.locator(seletor_seta_esq)
+                if seta_esq.is_visible() and not seta_esq.is_disabled():
+                    print("Voltando carrossel de abas...")
+                    seta_esq.click()
+                    time.sleep(0.8)
+                else:
+                    break
+            
+            # 2. Selecionar a aba "R$ Hora"
+            seletor_dashboard_rhoras = 'div[data-testid="section"]'
+            selecao_dashboard_rhoras = dashboard_frame.locator(seletor_dashboard_rhoras).filter(has_text="R$ Hora")
+            
+            if selecao_dashboard_rhoras.count() > 0:
+                print("Clicando na aba 'R$ Hora'...")
+                selecao_dashboard_rhoras.first.click()
+            else:
+                print("Aba não encontrada pelo filtro principal, tentando via label de texto...")
+                try:
+                    dashboard_frame.locator('div.textLabel:has-text("R$ Hora")').first.click()
+                except:
+                    print("Aviso: Não foi possível clicar na aba 'R$ Hora'.")
+            
+            time.sleep(3) 
+            esperar_carregamento(dashboard_frame)
+            
+            # O Snapshot virgem será tirado agora na aba correta.
+
             # Pega Snapshot do Painel Virgem (antes de tocar em nada)
             # Dessa forma podemos forçar o sistema a sentir a Primeira filtragem de forma rastreável!
             valor_virgem_orcado = obter_valor_base_valido(dashboard_frame, "Valor Orçado")

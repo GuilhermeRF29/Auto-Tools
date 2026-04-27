@@ -8,6 +8,7 @@ import BackgroundAnimation from '../components/BackgroundAnimation';
 import Button from '../components/Button';
 import { cn } from '../utils/cn';
 import { useDialog } from '../context/DialogContext';
+import { useUI } from '../context/UIContext';
 import {
   authenticateWithWindowsHello,
   clearWindowsHelloHint,
@@ -16,6 +17,7 @@ import {
 } from '../utils/windowsHello';
 import {
   clearStoredPendingDeviceRequest,
+  getStoredDeviceToken,
   getStoredPendingDeviceRequest,
   setStoredDeviceToken,
   setStoredPendingDeviceRequest,
@@ -51,6 +53,7 @@ const createDeviceFingerprint = () => {
 export default function LoginView({ serverStatus, serverInfo, animationsEnabled }: LoginViewProps) {
   const { setUser, isLoggingIn } = useAuth(); // using global auth context
   const { showAlert } = useDialog();
+  const { updateStatus } = useUI();
   const [internalIsLoggingIn, setInternalIsLoggingIn] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [authData, setAuthData] = useState({ user: '', pass: '', name: '' });
@@ -122,6 +125,13 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
   useEffect(() => {
     loadDeviceAccessSession();
   }, [loadDeviceAccessSession]);
+
+  // Auto-trigger de solicitação de acesso para dispositivos conhecidos
+  useEffect(() => {
+    if (deviceAccessState === 'blocked' && !isRequestingDeviceAccess && serverStatus === 'online') {
+      handleRequestDeviceAccess();
+    }
+  }, [deviceAccessState, isRequestingDeviceAccess, serverStatus]);
 
   const pollPendingRequest = useCallback(async () => {
     if (!pendingRequest?.requestId || !pendingRequest?.requestKey) return;
@@ -282,9 +292,13 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
     }
     setInternalIsLoggingIn(true);
     try {
+      const deviceToken = getStoredDeviceToken();
       const response = await fetch('/api/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(deviceToken ? { 'x-autotools-device-token': deviceToken } : {})
+        },
         body: JSON.stringify({ usuario: authData.user, senha: authData.pass })
       });
       if (!response.ok) {
@@ -332,9 +346,13 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
     }
     setInternalIsLoggingIn(true);
     try {
+      const deviceToken = getStoredDeviceToken();
       const response = await fetch('/api/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(deviceToken ? { 'x-autotools-device-token': deviceToken } : {})
+        },
         body: JSON.stringify({ usuario: authData.user, senha: authData.pass, nome: authData.name })
       });
       if (!response.ok) {
@@ -412,8 +430,13 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
                 <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse mx-1.5 shadow-[0_0_8px_rgba(239,44,44,0.5)]"></div>
               )}
               <span className="text-[11px] font-bold text-slate-300 tracking-tight">
-                Servidor: {serverStatus === 'online' ? (serverInfo?.version || 'Rodando (v1.5.0)') : 'Servidor Desconectado'}
+                Servidor: {serverStatus === 'online' ? (serverInfo?.version || 'v1.5.0') : 'Servidor Desconectado'}
               </span>
+              {updateStatus.hasUpdate && (
+                <div className="bg-blue-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full animate-bounce">
+                  ATUALIZAÇÃO DISPONÍVEL ({updateStatus.remoteVersion})
+                </div>
+              )}
             </div>
           </div>
 
@@ -575,18 +598,29 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
                   </Button>
 
                   {!isRegistering && windowsHelloAvailable && (
-                    <Button
-                      type="button"
-                      disabled={loadingState}
-                      onClick={handleWindowsHelloLogin}
-                      className="w-full py-3 text-xs font-black uppercase tracking-[0.15em] mt-2 rounded-2xl border-2 !border-emerald-800 !bg-emerald-700 !text-white hover:!bg-emerald-800 transition-all"
-                    >
-                      {isWindowsHelloLoading ? (
-                        <><Loader2 size={16} className="animate-spin mr-2" /> VALIDANDO BIOMETRIA...</>
-                      ) : (
-                        <><Fingerprint size={16} className="mr-2" /> ENTRAR COM WINDOWS HELLO</>
+                    <div className="space-y-2">
+                      <Button
+                        type="button"
+                        disabled={loadingState}
+                        onClick={handleWindowsHelloLogin}
+                        className="w-full py-3 text-xs font-black uppercase tracking-[0.15em] mt-2 rounded-2xl border-2 !border-emerald-800 !bg-emerald-700 !text-white hover:!bg-emerald-800 transition-all"
+                      >
+                        {isWindowsHelloLoading ? (
+                          <><Loader2 size={16} className="animate-spin mr-2" /> VALIDANDO BIOMETRIA...</>
+                        ) : (
+                          <><Fingerprint size={16} className="mr-2" /> ENTRAR COM WINDOWS HELLO</>
+                        )}
+                      </Button>
+                      
+                      {window.location.hostname === '127.0.0.1' && (
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl animate-in fade-in slide-in-from-top-1">
+                          <p className="text-[10px] text-amber-700 leading-relaxed font-bold">
+                            <ShieldAlert size={10} className="inline mr-1" /> 
+                            DICA: Para evitar erros no Windows Hello, use o endereço <a href={`http://localhost:${window.location.port}`} className="underline hover:text-amber-900">localhost</a> em vez de 127.0.0.1.
+                          </p>
+                        </div>
                       )}
-                    </Button>
+                    </div>
                   )}
                 </form>
 
