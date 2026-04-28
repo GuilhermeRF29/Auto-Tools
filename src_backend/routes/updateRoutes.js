@@ -53,6 +53,7 @@ router.post('/update/download', async (req, res) => {
 router.post('/update/apply', (req, res) => {
   const rootDir = getRootDir();
   const updaterScriptPath = path.join(rootDir, 'apply_update.ps1');
+  const exePathStr = process.execPath;
 
   // Script PowerShell que:
   // 1. Espera o processo atual fechar
@@ -94,8 +95,10 @@ Remove-Item $tempZip
 Remove-Item -Recurse $tempExtract
 
 Write-Host "Reiniciando Auto Tools..."
-$exePath = Join-Path $destDir "Auto Tools.exe"
-if (Test-Path $exePath) {
+$exePath = "${exePathStr}"
+if ($exePath -match "electron\\.exe$") {
+    Start-Process -FilePath "explorer.exe" -ArgumentList $destDir
+} elseif (Test-Path $exePath) {
     Start-Process -FilePath $exePath
 } else {
     Start-Process -FilePath "explorer.exe" -ArgumentList $destDir
@@ -103,7 +106,8 @@ if (Test-Path $exePath) {
 Write-Host "Atualização concluída!"
 `;
 
-  fs.writeFileSync(updaterScriptPath, psScript);
+  // Adicionamos o BOM UTF-8 (\ufeff) para que o PowerShell leia os acentos corretamente
+  fs.writeFileSync(updaterScriptPath, '\ufeff' + psScript, 'utf8');
 
   res.json({ success: true, message: 'Reiniciando para aplicar atualização...' });
 
