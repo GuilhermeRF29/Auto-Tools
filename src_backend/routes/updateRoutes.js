@@ -61,7 +61,12 @@ router.post('/update/apply', (req, res) => {
   // 4. Reinicia o app
   const psScript = `
 $ErrorActionPreference = 'Stop'
-Write-Host "Aguardando encerramento do Auto Tools..."
+Write-Host "Aguardando resposta do servidor..."
+Start-Sleep -Seconds 2
+Write-Host "Encerrando Auto Tools..."
+Stop-Process -Name "Auto Tools" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "electron" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
 $repo = "${GITHUB_REPO}"
@@ -81,16 +86,20 @@ $extractedFolder = Get-ChildItem -Path $tempExtract | Select-Object -First 1
 $sourceFolder = $extractedFolder.FullName
 
 Write-Host "Aplicando atualização em $destDir..."
-Copy-Item -Path "$sourceFolder\\*" -Destination $destDir -Recurse -Force
+# Usando xcopy para evitar bugs do Copy-Item do PowerShell com merge de pastas
+cmd.exe /c "xcopy /E /Y /I /Q ""$sourceFolder\\*"" ""$destDir\\"""
 
 Write-Host "Limpando arquivos temporários..."
 Remove-Item $tempZip
 Remove-Item -Recurse $tempExtract
 
 Write-Host "Reiniciando Auto Tools..."
-$exePath = Get-Process -Id $PID -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path
-# Como este script roda fora, precisamos achar o executável principal ou apenas abrir a pasta
-Start-Process -FilePath "explorer.exe" -ArgumentList $destDir # Fallback simples
+$exePath = Join-Path $destDir "Auto Tools.exe"
+if (Test-Path $exePath) {
+    Start-Process -FilePath $exePath
+} else {
+    Start-Process -FilePath "explorer.exe" -ArgumentList $destDir
+}
 Write-Host "Atualização concluída!"
 `;
 

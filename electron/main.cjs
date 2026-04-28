@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const probeBackend = () => new Promise((resolve) => {
   const req = http.get({
-    hostname: 'localhost', // Mudado de 127.0.0.1
+    hostname: '127.0.0.1', // Restaurado para IPv4 fixo para evitar erro de ::1
     port: SERVER_PORT,
     path: '/api/status',
     timeout: 2000,
