@@ -5,15 +5,16 @@ import { useUI } from '../context/UIContext';
 import Button from './Button';
 
 export default function UpdateOverlay() {
-  const { updateStatus, applyUpdate } = useUI();
+  const { updateStatus, applyUpdate, currentView } = useUI();
 
   if (!updateStatus.isUpdating && !updateStatus.hasUpdate) return null;
 
   // Se houver atualização mas o usuário ainda não clicou em "Atualizar",
-  // mostramos apenas se ele estiver na Dashboard ou Login (opcional).
-  // Mas o usuário pediu que se houver atualização, sugira a reinicialização.
-  
+  // ocultamos o popup flutuante na tela de "Início" (dashboard) 
+  // e na tela de login (que também usa o estado inicial 'dashboard'), 
+  // pois eles já possuem os alertas na própria interface.
   const isBlocking = updateStatus.isUpdating || updateStatus.isCompleted;
+  const hideFloating = currentView === 'dashboard';
 
   return (
     <AnimatePresence>
@@ -80,7 +81,7 @@ export default function UpdateOverlay() {
       )}
 
       {/* Notificação flutuante se houver atualização mas não estiver bloqueando */}
-      {!isBlocking && updateStatus.hasUpdate && (
+      {!isBlocking && updateStatus.hasUpdate && !hideFloating && (
         <motion.div
           initial={{ y: 100, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}

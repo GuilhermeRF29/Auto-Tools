@@ -62,6 +62,7 @@ router.post('/update/apply', (req, res) => {
   // 4. Reinicia o app
   const psScript = `
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 Write-Host "Aguardando resposta do servidor..."
 Start-Sleep -Seconds 2
 Write-Host "Encerrando Auto Tools..."
@@ -106,8 +107,8 @@ if ($exePath -match "electron\\.exe$") {
 Write-Host "Atualização concluída!"
 `;
 
-  // Adicionamos o BOM UTF-8 (\ufeff) para que o PowerShell leia os acentos corretamente
-  fs.writeFileSync(updaterScriptPath, '\ufeff' + psScript, 'utf8');
+  // Escrevemos em UTF-16LE com BOM para garantir compatibilidade total no Windows
+  fs.writeFileSync(updaterScriptPath, '\ufeff' + psScript, 'utf16le');
 
   res.json({ success: true, message: 'Reiniciando para aplicar atualização...' });
 
