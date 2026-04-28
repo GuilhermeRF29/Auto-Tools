@@ -27,7 +27,8 @@ import {
   Image as ImageIcon,
   Images,
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+import { pickDirectory } from '../utils/nativeDialogs';
 import { toPng } from 'html-to-image';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -452,12 +453,11 @@ const DemandDashboardView = () => {
 
   const handleChooseFolder = async () => {
     try {
-      const response = await fetch('/api/abrir-explorador-pastas');
-      const json = await response.json();
-      if (json?.caminho) {
-        setBaseDirDraft(json.caminho);
+      const path = await pickDirectory();
+      if (path) {
+        setBaseDirDraft(path);
       }
-    } catch {
+    } catch (error) {
       // Sem erro visual, usuario pode digitar manualmente.
     }
   };

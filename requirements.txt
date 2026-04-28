@@ -18,6 +18,9 @@ openpyxl>=3.1.0             # Leitura/escrita de Excel (.xlsx)
 duckdb>=0.10.0              # Consultas analíticas em arquivos grandes
 pyarrow>=14.0.0             # Suporte a Parquet
 pandas>=2.1.0               # Manipulação de DataFrames
+polars>=1.40.1              # Processamento de dados
+fastexcel>=0.20.1           # Leitura/escrita de Excel (.xlsx)
+xlrd>=2.0.2                 # Leitura de Excel (.xls)
 
 # === Automação Web ===
 playwright>=1.40.0          # Browser automation (substitui Selenium)

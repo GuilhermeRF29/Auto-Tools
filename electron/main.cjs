@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const http = require('http');
@@ -194,6 +194,26 @@ const createMainWindow = async () => {
   if (isDev) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
+
+  // Handlers para Diálogos Nativos (Modernos)
+  ipcMain.handle('dialog:openDirectory', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (canceled) return '';
+    return filePaths[0];
+  });
+
+  ipcMain.handle('dialog:openExcelFiles', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Arquivos Excel', extensions: ['xlsx', 'xls', 'xlsm'] }
+      ]
+    });
+    if (canceled) return [];
+    return filePaths;
+  });
 };
 
 app.whenReady().then(async () => {

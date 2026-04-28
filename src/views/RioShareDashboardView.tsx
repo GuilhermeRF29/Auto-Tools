@@ -16,7 +16,8 @@ import {
   Table2,
   X,
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+import { pickDirectory } from '../utils/nativeDialogs';
 import {
   Bar,
   CartesianGrid,
@@ -1828,14 +1829,13 @@ const RioShareDashboardView = () => {
 
   const handleChooseFolder = async () => {
     try {
-      const response = await fetch('/api/abrir-explorador-pastas');
-      const json = await response.json();
-      if (json?.caminho) {
-        setBaseDirDraft(json.caminho);
-        setBaseDir(json.caminho);
-        localStorage.setItem(STORAGE_KEY, json.caminho);
+      const path = await pickDirectory();
+      if (path) {
+        setBaseDirDraft(path);
+        setBaseDir(path);
+        localStorage.setItem(STORAGE_KEY, path);
       }
-    } catch {
+    } catch (error) {
       // Usuario ainda pode informar pasta manualmente.
     }
   };

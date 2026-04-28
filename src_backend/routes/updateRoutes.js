@@ -13,7 +13,11 @@ const ZIP_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/main.zip`;
 router.get('/update/check', async (req, res) => {
   try {
     const localVersionPath = path.join(getRootDir(), 'version.json');
-    const localVersion = JSON.parse(fs.readFileSync(localVersionPath, 'utf8'));
+    let localVersion = { version: '0.0.0' };
+    
+    if (fs.existsSync(localVersionPath)) {
+      localVersion = JSON.parse(fs.readFileSync(localVersionPath, 'utf8'));
+    }
 
     const response = await got(VERSION_URL).json();
     const remoteVersion = response.version;

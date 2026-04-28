@@ -58,15 +58,35 @@ const startTunnelLogic = async (port) => {
 
     console.log(`[CLOUDFLARE] Iniciando túnel seguro na porta ${port}...`);
     
-    // Usamos shell: true para garantir compatibilidade com npx no Windows
-    tunnelProcess = spawn('npx', ['-y', 'cloudflared', 'tunnel', '--url', `http://127.0.0.1:${port}`], {
-        shell: true,
+    // Tenta encontrar um binário local primeiro (para máquinas sem Node/npx)
+    const binDir = path.join(getRootDir(), 'bin');
+    const localCloudflared = path.join(binDir, 'cloudflared.exe');
+    
+    const isWin = process.platform === 'win32';
+    let cmd, args;
+    if (fs.existsSync(localCloudflared)) {
+        console.log('[CLOUDFLARE] Usando binário local:', localCloudflared);
+        cmd = localCloudflared;
+        args = ['tunnel', '--url', `http://127.0.0.1:${port}`];
+    } else {
+        console.log('[CLOUDFLARE] npx cloudflared (pode falhar se Node não estiver instalado)');
+        cmd = isWin ? 'npx.cmd' : 'npx';
+        args = ['-y', 'cloudflared', 'tunnel', '--url', `http://127.0.0.1:${port}`];
+    }
+
+    tunnelProcess = spawn(cmd, args, {
+        shell: false,
         windowsHide: true
+    });
+
+    tunnelProcess.on('error', (err) => {
+        console.error('[CLOUDFLARE] Erro ao disparar processo:', err.message);
+        isStarting = false;
     });
 
     const urlRegex = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
     
-    tunnelProcess.stderr.on('data', (data) => {
+    const handleOutput = (data) => {
         const output = data.toString();
         const match = output.match(urlRegex);
         if (match && !currentTunnelUrl) {
@@ -74,7 +94,10 @@ const startTunnelLogic = async (port) => {
             console.log('[CLOUDFLARE] Sucesso! Acesso liberado em:', currentTunnelUrl);
             isStarting = false;
         }
-    });
+    };
+
+    tunnelProcess.stdout.on('data', handleOutput);
+    tunnelProcess.stderr.on('data', handleOutput);
 
     tunnelProcess.on('close', () => {
         currentTunnelUrl = null;
@@ -147,7 +170,7 @@ export const shutdownTunnel = () => {
         try {
             if (process.platform === 'win32') {
                 // Mata o processo e todos os seus filhos (/T) de forma forçada (/F)
-                spawn('taskkill', ['/F', '/T', '/PID', pid.toString()], { shell: true });
+                spawn('taskkill', ['/F', '/T', '/PID', pid.toString()], { shell: false });
             } else {
                 tunnelProcess.kill('SIGKILL');
             }

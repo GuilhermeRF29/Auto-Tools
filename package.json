@@ -75,8 +75,11 @@
       "core/**/*",
       "automacoes/**/*",
       "padrao/**/*",
+      "bin/**/*",
       "electron/**/*",
       "requirements.txt",
+      "version.json",
+      "apply_update.ps1",
       "setup_db.py",
       "index.html",
       "src/assets/**/*"

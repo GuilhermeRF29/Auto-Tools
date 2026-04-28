@@ -19,7 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { runPythonCmd } from './src_backend/utils/pythonProxy.js';
-import { PYTHON_PATH } from './src_backend/config.js';
+import { PYTHON_PATH, getRootDir } from './src_backend/config.js';
 
 // Route imports
 import authRoutes from './src_backend/routes/authRoutes.js';
@@ -62,7 +62,14 @@ app.get('/api/status', async (req, res) => {
         const dbStatus = dbResult?.dbStatus === 'ok' ? 'ok' : 'error';
 
         const localVersionPath = path.join(getRootDir(), 'version.json');
-        const localVersion = JSON.parse(fs.readFileSync(localVersionPath, 'utf8'));
+        let localVersion = { version: '1.5.0' };
+        try {
+            if (fs.existsSync(localVersionPath)) {
+                localVersion = JSON.parse(fs.readFileSync(localVersionPath, 'utf8'));
+            }
+        } catch (e) {
+            console.error('[SYSTEM] Erro ao ler version.json:', e.message);
+        }
 
         return res.json({
             status: dbStatus === 'ok' ? 'ok' : 'degraded',
