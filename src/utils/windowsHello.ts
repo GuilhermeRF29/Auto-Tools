@@ -125,11 +125,13 @@ export const authenticateWithWindowsHello = async (biometricToken: string): Prom
 
 export const disableWindowsHello = async (
   user: Pick<User, 'usuario'>,
-  password: string
+  password?: string,
+  biometricToken?: string
 ): Promise<void> => {
   const payload = await postJson('/api/webauthn/disable', {
     usuario: user.usuario,
     senha: password,
+    biometricToken,
   });
   if (!payload?.success) {
     throw new Error(payload?.error || 'Falha ao desativar Windows Hello.');

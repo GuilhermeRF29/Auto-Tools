@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "config": {
+    "remoteAccessEnabled": true,
+    "approvalRequired": true,
+    "enforceIpMatch": true,
+    "tokenTtlDays": 30,
+    "updatedAt": "2026-04-22T12:39:07.954Z"
+  },
+  "pendingRequests": [
+    {
+      "id": "304e54b1-9c2c-4055-88c2-1bf70e710898",
+      "requestKey": "b0y1V2TKMFtq4zCBHsqR5P83",
+      "status": "approved",
+      "ip": "10.1.2.176",
+      "fingerprint": "fp-406032624",
+      "name": "Cliente Linux armv81",
+      "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36 EdgA/146.0.0.0",
+      "createdAt": "2026-04-22T12:41:09.349Z",
+      "updatedAt": "2026-04-22T12:41:19.411Z",
+      "approvedAt": "2026-04-22T12:41:19.411Z",
+      "rejectedAt": null,
+      "approvedDeviceId": "4625db18-2c1e-4760-b736-d5b5d4acc89a",
+      "issuedToken": "mwelIiz2njdmHy_HFaO39WVO7fmANsylVAAvxk8NPTw",
+      "tokenExpiresAt": "2026-05-22T12:41:19.411Z"
+    }
+  ],
+  "approvedDevices": [
+    {
+      "id": "4625db18-2c1e-4760-b736-d5b5d4acc89a",
+      "name": "Cliente Linux armv81",
+      "tokenHash": "486f6750023c8fe9c50912bc501de4c027d72c2a540a66dc207d95967d1d3906",
+      "firstApprovedIp": "10.1.2.176",
+      "lastIp": "10.1.2.176",
+      "fingerprint": "fp-406032624",
+      "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36 EdgA/146.0.0.0",
+      "createdAt": "2026-04-22T12:41:09.349Z",
+      "approvedAt": "2026-04-22T12:41:19.411Z",
+      "lastSeenAt": "2026-04-22T12:46:21.035Z",
+      "expiresAt": "2026-05-22T12:41:19.411Z",
+      "revokedAt": null
+    }
+  ]
+}

@@ -16,7 +16,38 @@
  */
 import { spawn, exec } from 'child_process';
 import readline from 'readline';
+import { platform } from 'os';
 import { getRootDir, PYTHON_PATH } from '../config.js';
+
+const isWin = platform() === 'win32';
+
+/**
+ * Retorna as opções de spawn configuradas para o ambiente (Windows vs POSIX).
+ */
+const getSpawnOptions = () => ({
+  cwd: getRootDir(),
+  env: { 
+    PATH: process.env.PATH,
+    SystemRoot: process.env.SystemRoot,
+    ComSpec: process.env.ComSpec,
+    ...process.env, 
+    PYTHONPATH: getRootDir(),
+    PYTHONIOENCODING: 'utf-8', 
+    PYTHONUTF8: '1' 
+  },
+  shell: false, 
+});
+
+/**
+ * Retorna o comando python devidamente formatado.
+ */
+const getPythonCmd = () => PYTHON_PATH;
+
+/**
+ * Adiciona o bootstrap necessário para o Python portátil encontrar os módulos locais.
+ * O uso de r'' (raw string) evita problemas com backslashes no Windows.
+ */
+const getBootstrapCmd = () => `import sys; sys.path.insert(0, r'${getRootDir()}'); `;
 
 /**
  * Runs a one-liner python code using Python's `-c` flag.
@@ -28,10 +59,8 @@ import { getRootDir, PYTHON_PATH } from '../config.js';
  */
 export const runPythonCmd = (rawCommand, args = []) => {
   return new Promise((resolve, reject) => {
-    const childPy = spawn(PYTHON_PATH, ["-c", rawCommand, ...args], {
-      cwd: getRootDir(),
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
-    });
+    const fullCommand = getBootstrapCmd() + rawCommand;
+    const childPy = spawn(getPythonCmd(), ["-c", fullCommand, ...args], getSpawnOptions());
     
     let stdoutData = '';
     let stderrData = '';
@@ -55,6 +84,10 @@ export const runPythonCmd = (rawCommand, args = []) => {
         resolve(rawOut);
       }
     });
+
+    childPy.on('error', (err) => {
+      reject(new Error(`[Spawn Error]: Falha ao disparar Python em ${PYTHON_PATH}. Detalhes: ${err.message}`));
+    });
   });
 };
 
@@ -67,10 +100,8 @@ export const runPythonCmd = (rawCommand, args = []) => {
  * @returns {AsyncGenerator<object, void, unknown>}
  */
 export async function* runPythonCmdStream(rawCommand, args = []) {
-  const childPy = spawn(PYTHON_PATH, ["-c", rawCommand, ...args], {
-    cwd: getRootDir(),
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
-  });
+  const fullCommand = getBootstrapCmd() + rawCommand;
+  const childPy = spawn(getPythonCmd(), ["-c", fullCommand, ...args], getSpawnOptions());
 
   const rl = readline.createInterface({
     input: childPy.stdout,
@@ -118,10 +149,12 @@ export async function* runPythonCmdStream(rawCommand, args = []) {
  * @returns ChildProcess instance (unpromisified) so we can attach events (for automations).
  */
 export const spawnPythonScript = (scriptPath, args = []) => {
-  return spawn(PYTHON_PATH, [scriptPath, ...args], { 
-    cwd: getRootDir(),
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
-  });
+  // Para scripts, injetamos o caminho via variável de ambiente ou via wrapper -c se necessário.
+  // Como scripts .py geralmente são chamados via spawn direto, garantimos que o CWD está correto
+  // e o PYTHONPATH está setado nas opções (embora o Python portátil possa ignorar PYTHONPATH).
+  // Se o PYTHONPATH falhar, os scripts precisarão fazer o sys.path.append manualmente ou
+  // usaremos um wrapper aqui. Para agora, confiamos no CWD e no PYTHONPATH configurado.
+  return spawn(getPythonCmd(), [scriptPath, ...args], getSpawnOptions());
 };
 
 export const execCmd = (cmd) => {

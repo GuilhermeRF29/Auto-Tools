@@ -1,0 +1,7 @@
+python313.zip
+.
+..
+../app
+
+# Uncomment to run site.main() automatically
+import site

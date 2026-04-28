@@ -9,6 +9,9 @@ import { runPythonCmd, execCmd, spawnPythonScript } from '../utils/pythonProxy.j
 import { getRootDir, BACKUP_DIR } from '../config.js';
 import path from 'path';
 import fs from 'fs';
+import { getLocalIp } from '../utils/networkUtils.js';
+import { getTunnelUrl } from './tunnelRoutes.js';
+import QRCode from 'qrcode';
 
 const router = Router();
 
@@ -61,14 +64,12 @@ const runExtensionConverter = (payloadBase64) => {
 
 // EXPLORER: Abrir explorador de pastas do Windows nativo
 router.get('/abrir-explorador-pastas', async (req, res) => {
-    const script = `import tkinter as tk; from tkinter import filedialog; import json, os; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); p=filedialog.askdirectory(title='Selecione a Pasta'); root.destroy(); print(json.dumps({'caminho': os.path.normpath(p) if p else ''}))`;
+    // PowerShell snippet para abrir seletor de pasta nativo
+    const psCommand = `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; if($f.ShowDialog() -eq 'OK'){ Write-Host $f.SelectedPath }"`;
     
     try {
-        const result = await runPythonCmd(script, []);
-        if (result && typeof result === 'object' && !Array.isArray(result)) {
-            return res.json({ caminho: typeof result.caminho === 'string' ? result.caminho : '' });
-        }
-        return res.json({ caminho: '' });
+        const { stdout } = await execCmd(psCommand);
+        return res.json({ caminho: stdout.trim() || '' });
     } catch (e) {
         console.error(`[EXPLORER_ERROR]`, e);
         return res.json({ caminho: '' });
@@ -77,17 +78,13 @@ router.get('/abrir-explorador-pastas', async (req, res) => {
 
 // EXPLORER: Abrir seletor nativo de arquivos Excel
 router.get('/abrir-explorador-arquivos-excel', async (req, res) => {
-    const script = `import tkinter as tk; from tkinter import filedialog; import json, os; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); f=filedialog.askopenfilenames(title='Selecione os arquivos Excel', filetypes=[('Arquivos Excel', '*.xlsx *.xls *.xlsm')]); root.destroy(); paths=[os.path.normpath(p) for p in f if p]; print(json.dumps({'caminhos': paths}))`;
+    // PowerShell snippet para abrir seletor de arquivos Excel
+    const psCommand = `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Filter = 'Arquivos Excel (*.xlsx;*.xls;*.xlsm)|*.xlsx;*.xls;*.xlsm'; $f.Multiselect = $true; if($f.ShowDialog() -eq 'OK'){ Write-Host ($f.FileNames -join '|') }"`;
 
     try {
-        const result = await runPythonCmd(script, []);
-        if (result && typeof result === 'object' && !Array.isArray(result)) {
-            const caminhos = Array.isArray(result.caminhos)
-                ? result.caminhos.filter((item) => typeof item === 'string' && item.trim())
-                : [];
-            return res.json({ caminhos });
-        }
-        return res.json({ caminhos: [] });
+        const { stdout } = await execCmd(psCommand);
+        const paths = stdout.trim() ? stdout.trim().split('|').map(p => p.trim()) : [];
+        return res.json({ caminhos: paths });
     } catch (e) {
         console.error(`[EXPLORER_FILES_ERROR]`, e);
         return res.json({ caminhos: [] });
@@ -208,6 +205,48 @@ router.post('/clean-backups', async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ success: false });
+    }
+});
+
+// SYSTEM: Informações de rede para acesso remoto
+router.get('/network-info', (req, res) => {
+    const ip = getLocalIp();
+    const port = process.env.AUTOTOOLS_SERVER_PORT || 3001;
+    const tunnelUrl = getTunnelUrl();
+    
+    res.json({
+        localIp: ip,
+        port: port,
+        localUrl: `http://${ip}:${port}`,
+        tunnelUrl: tunnelUrl,
+        url: tunnelUrl || `http://${ip}:${port}`,
+        isTunnelActive: !!tunnelUrl,
+        lanUrls: ip ? [`http://${ip}:${port}`] : []
+    });
+});
+
+// NOVO: Gerador de QR Code Local
+router.get('/qr-code', async (req, res) => {
+    try {
+        const { url } = req.query;
+        if (!url) return res.status(400).send('URL faltante');
+
+        // Gera o buffer da imagem PNG
+        const qrBuffer = await QRCode.toBuffer(url, {
+            type: 'png',
+            margin: 2,
+            scale: 8,
+            color: {
+                dark: '#0f172a', // Slate 900
+                light: '#ffffff'
+            }
+        });
+
+        res.type('png');
+        res.send(qrBuffer);
+    } catch (error) {
+        console.error('[QR] Erro ao gerar:', error);
+        res.status(500).send('Erro ao gerar QR Code');
     }
 });
 

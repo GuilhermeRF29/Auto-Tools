@@ -81,12 +81,18 @@ const buildDemandFilesSignature = (files = []) => files
 const pickDemandSheet = (workbook) => {
     const names = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
     if (names.length === 0) return null;
+
     const preferredByName = names.find((name) => /base\s*relatorio|forecast|demanda|base\s*principal/i.test(name));
     if (preferredByName) return preferredByName;
+
+    // Se não temos as abas carregadas (uso de bookSheets: true em dashboardUtils), 
+    // não podemos validar por conteúdo. Retornamos a primeira.
+    if (!workbook.Sheets) return names[0];
+
     for (const name of names) {
         const sheet = workbook.Sheets[name];
         if (!sheet) continue;
-        const sampleRows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
+        const sampleRows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false, range: 0 });
         const first = sampleRows[0];
         if (!first) continue;
         const keys = Object.keys(first).map((key) => normalizeDemandToken(key));

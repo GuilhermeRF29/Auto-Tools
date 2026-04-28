@@ -20,6 +20,8 @@ import {
   Wrench,
 } from 'lucide-react';
 
+import { pickDirectory, pickExcelFiles } from '../utils/nativeDialogs';
+
 import Card from '../components/Card';
 import Button from '../components/Button';
 import { cn } from '../utils/cn';
@@ -213,11 +215,7 @@ const ToolsView = () => {
   const handlePickFiles = async () => {
     setIsPickingFiles(true);
     try {
-      const resp = await fetch('/api/abrir-explorador-arquivos-excel');
-      const data = await resp.json();
-      const incoming = Array.isArray(data?.caminhos)
-        ? data.caminhos.filter((item: unknown) => typeof item === 'string' && item.trim()) as string[]
-        : [];
+      const incoming = await pickExcelFiles();
 
       if (incoming.length === 0) {
         addLog('Nenhum arquivo selecionado.');
@@ -237,11 +235,10 @@ const ToolsView = () => {
   const handlePickOutputDir = async () => {
     setIsPickingDir(true);
     try {
-      const resp = await fetch('/api/abrir-explorador-pastas');
-      const data = await resp.json();
-      if (typeof data?.caminho === 'string' && data.caminho.trim()) {
-        setOutputDir(data.caminho);
-        addLog(`Pasta de destino selecionada: ${data.caminho}`);
+      const path = await pickDirectory();
+      if (path) {
+        setOutputDir(path);
+        addLog(`Pasta de destino selecionada: ${path}`);
       } else {
         addLog('Selecao de pasta cancelada.');
       }

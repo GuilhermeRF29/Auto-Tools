@@ -15,6 +15,7 @@ import type { View } from '../types';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import { getWindowsHelloHint, isWindowsHelloAvailable } from '../utils/windowsHello';
+import { useUI } from '../context/UIContext';
 
 const HOME_QUICK_CARDS: Array<{
   view: View;
@@ -74,6 +75,8 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
   const cardsScrollRef = useRef<HTMLDivElement>(null);
   const [canScrollCardsLeft, setCanScrollCardsLeft] = useState(false);
   const [canScrollCardsRight, setCanScrollCardsRight] = useState(false);
+
+  const { updateStatus, applyUpdate } = useUI();
 
   /** Busca o histórico do banco de dados (sem limite = últimos ~20 registros). */
   const fetchHistory = async () => {
@@ -541,17 +544,36 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
               </div>
             </div>
 
-            <div className="group rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-amber-100/40 p-3 transition-all hover:shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="rounded-xl bg-white/80 p-2 text-amber-700 shadow-sm">
-                  <Sparkles size={18} />
-                </div>
-                <div>
-                  <p className="text-sm font-black text-amber-900">Atualização Pendente</p>
-                  <p className="text-xs font-semibold text-amber-700">Versão 1.2.4 disponível</p>
+            {updateStatus.hasUpdate && (
+              <div className="group rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50 to-blue-100/40 p-3 transition-all hover:shadow-sm animate-in fade-in slide-in-from-right-4 duration-500">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-xl bg-white/80 p-2 text-blue-700 shadow-sm">
+                      <Sparkles size={18} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-blue-900">Atualização Pronta</p>
+                      <p className="text-xs font-semibold text-blue-700">Versão {updateStatus.remoteVersion} disponível</p>
+                    </div>
+                  </div>
+                  <Button variant="ghost" className="text-xs px-2 py-1 bg-white hover:bg-blue-600 hover:text-white border-blue-100 shadow-sm" onClick={applyUpdate}>Instalar</Button>
                 </div>
               </div>
-            </div>
+            )}
+
+            {!updateStatus.hasUpdate && (
+              <div className="group rounded-2xl border border-slate-100 bg-white/40 p-3 opacity-60">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-slate-50 p-2 text-slate-400">
+                    <Sparkles size={18} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-slate-500">Sistema Atualizado</p>
+                    <p className="text-xs font-semibold text-slate-400">Você está na versão mais recente</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </Card>
       </div>

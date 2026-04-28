@@ -4,26 +4,42 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const ROOT_DIR = path.resolve(__dirname, '..'); // project root
+
+const envAppRoot = `${process.env.AUTOTOOLS_APP_ROOT || ''}`.trim();
+const ROOT_DIR = envAppRoot
+  ? path.resolve(envAppRoot)
+  : path.resolve(__dirname, '..');
+
+const envDataRoot = `${process.env.AUTOTOOLS_DATA_DIR || ''}`.trim();
+const DATA_ROOT = envDataRoot
+  ? path.resolve(envDataRoot)
+  : ROOT_DIR;
 
 const resolvePythonPath = () => {
-  const candidates = [
-    path.join(ROOT_DIR, 'venv', 'Scripts', 'python.exe'),
-    path.join(ROOT_DIR, 'backup_pyside', 'venv', 'Scripts', 'python.exe'),
-  ];
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
+  // 1. Prioridade total para a variável enviada pelo Electron/Sistema
+  if (process.env.AUTOTOOLS_PYTHON_PATH) {
+    return process.env.AUTOTOOLS_PYTHON_PATH;
   }
 
-  // Last-resort fallback to PATH when local venvs are missing.
+  // 2. Fallback para estrutura portátil (python-runtime) - RECOMENDADO para produção
+  const portablePath = path.join(ROOT_DIR, 'python-runtime', 'python.exe');
+  if (fs.existsSync(portablePath)) {
+    return portablePath;
+  }
+
+  // 3. Fallback para estrutura de venv (desenvolvimento ou legado)
+  const relativeVenv = path.join('..', 'venv', 'Scripts', 'python.exe');
+  const absoluteVenv = path.join(ROOT_DIR, relativeVenv);
+  
+  if (fs.existsSync(absoluteVenv)) {
+    return absoluteVenv;
+  }
+
   return 'python';
 };
 
 export const PYTHON_PATH = resolvePythonPath();
-export const BACKUP_DIR = path.join(ROOT_DIR, 'backups_sistema');
+export const BACKUP_DIR = path.join(DATA_ROOT, 'backups_sistema');
 
 if (!fs.existsSync(BACKUP_DIR)) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });

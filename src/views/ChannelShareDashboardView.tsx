@@ -13,6 +13,7 @@ import {
   Table2,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { pickExcelFiles } from '../utils/nativeDialogs';
 import { toPng } from 'html-to-image';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -376,9 +377,8 @@ const ChannelShareDashboardView = () => {
 
   const handleChooseFile = async () => {
     try {
-      const response = await fetch('/api/abrir-explorador-arquivos-excel');
-      const json = await response.json();
-      const firstPath = Array.isArray(json?.caminhos) ? String(json.caminhos[0] || '').trim() : '';
+      const paths = await pickExcelFiles();
+      const firstPath = paths.length > 0 ? paths[0].trim() : '';
       if (!firstPath) return;
 
       setSelectedFilePath(firstPath);

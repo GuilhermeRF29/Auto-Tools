@@ -11,6 +11,7 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { pickDirectory } from '../utils/nativeDialogs';
 import {
   Play, CheckCircle, FileSpreadsheet, Loader2,
   ChevronRight, Clock, X, PlayCircle, Bus,
@@ -800,9 +801,8 @@ const ReportsView = ({
                             type="button"
                             onClick={async () => {
                               try {
-                                const res = await fetch('/api/abrir-explorador-pastas');
-                                const data = await res.json();
-                                if (data.caminho) setFolderPath(data.caminho);
+                                const path = await pickDirectory();
+                                if (path) setFolderPath(path);
                               } catch (e) {
                                 await showAlert({
                                   title: 'Falha ao Abrir Explorador',
@@ -846,9 +846,8 @@ const ReportsView = ({
                           type="button"
                           onClick={async () => {
                             try {
-                              const res = await fetch('/api/abrir-explorador-pastas');
-                              const data = await res.json();
-                              if (data.caminho) setOutFolderPath(data.caminho);
+                              const path = await pickDirectory();
+                              if (path) setOutFolderPath(path);
                             } catch (e) {
                                await showAlert({
                                  title: 'Falha ao Abrir Explorador',

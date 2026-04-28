@@ -110,8 +110,12 @@ const VaultView = ({
       const message = e?.message || 'Falha na autenticação biométrica do cofre.';
       if (/token biométrico inválido|expirado|não encontrada|não encontrado|reative/i.test(message)) {
         clearWindowsHelloHint();
-      }
-      if (!silent) {
+        await showAlert({
+          title: 'Sessão Expirada',
+          message: 'Sua sessão biométrica local expirou ou foi invalidada. Por favor, reative o Windows Hello nas Configurações.',
+          tone: 'warning'
+        });
+      } else if (!silent) {
         await showAlert({
           title: 'Falha no Desbloqueio',
           message: 'Não foi possível desbloquear com Windows Hello: ' + message,

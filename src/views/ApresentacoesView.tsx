@@ -29,6 +29,7 @@ import {
   YAxis,
 } from 'recharts';
 import { motion } from 'motion/react';
+import { pickDirectory } from '../utils/nativeDialogs';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import CustomDatePicker from '../components/CustomDatePicker';
@@ -364,14 +365,13 @@ const ApresentacoesView = () => {
 
   const handleChooseFolder = async () => {
     try {
-      const response = await fetch('/api/abrir-explorador-pastas');
-      const json = await response.json();
-      if (json?.caminho) {
-        setBaseDirDraft(json.caminho);
-        setBaseDir(json.caminho);
-        localStorage.setItem(STORAGE_KEY, json.caminho);
+      const path = await pickDirectory();
+      if (path) {
+        setBaseDirDraft(path);
+        setBaseDir(path);
+        localStorage.setItem(STORAGE_KEY, path);
       }
-    } catch {
+    } catch (error) {
       // Silencioso: usuario ainda pode informar o diretorio manualmente.
     }
   };

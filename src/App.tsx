@@ -11,6 +11,7 @@ import { DialogProvider, useDialog } from './context/DialogContext';
 import MainLayout from './layout/MainLayout';
 import LoginView from './views/LoginView';
 import CommandPalette from './components/CommandPalette';
+import UpdateOverlay from './components/UpdateOverlay';
 
 // Views
 import DashboardView from './views/DashboardView';
@@ -44,7 +45,7 @@ type ServerHealthInfo = {
 
 function AppContent() {
   const { user } = useAuth();
-  const { showAlert, showPrompt } = useDialog();
+  const { showAlert, showPrompt, showConfirm } = useDialog();
   const { 
     currentView, setCurrentView,
     isSearchOpen, setIsSearchOpen,
@@ -70,12 +71,21 @@ function AppContent() {
       }
 
       try {
-        const enabled = await getWindowsHelloServerState(Number(user.id));
+        const serverEnabled = await getWindowsHelloServerState(Number(user.id));
+        const localHint = getWindowsHelloHint();
+        
         if (cancelled) return;
-        setWindowsHelloEnabled(enabled);
-        if (!enabled) {
+
+        // Se o servidor diz que está desativado globalmente, limpamos o local
+        if (!serverEnabled && localHint) {
           clearWindowsHelloHint();
+          setWindowsHelloEnabled(false);
+          return;
         }
+
+        // O toggle na interface agora reflete se ESTE dispositivo está pronto
+        setWindowsHelloEnabled(!!localHint && serverEnabled);
+        
       } catch {
         // Keep local UI state if backend state is temporarily unavailable.
       }
@@ -102,13 +112,14 @@ function AppContent() {
       try {
         const alreadyEnabled = await getWindowsHelloServerState(Number(user.id));
         if (alreadyEnabled) {
-          setWindowsHelloEnabled(true);
-          await showAlert({
-            title: 'Windows Hello Já Ativo',
-            message: 'A biometria já está ativa para este usuário. Não é necessário cadastrar novamente.',
+          const confirmAdd = await showConfirm({
+            title: 'Adicionar Novo Dispositivo',
+            message: 'A biometria já está ativa para este usuário em outro dispositivo. Deseja cadastrar este novo dispositivo (celular ou computador) também?',
+            confirmText: 'Sim, cadastrar',
+            cancelText: 'Agora não',
             tone: 'info',
           });
-          return;
+          if (!confirmAdd) return;
         }
       } catch {
         // If state check fails, keep normal activation flow.
@@ -145,35 +156,106 @@ function AppContent() {
       return;
     }
 
+    // CASO: DESATIVAR
+    const hint = getWindowsHelloHint();
+    
+    // Se temos um token local, oferecemos desativar apenas este ou todos
+    if (hint && hint.biometricToken) {
+      const choice = await showConfirm({
+        title: 'Desativar Biometria',
+        message: 'Deseja desativar a biometria apenas NESTE dispositivo ou em TODOS os seus dispositivos cadastrados?',
+        confirmText: 'Apenas neste',
+        cancelText: 'Em todos',
+        tone: 'info',
+      });
+
+      if (choice) {
+        // Desativa apenas este (não precisa de senha pois já temos o token válido)
+        setWindowsHelloBusy(true);
+        try {
+          await disableWindowsHello(user, undefined, hint.biometricToken);
+          setWindowsHelloEnabled(false);
+          await showAlert({
+            title: 'Dispositivo Desvinculado',
+            message: 'Este aparelho não usará mais biometria, mas seus outros dispositivos continuam ativos.',
+            tone: 'success',
+          });
+        } catch (e: any) {
+          const forceClean = await showConfirm({
+            title: 'Falha na Desativação',
+            message: `Ocorreu um erro: ${e?.message || 'Falha desconhecida'}. Deseja forçar a limpeza local para tentar ativar novamente?`,
+            confirmText: 'Forçar Limpeza',
+            cancelText: 'Tentar depois',
+            tone: 'danger',
+          });
+          if (forceClean) {
+            clearWindowsHelloHint();
+            setWindowsHelloEnabled(false);
+          }
+        } finally {
+          setWindowsHelloBusy(false);
+        }
+        return;
+      }
+    }
+
+    // Se não tinha token ou escolheu "Em todos", pede senha
     const password = await showPrompt({
-      title: 'Desativar Windows Hello',
-      message: 'Confirme sua senha para desativar o Windows Hello.',
+      title: 'Desativar Globalmente',
+      message: 'Confirme sua senha para remover a biometria de TODOS os seus aparelhos.',
       inputType: 'password',
       placeholder: 'Digite sua senha',
-      confirmText: 'Desativar',
+      confirmText: 'Desativar Tudo',
       cancelText: 'Cancelar',
       tone: 'warning',
     });
+    
     if (!password || !password.trim()) return;
 
     setWindowsHelloBusy(true);
     try {
       await disableWindowsHello(user, password.trim());
-      clearWindowsHelloHint();
       setWindowsHelloEnabled(false);
       await showAlert({
-        title: 'Windows Hello Desativado',
-        message: 'A credencial/token local foi removida.',
+        title: 'Biometria Desativada',
+        message: 'Acesso biométrico removido de todos os aparelhos com sucesso.',
         tone: 'success',
       });
     } catch (e: any) {
-      await showAlert({
-        title: 'Falha na Desativação',
-        message: e?.message || 'Falha ao desativar Windows Hello.',
+      const forceClean = await showConfirm({
+        title: 'Falha na Desativação Global',
+        message: `Não foi possível desativar no servidor (${e?.message}). Deseja ao menos limpar este dispositivo localmente?`,
+        confirmText: 'Limpar Local',
+        cancelText: 'Manter',
         tone: 'danger',
       });
+      if (forceClean) {
+        clearWindowsHelloHint();
+        setWindowsHelloEnabled(false);
+      }
     } finally {
       setWindowsHelloBusy(false);
+    }
+  };
+
+  const handleWindowsHelloReset = async () => {
+    const confirmed = await showConfirm({
+      title: 'Resetar Biometria Local',
+      message: 'Isso limpará as chaves de biometria apenas deste navegador. Você poderá tentar reativar em seguida. Continuar?',
+      confirmText: 'Sim, Resetar',
+      cancelText: 'Cancelar',
+      tone: 'danger',
+    });
+    
+    if (confirmed) {
+      clearWindowsHelloHint();
+      setWindowsHelloEnabled(false);
+      setWindowsHelloBusy(false);
+      await showAlert({
+        title: 'Reset Concluído',
+        message: 'Configurações locais limpas. Você pode tentar reativar agora.',
+        tone: 'success',
+      });
     }
   };
 
@@ -219,16 +301,20 @@ function AppContent() {
 
   if (!user) {
     return (
-      <LoginView 
-        serverStatus={serverStatus} 
-        serverInfo={serverInfo} 
-        animationsEnabled={true}
-      />
+      <>
+        <UpdateOverlay />
+        <LoginView 
+          serverStatus={serverStatus} 
+          serverInfo={serverInfo} 
+          animationsEnabled={true}
+        />
+      </>
     );
   }
 
   return (
     <MainLayout>
+      <UpdateOverlay />
       <CommandPalette 
         isOpen={isSearchOpen} 
         onClose={() => setIsSearchOpen(false)} 
@@ -306,6 +392,7 @@ function AppContent() {
               onSuccessAnimationIntensityChange={setSuccessAnimationIntensity}
               windowsHelloEnabled={windowsHelloEnabled}
               onWindowsHelloEnabledChange={handleWindowsHelloToggle}
+              onWindowsHelloReset={handleWindowsHelloReset}
               windowsHelloBusy={windowsHelloBusy}
               currentUserId={(user as any)?.id ?? null}
             />
