@@ -117,17 +117,17 @@ if ($exePath -match "electron\\.exe$") {
 }
 Write-Host "Atualizacao concluida!"
 Stop-Transcript
-\`;
+`;
 
   // Salvamos como UTF-8 normal. Apenas o caminho do config vai no corpo e não é problemático se tratado assim
   // Porém, adicionaremos UTF-8 BOM para garantir!
-  fs.writeFileSync(updaterScriptPath, '\\ufeff' + psScript, 'utf8');
+  fs.writeFileSync(updaterScriptPath, '\ufeff' + psScript, 'utf8');
 
   res.json({ success: true, message: 'Reiniciando para aplicar atualização...' });
 
   console.log('[UPDATE] Disparando script de atualização via exec start independente...');
   // A chamada do PowerShell é pura, sem argumentos com caminhos, evitando que o cmd.exe quebre o Unicode.
-  exec(\`start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "\${updaterScriptPath}"\`);
+  exec(`start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "${updaterScriptPath}"`);
 });
 
 export default router;
