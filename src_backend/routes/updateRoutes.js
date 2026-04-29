@@ -112,16 +112,14 @@ Write-Host "Atualização concluída!"
 
   res.json({ success: true, message: 'Reiniciando para aplicar atualização...' });
 
-  // Dispara o script e fecha o processo atual
-  console.log('[UPDATE] Disparando script de atualização e fechando...');
-  spawn('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', updaterScriptPath], {
+  // Dispara o script de atualização sem fechar o Node manualmente
+  // Deixamos que o próprio script PowerShell encerre o aplicativo com Stop-Process
+  console.log('[UPDATE] Disparando script de atualização...');
+  spawn('powershell.exe', ['-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', updaterScriptPath], {
     detached: true,
-    stdio: 'ignore'
+    stdio: 'ignore',
+    windowsHide: true
   }).unref();
-
-  setTimeout(() => {
-    process.exit(0);
-  }, 1000);
 });
 
 export default router;
