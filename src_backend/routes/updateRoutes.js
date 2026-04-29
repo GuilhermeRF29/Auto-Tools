@@ -53,10 +53,18 @@ router.post('/update/download', async (req, res) => {
 router.post('/update/apply', (req, res) => {
   const rootDir = getRootDir();
   const updaterScriptPath = path.join(rootDir, 'apply_update.ps1');
+  const configPath = path.join(rootDir, 'update_config.json');
   const exePathStr = process.execPath;
 
+  const configData = {
+    repo: GITHUB_REPO,
+    zipUrl: ZIP_URL,
+    exePath: exePathStr
+  };
+  fs.writeFileSync(configPath, JSON.stringify(configData, null, 2), 'utf8');
+
   // Script agora usa caminhos relativos ao diretório de execução ($PSScriptRoot)
-  // para evitar problemas de encoding na linha de comando do Windows
+  // e lê as configurações complexas de um JSON para evitar erros de acento.
   const psScript = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -65,7 +73,10 @@ $logPath = Join-Path $env:TEMP "autotools_update_log.txt"
 Start-Transcript -Path $logPath -Force
 
 $rootDir = $PSScriptRoot
-$exePath = "${exePathStr.replace(/\\/g, '\\\\')}"
+$config = Get-Content -Raw -Path (Join-Path $rootDir "update_config.json") | ConvertFrom-Json
+$exePath = $config.exePath
+$repo = $config.repo
+$zipUrl = $config.zipUrl
 
 Write-Host "Aguardando resposta do servidor..."
 Start-Sleep -Seconds 2
@@ -74,9 +85,6 @@ Stop-Process -Name "Auto Tools" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "electron" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
-
-$repo = "${GITHUB_REPO}"
-$zipUrl = "${ZIP_URL}"
 $tempZip = Join-Path $env:TEMP "autotools_update.zip"
 $tempExtract = Join-Path $env:TEMP "autotools_extracted"
 
@@ -115,7 +123,6 @@ Stop-Transcript
   res.json({ success: true, message: 'Reiniciando para aplicar atualização...' });
 
   console.log('[UPDATE] Disparando script de atualização relativo via exec start...');
-  // IMPORTANTE: Usamos cwd para que o PowerShell encontre o arquivo sem precisarmos passar o caminho completo com acentos na linha de comando
   exec('start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File apply_update.ps1', { 
     cwd: rootDir 
   });
