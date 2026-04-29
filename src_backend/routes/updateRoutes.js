@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import got from 'got';
 import { getRootDir } from '../config.js';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 
 const router = express.Router();
 const GITHUB_REPO = 'GuilhermeRF29/Auto-Tools'; // Ajustar conforme necessário
@@ -50,22 +50,40 @@ router.post('/update/download', async (req, res) => {
   }
 });
 
-router.post('/update/apply', (req, res) => {
+router.post('/update/apply', async (req, res) => {
   const rootDir = getRootDir();
   const updaterScriptPath = path.join(rootDir, 'apply_update.ps1');
   const configPath = path.join(rootDir, 'update_config.json');
   const exePathStr = process.execPath;
+  
+  const tempZip = path.join(process.env.TEMP, 'autotools_update.zip');
+  const tempExtract = path.join(process.env.TEMP, 'autotools_extracted');
 
-  const configData = {
-    repo: GITHUB_REPO,
-    zipUrl: ZIP_URL,
-    exePath: exePathStr
-  };
-  fs.writeFileSync(configPath, JSON.stringify(configData, null, 2), 'utf8');
+  try {
+    console.log(`[UPDATE] Baixando atualização de ${ZIP_URL}...`);
+    const response = await got(ZIP_URL, { responseType: 'buffer' });
+    fs.writeFileSync(tempZip, response.body);
 
-  // Script agora usa caminhos relativos ao diretório de execução ($PSScriptRoot)
-  // e lê as configurações complexas de um JSON para evitar erros de acento.
-  const psScript = `
+    console.log('[UPDATE] Extraindo arquivos...');
+    if (fs.existsSync(tempExtract)) {
+      fs.rmSync(tempExtract, { recursive: true, force: true });
+    }
+    fs.mkdirSync(tempExtract, { recursive: true });
+
+    // Usamos o PowerShell apenas para extrair enquanto o app ainda está vivo
+    const extractArgs = ['-Command', `Expand-Archive -Path "${tempZip}" -DestinationPath "${tempExtract}" -Force`];
+    await new Promise((resolve, reject) => {
+      const ps = spawn('powershell.exe', extractArgs);
+      ps.on('close', (code) => code === 0 ? resolve() : reject(new Error('Falha na extração')));
+    });
+
+    const configData = {
+      exePath: exePathStr,
+      tempExtract: tempExtract
+    };
+    fs.writeFileSync(configPath, JSON.stringify(configData, null, 2), 'utf8');
+
+    const psScript = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -75,25 +93,13 @@ Start-Transcript -Path $logPath -Force
 $rootDir = $PSScriptRoot
 $config = Get-Content -Raw -Path (Join-Path $rootDir "update_config.json") | ConvertFrom-Json
 $exePath = $config.exePath
-$repo = $config.repo
-$zipUrl = $config.zipUrl
+$tempExtract = $config.tempExtract
 
-Write-Host "Aguardando resposta do servidor..."
-Start-Sleep -Seconds 2
 Write-Host "Encerrando Auto Tools..."
 Stop-Process -Name "Auto Tools" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "electron" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-$tempZip = Join-Path $env:TEMP "autotools_update.zip"
-$tempExtract = Join-Path $env:TEMP "autotools_extracted"
-
-Write-Host "Baixando atualizacao de $zipUrl..."
-Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip
-
-Write-Host "Extraindo arquivos..."
-if (Test-Path $tempExtract) { Remove-Item -Recurse -Force $tempExtract }
-Expand-Archive -Path $tempZip -DestinationPath $tempExtract
+Start-Sleep -Seconds 1
 
 $extractedFolder = Get-ChildItem -Path $tempExtract | Select-Object -First 1
 $sourceFolder = $extractedFolder.FullName
@@ -102,30 +108,33 @@ Write-Host "Aplicando atualizacao em $rootDir..."
 cmd.exe /c "xcopy /E /Y /I /Q ""$sourceFolder\\*"" ""$rootDir\\"""
 
 Write-Host "Limpando arquivos temporarios..."
-Remove-Item $tempZip
-Remove-Item -Recurse $tempExtract
+Remove-Item -Path (Join-Path $rootDir "update_config.json") -Force -ErrorAction SilentlyContinue
 
 Write-Host "Reiniciando Auto Tools..."
-if ($exePath -match "electron\\.exe$") {
+# Comando de reinício ultra-robusto via cmd start
+if ($exePath -match "electron\\\\.exe$") {
     Start-Process -FilePath "explorer.exe" -ArgumentList $rootDir
-} elseif (Test-Path $exePath) {
-    Start-Process -FilePath $exePath
 } else {
-    Start-Process -FilePath "explorer.exe" -ArgumentList $rootDir
+    cmd.exe /c "start """" ""$exePath"""
 }
+
 Write-Host "Atualizacao concluida!"
 Stop-Transcript
 `;
 
-  // Escrevemos em UTF-16LE com BOM para garantir compatibilidade total no Windows
-  fs.writeFileSync(updaterScriptPath, '\ufeff' + psScript, 'utf16le');
+    fs.writeFileSync(updaterScriptPath, '\ufeff' + psScript, 'utf16le');
 
-  res.json({ success: true, message: 'Reiniciando para aplicar atualização...' });
+    res.json({ success: true, message: 'Arquivos preparados. Reiniciando agora...' });
 
-  console.log('[UPDATE] Disparando script de atualização relativo via exec start...');
-  exec('start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File apply_update.ps1', { 
-    cwd: rootDir 
+    console.log('[UPDATE] Disparando script de aplicação final...');
+    exec('start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File apply_update.ps1', { 
+      cwd: rootDir 
   });
+
+  } catch (error) {
+    console.error('[UPDATE] Erro no preparo da atualização:', error);
+    res.status(500).json({ success: false, error: 'Erro ao baixar ou extrair arquivos.' });
+  }
 });
 
 export default router;
