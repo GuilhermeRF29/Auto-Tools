@@ -20,11 +20,23 @@ def clean_table_name(name: str) -> str:
     return clean
 
 
-def _ensure_db_name(name: str) -> str:
+def _ensure_db_name(name: str, format_type: str = "sqlite") -> str:
     raw = (name or "database.db").strip()
     if not raw:
         raw = "database.db"
-    return raw if raw.lower().endswith(".db") else f"{raw}.db"
+    
+    if format_type == "duckdb":
+        if raw.lower().endswith(".db"):
+            raw = raw[:-3] + ".duckdb"
+        elif not raw.lower().endswith(".duckdb"):
+            raw = f"{raw}.duckdb"
+    else:
+        if raw.lower().endswith(".duckdb"):
+            raw = raw[:-7] + ".db"
+        elif not raw.lower().endswith(".db"):
+            raw = f"{raw}.db"
+            
+    return raw
 
 
 def _normalize_files(files: list[Any]) -> list[str]:
@@ -118,7 +130,7 @@ def process_files(
                 messages.append(f"Parquet individual criado: {out_path}")
 
     elif format_type == "sqlite":
-        final_db_name = _ensure_db_name(db_name)
+        final_db_name = _ensure_db_name(db_name, "sqlite")
         db_path = os.path.join(out_dir, final_db_name)
 
         with sqlite3.connect(db_path) as conn:
@@ -136,8 +148,30 @@ def process_files(
 
         outputs.append(db_path)
         messages.append(f"Banco SQLite finalizado em: {db_path}")
+
+    elif format_type == "duckdb":
+        import duckdb
+        final_db_name = _ensure_db_name(db_name, "duckdb")
+        db_path = os.path.join(out_dir, final_db_name)
+
+        with duckdb.connect(db_path) as conn:
+            for file_path in files:
+                xlsx = pd.ExcelFile(file_path)
+                base_name = os.path.splitext(os.path.basename(file_path))[0]
+                multiple_sheets = len(xlsx.sheet_names) > 1
+
+                for sheet_name in xlsx.sheet_names:
+                    df = xlsx.parse(sheet_name)
+                    raw_table = f"{base_name}_{sheet_name}" if multiple_sheets else base_name
+                    table_name = clean_table_name(raw_table)
+                    conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM df")
+                    messages.append(f"Tabela '{table_name}' adicionada ao banco DuckDB.")
+
+        outputs.append(db_path)
+        messages.append(f"Banco DuckDB finalizado em: {db_path}")
+
     else:
-        raise ValueError("Formato invalido. Use 'parquet' ou 'sqlite'.")
+        raise ValueError("Formato invalido. Use 'parquet', 'sqlite' ou 'duckdb'.")
 
     return {
         "success": True,

@@ -27,7 +27,7 @@ import Button from '../components/Button';
 import { cn } from '../utils/cn';
 
 type ToolId = 'extension-converter';
-type FormatType = 'parquet' | 'sqlite';
+type FormatType = 'parquet' | 'sqlite' | 'duckdb';
 type ParquetMode = 'individual' | 'merged';
 type ConverterStatus = 'idle' | 'running' | 'success' | 'error';
 
@@ -351,7 +351,7 @@ const ToolsView = () => {
               <div>
                 <h3 className="text-lg font-black text-slate-800 tracking-tight">Conversor de Extensoes</h3>
                 <p className="text-xs font-semibold text-slate-500 mt-1">
-                  Converte arquivos Excel (.xlsx/.xls/.xlsm) para Parquet ou SQLite.
+                  Converte arquivos Excel (.xlsx/.xls/.xlsm) para Parquet, SQLite ou DuckDB.
                 </p>
               </div>
               <div className={cn('inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-[11px] font-black uppercase tracking-widest', statusChip.className)}>
@@ -465,6 +465,19 @@ const ToolsView = () => {
                   >
                     <Database size={14} />
                     SQLite
+                  </button>
+                  <button
+                    onClick={() => setFormatType('duckdb')}
+                    disabled={isConverting}
+                    className={cn(
+                      'h-10 px-4 rounded-xl text-xs font-black uppercase tracking-widest border transition-all inline-flex items-center gap-2',
+                      formatType === 'duckdb'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-500/20'
+                        : 'bg-white text-slate-500 border-slate-200 hover:border-blue-200 hover:text-blue-600'
+                    )}
+                  >
+                    <Database size={14} />
+                    DuckDB
                   </button>
                 </div>
 
