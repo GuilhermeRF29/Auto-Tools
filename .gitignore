@@ -73,6 +73,7 @@ coverage.xml
 .pytest_cache/
 cover/
 git_automator.py
+NUL
 
 # Translations
 *.mo

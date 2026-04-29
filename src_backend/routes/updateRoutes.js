@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import got from 'got';
 import { getRootDir } from '../config.js';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 
 const router = express.Router();
 const GITHUB_REPO = 'GuilhermeRF29/Auto-Tools'; // Ajustar conforme necessário
@@ -53,19 +53,31 @@ router.post('/update/download', async (req, res) => {
 router.post('/update/apply', (req, res) => {
   const rootDir = getRootDir();
   const updaterScriptPath = path.join(rootDir, 'apply_update.ps1');
+  const configPath = path.join(rootDir, 'update_config.json');
   const exePathStr = process.execPath;
 
-  // Script PowerShell que:
-  // 1. Espera o processo atual fechar
-  // 2. Faz o download do zip (ou usa o já baixado)
-  // 3. Extrai e sobrescreve
-  // 4. Reinicia o app
+  const configData = {
+    repo: GITHUB_REPO,
+    zipUrl: ZIP_URL,
+    destDir: rootDir,
+    exePath: exePathStr
+  };
+  fs.writeFileSync(configPath, JSON.stringify(configData, null, 2), 'utf8');
+
   const psScript = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $logPath = Join-Path $env:TEMP "autotools_update_log.txt"
 Start-Transcript -Path $logPath -Force
+
+$configPath = "${configPath}"
+$config = Get-Content -Raw -Path $configPath | ConvertFrom-Json
+
+$repo = $config.repo
+$zipUrl = $config.zipUrl
+$destDir = $config.destDir
+$exePath = $config.exePath
 
 Write-Host "Aguardando resposta do servidor..."
 Start-Sleep -Seconds 2
@@ -75,13 +87,10 @@ Stop-Process -Name "electron" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
-$repo = "${GITHUB_REPO}"
-$zipUrl = "${ZIP_URL}"
-$destDir = "${rootDir}"
 $tempZip = Join-Path $env:TEMP "autotools_update.zip"
 $tempExtract = Join-Path $env:TEMP "autotools_extracted"
 
-Write-Host "Baixando atualização de $zipUrl..."
+Write-Host "Baixando atualizacao de $zipUrl..."
 Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip
 
 Write-Host "Extraindo arquivos..."
@@ -91,16 +100,14 @@ Expand-Archive -Path $tempZip -DestinationPath $tempExtract
 $extractedFolder = Get-ChildItem -Path $tempExtract | Select-Object -First 1
 $sourceFolder = $extractedFolder.FullName
 
-Write-Host "Aplicando atualização em $destDir..."
-# Usando xcopy para evitar bugs do Copy-Item do PowerShell com merge de pastas
+Write-Host "Aplicando atualizacao em $destDir..."
 cmd.exe /c "xcopy /E /Y /I /Q ""$sourceFolder\\*"" ""$destDir\\"""
 
-Write-Host "Limpando arquivos temporários..."
+Write-Host "Limpando arquivos temporarios..."
 Remove-Item $tempZip
 Remove-Item -Recurse $tempExtract
 
 Write-Host "Reiniciando Auto Tools..."
-$exePath = "${exePathStr}"
 if ($exePath -match "electron\\.exe$") {
     Start-Process -FilePath "explorer.exe" -ArgumentList $destDir
 } elseif (Test-Path $exePath) {
@@ -108,18 +115,19 @@ if ($exePath -match "electron\\.exe$") {
 } else {
     Start-Process -FilePath "explorer.exe" -ArgumentList $destDir
 }
-Write-Host "Atualização concluída!"
+Write-Host "Atualizacao concluida!"
 Stop-Transcript
-`;
+\`;
 
-  // Escrevemos em UTF-16LE com BOM para garantir compatibilidade total no Windows
-  fs.writeFileSync(updaterScriptPath, '\ufeff' + psScript, 'utf16le');
+  // Salvamos como UTF-8 normal. Apenas o caminho do config vai no corpo e não é problemático se tratado assim
+  // Porém, adicionaremos UTF-8 BOM para garantir!
+  fs.writeFileSync(updaterScriptPath, '\\ufeff' + psScript, 'utf8');
 
   res.json({ success: true, message: 'Reiniciando para aplicar atualização...' });
 
-  // Dispara o script de atualização de forma totalmente independente usando cmd.exe start
-  console.log('[UPDATE] Disparando script de atualização via exec start...');
-  exec(`start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "${updaterScriptPath}"`);
+  console.log('[UPDATE] Disparando script de atualização via exec start independente...');
+  // A chamada do PowerShell é pura, sem argumentos com caminhos, evitando que o cmd.exe quebre o Unicode.
+  exec(\`start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "\${updaterScriptPath}"\`);
 });
 
 export default router;
