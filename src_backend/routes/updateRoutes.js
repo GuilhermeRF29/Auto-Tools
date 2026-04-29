@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import got from 'got';
 import { getRootDir } from '../config.js';
-import { spawn } from 'child_process';
+import { exec } from 'child_process';
 
 const router = express.Router();
 const GITHUB_REPO = 'GuilhermeRF29/Auto-Tools'; // Ajustar conforme necessário
@@ -63,6 +63,10 @@ router.post('/update/apply', (req, res) => {
   const psScript = `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+$logPath = Join-Path $env:TEMP "autotools_update_log.txt"
+Start-Transcript -Path $logPath -Force
+
 Write-Host "Aguardando resposta do servidor..."
 Start-Sleep -Seconds 2
 Write-Host "Encerrando Auto Tools..."
@@ -105,6 +109,7 @@ if ($exePath -match "electron\\.exe$") {
     Start-Process -FilePath "explorer.exe" -ArgumentList $destDir
 }
 Write-Host "Atualização concluída!"
+Stop-Transcript
 `;
 
   // Escrevemos em UTF-16LE com BOM para garantir compatibilidade total no Windows
@@ -112,14 +117,9 @@ Write-Host "Atualização concluída!"
 
   res.json({ success: true, message: 'Reiniciando para aplicar atualização...' });
 
-  // Dispara o script de atualização sem fechar o Node manualmente
-  // Deixamos que o próprio script PowerShell encerre o aplicativo com Stop-Process
-  console.log('[UPDATE] Disparando script de atualização...');
-  spawn('powershell.exe', ['-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', updaterScriptPath], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true
-  }).unref();
+  // Dispara o script de atualização de forma totalmente independente usando cmd.exe start
+  console.log('[UPDATE] Disparando script de atualização via exec start...');
+  exec(`start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "${updaterScriptPath}"`);
 });
 
 export default router;
