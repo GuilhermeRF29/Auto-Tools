@@ -91,14 +91,14 @@ $extractedFolder = Get-ChildItem -Path $tempExtract | Select-Object -First 1
 $sourceFolder = $extractedFolder.FullName
 
 Write-Host "Aplicando atualizacao em $rootDir..."
-cmd.exe /c "xcopy /E /Y /I /Q ""$sourceFolder\\\\*"" ""$rootDir\\\\"""
+cmd.exe /c "xcopy /E /Y /I /Q ""$sourceFolder\\*"" ""$rootDir\\"""
 
 Write-Host "Limpando arquivos temporarios..."
 Remove-Item $tempZip
 Remove-Item -Recurse $tempExtract
 
 Write-Host "Reiniciando Auto Tools..."
-if ($exePath -match "electron\\\\.exe$") {
+if ($exePath -match "electron\\.exe$") {
     Start-Process -FilePath "explorer.exe" -ArgumentList $rootDir
 } elseif (Test-Path $exePath) {
     Start-Process -FilePath $exePath
@@ -107,7 +107,7 @@ if ($exePath -match "electron\\\\.exe$") {
 }
 Write-Host "Atualizacao concluida!"
 Stop-Transcript
-\`;
+`;
 
   // Escrevemos em UTF-16LE com BOM para garantir compatibilidade total no Windows
   fs.writeFileSync(updaterScriptPath, '\ufeff' + psScript, 'utf16le');
