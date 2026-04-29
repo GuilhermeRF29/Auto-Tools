@@ -5,19 +5,19 @@ import { useAuth } from './AuthContext';
 interface UIContextData {
   currentView: View;
   setCurrentView: (view: View) => void;
-  
+
   isSidebarOpen: boolean;
   setIsSidebarOpen: (isOpen: boolean) => void;
-  
+
   isSearchOpen: boolean;
   setIsSearchOpen: (isOpen: boolean) => void;
-  
+
   isProfileOpen: boolean;
   setIsProfileOpen: (isOpen: boolean) => void;
-  
+
   historyItems: any[];
   setHistoryItems: (items: any[]) => void;
-  
+
   highlightId: string | null;
   setHighlightId: (id: string | null) => void;
 
@@ -26,13 +26,13 @@ interface UIContextData {
 
   animationsEnabled: boolean;
   setAnimationsEnabled: (v: boolean) => void;
-  
+
   successAnimationStyle: SuccessAnimationStyle;
   setSuccessAnimationStyle: (v: SuccessAnimationStyle) => void;
-  
+
   successAnimationDurationSec: number;
   setSuccessAnimationDurationSec: (v: number) => void;
-  
+
   successAnimationIntensity: AnimationIntensity;
   setSuccessAnimationIntensity: (v: AnimationIntensity) => void;
 
@@ -56,11 +56,11 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  
+
   const [historyItems, setHistoryItems] = useState<any[]>([]);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [reRunData, setReRunData] = useState<any | null>(null);
-  
+
   const [animationsEnabled, setAnimationsEnabled] = useState(true);
   const [successAnimationStyle, setSuccessAnimationStyle] = useState<SuccessAnimationStyle>('premium');
   const [successAnimationDurationSec, setSuccessAnimationDurationSec] = useState(1.6);
@@ -224,7 +224,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   useEffect(() => {
     checkForUpdates();
     // Verifica a cada 1 hora se houver usuários logados
-    const intervalId = window.setInterval(checkForUpdates, 3600000);
+    const intervalId = window.setInterval(checkForUpdates, 10000); //3600000
     return () => window.clearInterval(intervalId);
   }, []);
 
