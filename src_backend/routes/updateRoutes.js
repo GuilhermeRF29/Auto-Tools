@@ -91,7 +91,7 @@ $logPath = Join-Path $env:TEMP "autotools_update_log.txt"
 Start-Transcript -Path $logPath -Force
 
 $rootDir = $PSScriptRoot
-$config = Get-Content -Raw -Path (Join-Path $rootDir "update_config.json") | ConvertFrom-Json
+$config = Get-Content -Raw -Path (Join-Path $rootDir "update_config.json") -Encoding UTF8 | ConvertFrom-Json
 $exePath = $config.exePath
 $tempExtract = $config.tempExtract
 
@@ -111,11 +111,11 @@ Write-Host "Limpando arquivos temporarios..."
 Remove-Item -Path (Join-Path $rootDir "update_config.json") -Force -ErrorAction SilentlyContinue
 
 Write-Host "Reiniciando Auto Tools..."
-# Comando de reinício ultra-robusto via cmd start
-if ($exePath -match "electron\\\\.exe$") {
+if ($exePath -match "electron\\.exe$") {
     Start-Process -FilePath "explorer.exe" -ArgumentList $rootDir
 } else {
-    cmd.exe /c "start """" ""$exePath"""
+    # Start-Process é nativo e lida perfeitamente com Unicode
+    Start-Process -FilePath $exePath -WorkingDirectory $rootDir
 }
 
 Write-Host "Atualizacao concluida!"
