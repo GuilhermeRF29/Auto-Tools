@@ -26,14 +26,20 @@ router.post('/login', async (req, res) => {
 router.post('/register', async (req, res) => {
     const { usuario, senha, nome } = req.body;
     const pyCmd = `import sys, json; from core.banco import cadastrar_usuario_principal; print(json.dumps(cadastrar_usuario_principal(sys.argv[1], sys.argv[2], sys.argv[3])))`;
-    
+    // Requer conexão online para registro para garantir unicidade global
     try {
+        const checkFire = `from core import banco; print('true' if bool(banco.get_firestore()) else 'false')`;
+        const fireAvailable = await runPythonCmd(checkFire);
+        if (!fireAvailable) {
+            return res.status(503).json({ success: false, error: 'Registro apenas disponível com conexão ativa ao servidor (requer Firebase).' });
+        }
+
         const result = await runPythonCmd(pyCmd, [nome || '', usuario, senha]);
         if (result === true) {
             res.json({ success: true });
         } else {
-            // Em caso do python retornar false, geralmente usuário já existe
-            res.json({ success: false, error: 'Usuário já existe ou ocorreu um erro interno' });
+            // Em caso do python retornar false, cadastro não foi aceito por usuário já existente
+            res.json({ success: false, error: 'Usuário já existe' });
         }
     } catch (e) {
         console.error(`[AUTH_ERROR] Falha no registro: `, e.message);

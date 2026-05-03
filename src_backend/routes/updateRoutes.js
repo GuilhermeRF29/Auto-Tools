@@ -6,9 +6,10 @@ import { getRootDir } from '../config.js';
 import { exec, spawn } from 'child_process';
 
 const router = express.Router();
-const GITHUB_REPO = 'GuilhermeRF29/Auto-Tools'; // Ajustar conforme necessário
-const VERSION_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/version.json`;
-const ZIP_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/main.zip`;
+const GITHUB_REPO = 'GuilhermeRF29/Auto-Tools';
+const BRANCH = 'main'; 
+const VERSION_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/${BRANCH}/version.json`;
+const ZIP_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/${BRANCH}.zip`;
 
 router.get('/update/check', async (req, res) => {
   try {

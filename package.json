@@ -9,14 +9,15 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
+    "clean": "powershell -Command \"if (Test-Path dist) { Remove-Item -Recurse -Force dist }\"",
+    "clean:release": "powershell -Command \"if (Test-Path release) { Remove-Item -Recurse -Force release }\"",
     "lint": "tsc --noEmit",
     "server": "node server.js",
     "start": "node server.js",
     "electron:start": "electron .",
     "electron:dev": "concurrently -k \"npm:dev\" \"wait-on http://127.0.0.1:3000 && electron .\"",
-    "electron:build": "npm run build && electron-builder --win nsis",
-    "electron:build:portable": "npm run build && electron-builder --win portable"
+    "electron:build": "npm run clean:release && npm run build && electron-builder --win",
+    "electron:build:fast": "npm run build && electron-builder --win dir"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",
@@ -68,12 +69,12 @@
       "dist/**/*",
       "server.js",
       "package.json",
-      "Userbank.db",
-      ".env",
       "firebase-credentials.json",
       "src_backend/**/*",
       "core/**/*",
+      "!core/**/__pycache__",
       "automacoes/**/*",
+      "!automacoes/**/__pycache__",
       "padrao/**/*",
       "bin/**/*",
       "electron/**/*",
@@ -86,30 +87,27 @@
     ],
     "extraResources": [
       {
-        "from": "venv",
-        "to": "venv",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
         "from": "python-runtime",
         "to": "python-runtime",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/__pycache__",
+          "!**/*.pyc",
+          "!**/*.pyo",
+          "!**/*.pyd.bak"
         ]
       }
     ],
     "win": {
       "target": [
         {
-          "target": "nsis",
+          "target": "dir",
           "arch": [
             "x64"
           ]
         },
         {
-          "target": "portable",
+          "target": "zip",
           "arch": [
             "x64"
           ]

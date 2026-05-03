@@ -65,14 +65,28 @@ export const runPythonCmd = (rawCommand, args = []) => {
     let stdoutData = '';
     let stderrData = '';
 
-    childPy.stdout.on('data', (d) => stdoutData += d.toString());
-    childPy.stderr.on('data', (d) => stderrData += d.toString());
+    childPy.stdout.on('data', (d) => {
+      const text = d.toString();
+      stdoutData += text;
+      // Print to console so debug messages are visible
+      process.stdout.write(text);
+    });
+    childPy.stderr.on('data', (d) => {
+      const text = d.toString();
+      stderrData += text;
+      // Print to console so errors and debug messages are visible
+      process.stderr.write(text);
+    });
 
     childPy.on('close', (code) => {
       if (code !== 0) {
         return reject(new Error(`[Python Error ${code}]: ${stderrData}`));
       }
-      const rawOut = stdoutData.trim();
+      const outLines = stdoutData
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const rawOut = outLines.length > 0 ? outLines[outLines.length - 1] : '';
       try {
         if (rawOut === 'ok' || rawOut === 'true' || rawOut === 'false') {
           resolve(rawOut === 'ok' || rawOut === 'true');

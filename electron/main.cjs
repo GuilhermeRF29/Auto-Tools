@@ -50,7 +50,7 @@ const waitForBackendReady = async (timeoutMs = 60000) => {
 };
 
 const bootstrapDataDir = (dataDir) => {
-  const seedFiles = ['Userbank.db', '.env', 'token.json', 'firebase-credentials.json'];
+  const seedFiles = ['.env', 'token.json', 'firebase-credentials.json'];
   const appPath = app.getAppPath();
   const unpackedPath = appPath.replace('app.asar', 'app.asar.unpacked');
 
@@ -119,9 +119,10 @@ const startBackend = () => {
     PYTHONUTF8: '1',
   };
 
-  // Usamos spawn direto sem Shell para evitar problemas de encoding e dependência do cmd.exe
+  // Usamos o executável do Electron para rodar o script do backend.
+  // IMPORTANTE: serverEntry deve estar fora do ASAR (usando asarUnpack no package.json).
   backendProcess = spawn(process.execPath, [serverEntry], {
-    cwd: path.dirname(serverEntry), // Define o diretório de trabalho na pasta do backend
+    cwd: path.dirname(serverEntry),
     env,
     shell: false, 
     stdio: ['ignore', 'pipe', 'pipe'],
