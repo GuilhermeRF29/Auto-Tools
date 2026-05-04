@@ -156,10 +156,10 @@ const ReportsView = ({
 
   /** Lista de relatórios disponíveis com metadados. */
   const reports = [
-    { id: 'adm_new', name: 'Relatório de Demandas', desc: 'Extração e consolidação de demandas e passagens.', time: '~16 min', icon: <FileSpreadsheet size={18} /> },
+    { id: 'adm_new', name: 'Relatório de Demandas', desc: 'Extração e consolidação de demandas e passagens.', time: '~30 min', icon: <FileSpreadsheet size={18} /> },
     { id: 'ebus_new', name: 'Relatório Revenue', desc: 'Processamento de dados do eBus e receitas.', time: '~8 min', icon: <Bus size={18} /> },
-    { id: 'sr_new', name: 'Relatório BASE RIO X SP', desc: 'Base consolidada das operações e ocupações.', time: '~6 min', icon: <Navigation size={18} /> },
-    { id: 'busca_dados', name: 'Relatório Performance de Canais', desc: 'Extração no BI com atualização comparativa mês a mês.', time: '~12 min', icon: <LayoutDashboard size={18} /> },
+    { id: 'sr_new', name: 'Relatório BASE RIO X SP', desc: 'Base consolidada das operações e ocupações.', time: '~12 min', icon: <Navigation size={18} /> },
+    { id: 'busca_dados', name: 'Relatório Performance de Canais', desc: 'Extração no BI com atualização comparativa mês a mês.', time: '~20 min', icon: <LayoutDashboard size={18} /> },
   ];
 
   /**
