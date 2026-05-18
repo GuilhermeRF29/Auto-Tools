@@ -276,6 +276,7 @@ const DemandDashboardView = () => {
   const [refreshAt, setRefreshAt] = useState<Date | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [showRemovedDatesTable, setShowRemovedDatesTable] = useState(false);
+  const [apvCalculationMode, setApvCalculationMode] = useState<'fixed' | 'dynamic'>('fixed');
   const [exportImageMode, setExportImageMode] = useState<'combined' | 'separate'>('combined');
   const tableRef = useRef<HTMLTableElement>(null);
   const removedTableRef = useRef<HTMLTableElement>(null);
@@ -546,26 +547,39 @@ const DemandDashboardView = () => {
   const totals = useMemo(() => aggregateRows(marketFilteredRows), [marketFilteredRows]);
   const apvTotal = safeRatio(totals) || 0;
 
+  const datasetMinTravelDate = useMemo(() => {
+    const dates = Array.from(new Set(payload?.rows?.map((r) => r.travelDate) || []));
+    return dates.sort()[0];
+  }, [payload?.rows]);
+
   const apv7 = useMemo(() => {
-    if (!minTravelDate) return 0;
-    const startIso = minTravelDate;
+    const startIso = apvCalculationMode === 'fixed' ? datasetMinTravelDate : minTravelDate;
+    if (!startIso) return 0;
     const endIso = addDaysToIso(startIso, 6);
     return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
-  }, [marketFilteredRows, minTravelDate]);
+  }, [marketFilteredRows, minTravelDate, datasetMinTravelDate, apvCalculationMode]);
 
   const apv14 = useMemo(() => {
-    if (!minTravelDate) return 0;
-    const startIso = addDaysToIso(minTravelDate, 7);
-    const endIso = addDaysToIso(minTravelDate, 13);
+    const anchorIso = apvCalculationMode === 'fixed' ? datasetMinTravelDate : minTravelDate;
+    if (!anchorIso) return 0;
+    const startIso = addDaysToIso(anchorIso, 7);
+    const endIso = addDaysToIso(anchorIso, 13);
     return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
-  }, [marketFilteredRows, minTravelDate]);
+  }, [marketFilteredRows, minTravelDate, datasetMinTravelDate, apvCalculationMode]);
 
   const apv21 = useMemo(() => {
-    if (!maxTravelDate) return 0;
-    const endIso = maxTravelDate;
-    const startIso = addDaysToIso(endIso, -6);
-    return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
-  }, [marketFilteredRows, maxTravelDate]);
+    if (apvCalculationMode === 'fixed') {
+      if (!datasetMinTravelDate) return 0;
+      const startIso = addDaysToIso(datasetMinTravelDate, 14);
+      const endIso = addDaysToIso(datasetMinTravelDate, 20);
+      return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
+    } else {
+      if (!maxTravelDate) return 0;
+      const endIso = maxTravelDate;
+      const startIso = addDaysToIso(endIso, -6);
+      return safeRatio(aggregateRows(marketFilteredRows.filter((r) => r.travelDate >= startIso && r.travelDate <= endIso))) || 0;
+    }
+  }, [marketFilteredRows, maxTravelDate, datasetMinTravelDate, apvCalculationMode]);
 
   const weekTable = useMemo(() => {
     const table = new Map<string, {
@@ -1088,21 +1102,29 @@ const DemandDashboardView = () => {
             />
           </div>
 
-          <div className="xl:col-span-2">
+          <div className="flex flex-col space-y-1.5 xl:col-span-2">
             <label className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Pasta da base</label>
-            <div className="mt-1.5 flex items-center gap-2">
+            <div className="flex w-full items-center gap-2">
               <button
+                type="button"
                 onClick={handleChooseFolder}
-                className="inline-flex h-[54px] w-[54px] shrink-0 items-center justify-center rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-500 transition-colors hover:border-cyan-200 hover:text-cyan-700"
+                className="inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-500 outline-none transition-all hover:border-cyan-200 hover:text-cyan-700 focus:border-cyan-600"
                 title="Selecionar pasta"
               >
                 <FolderOpen size={18} />
               </button>
-              <Button variant="secondary" className="h-[54px] min-w-[120px] border-cyan-200 px-4 text-cyan-700" onClick={handleApplyFolder}>
-                <Database size={16} className="mr-2" /> Aplicar
-              </Button>
+              <button
+                type="button"
+                onClick={handleApplyFolder}
+                className="inline-flex h-[52px] flex-1 min-w-0 items-center justify-center rounded-2xl border-2 border-cyan-200 bg-white px-2 text-sm font-bold text-cyan-700 shadow-sm outline-none transition-all hover:border-cyan-300 hover:bg-slate-50 focus:border-cyan-600"
+              >
+                <Database size={16} className="mr-2 shrink-0" />
+                <span className="truncate">Aplicar</span>
+              </button>
             </div>
           </div>
+          
+
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -1225,16 +1247,43 @@ const DemandDashboardView = () => {
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-cyan-600">APV Total</p>
           <p className="mt-2 text-3xl font-black text-slate-800">{formatPercent(apvTotal)}</p>
         </Card>
-        <Card className="border-blue-100 bg-gradient-to-br from-blue-50 to-white p-5">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-blue-700">APV 7 dias</p>
+        <Card className="relative border-blue-100 bg-gradient-to-br from-blue-50 to-white p-5">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-blue-700">APV 7 dias</p>
+            <button 
+              onClick={() => setApvCalculationMode(prev => prev === 'fixed' ? 'dynamic' : 'fixed')} 
+              className="rounded bg-blue-100/50 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-blue-600 transition-colors hover:bg-blue-200"
+              title="Alternar entre cálculo Ancorado (Fixo) e Deslizante (BI)"
+            >
+              {apvCalculationMode === 'fixed' ? 'Fixo' : 'BI'}
+            </button>
+          </div>
           <p className="mt-2 text-3xl font-black text-slate-800">{formatPercent(apv7)}</p>
         </Card>
-        <Card className="border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-5">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-indigo-700">APV 14 dias</p>
+        <Card className="relative border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-5">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-indigo-700">APV 14 dias</p>
+            <button 
+              onClick={() => setApvCalculationMode(prev => prev === 'fixed' ? 'dynamic' : 'fixed')} 
+              className="rounded bg-indigo-100/50 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-indigo-600 transition-colors hover:bg-indigo-200"
+              title="Alternar entre cálculo Ancorado (Fixo) e Deslizante (BI)"
+            >
+              {apvCalculationMode === 'fixed' ? 'Fixo' : 'BI'}
+            </button>
+          </div>
           <p className="mt-2 text-3xl font-black text-slate-800">{formatPercent(apv14)}</p>
         </Card>
-        <Card className="border-violet-100 bg-gradient-to-br from-violet-50 to-white p-5">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-700">APV 21 dias</p>
+        <Card className="relative border-violet-100 bg-gradient-to-br from-violet-50 to-white p-5">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-700">APV 21 dias</p>
+            <button 
+              onClick={() => setApvCalculationMode(prev => prev === 'fixed' ? 'dynamic' : 'fixed')} 
+              className="rounded bg-violet-100/50 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-violet-600 transition-colors hover:bg-violet-200"
+              title="Alternar entre cálculo Ancorado (Fixo) e Deslizante (BI)"
+            >
+              {apvCalculationMode === 'fixed' ? 'Fixo' : 'BI'}
+            </button>
+          </div>
           <p className="mt-2 text-3xl font-black text-slate-800">{formatPercent(apv21)}</p>
         </Card>
         <Card className="border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-5">
@@ -1485,9 +1534,8 @@ const DemandDashboardView = () => {
             <tfoot className="border-t-2 border-slate-200">
               <tr className="bg-slate-900 text-white">
                 <td className="sticky left-0 z-20 w-[267px] min-w-[267px] max-w-[267px] bg-slate-900 px-3 py-2 text-left text-[11px] font-black uppercase tracking-wider">Total</td>
-                {hybridColumns.dayColumns.map((column, idx) => {
-                  const isLastDay = idx === hybridColumns.dayColumns.length - 1;
-                  const ratio = isLastDay ? safeRatio(hybridTable.total07Agg) : safeRatio(hybridTable.totalDayAgg.get(column.date));
+                {hybridColumns.dayColumns.map((column) => {
+                  const ratio = safeRatio(hybridTable.totalDayAgg.get(column.date));
                   return (
                     <td key={`hybrid-total-day-${column.date}`} className="px-2 py-2 text-center text-[13px] font-black">
                       {formatPercent(ratio)}

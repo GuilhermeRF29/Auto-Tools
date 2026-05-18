@@ -186,7 +186,32 @@ const buildDemandDataset = async (effectiveDir, { sourceFiles = null, observatio
             });
             const fallbackObsDate = parseObservationDateFromName(file.fileName, file.mtime);
 
+            let hasHeaderReplaced = false;
+            let actualHeaders = null;
+            const cleanRows = [];
+
             for (const row of rawRows) {
+                if (!hasHeaderReplaced && Object.values(row).includes('Empresa') && Object.values(row).includes('Pax Absoluto')) {
+                    actualHeaders = Object.keys(row).reduce((acc, key) => {
+                        acc[key] = String(row[key] || '').trim();
+                        return acc;
+                    }, {});
+                    hasHeaderReplaced = true;
+                    continue;
+                }
+                if (actualHeaders) {
+                    const mappedRow = {};
+                    for (const key in row) {
+                        if (actualHeaders[key]) mappedRow[actualHeaders[key]] = row[key];
+                        else mappedRow[key] = row[key];
+                    }
+                    cleanRows.push(mappedRow);
+                } else {
+                    cleanRows.push(row);
+                }
+            }
+
+            for (const row of cleanRows) {
                 stats.totalRead++;
                 const observationRaw = getRowValue(row, DEMAND_OBSERVATION_ALIASES);
                 let observationDate = parseBrDate(observationRaw);
@@ -202,27 +227,40 @@ const buildDemandDataset = async (effectiveDir, { sourceFiles = null, observatio
                 if (onlyObservationDates) { if (!groupedByObservation.has(obsIso)) groupedByObservation.set(obsIso, []); continue; }
 
                 const travelDateRaw = getRowValue(row, ['Data Viagem', 'DATA VIAGEM', 'DATA', 'Data', 'DT_VIAGEM', 'data_viagem', 'dt_viagem', 'DATA DA VIAGEM']);
-                const travelDate = parseBrDate(travelDateRaw);
+                let travelDate = parseBrDate(travelDateRaw);
+                if (!travelDate) {
+                    const ano = getRowValue(row, ['Ano', 'ANO']);
+                    const mes = getRowValue(row, ['Mês', 'Mes', 'MES']);
+                    const dia = getRowValue(row, ['Dia', 'DIA']);
+                    if (ano && mes && dia) {
+                        travelDate = buildSafeDate(Number(ano), Number(mes), Number(dia));
+                    }
+                }
                 if (!travelDate) { stats.skippedDate++; continue; }
 
-                const linhaRaw = getRowValue(row, ['LINHA', 'Linha', 'Cod Linha', 'Cod_Linha', 'SERVIÇO', 'SERVICO', 'Num. Serviço', 'Num. Servico', 'servico', 'id_linha']);
+                const tipoLinhaRaw = getRowValue(row, ['Tipo Linha', 'TIPO LINHA']);
+                if (tipoLinhaRaw !== null && tipoLinhaRaw !== undefined) {
+                    if (!String(tipoLinhaRaw).toUpperCase().includes('RODOVIARIO')) {
+                        continue;
+                    }
+                }
+
+                const linhaRaw = getRowValue(row, ['LINHA', 'Linha', 'Cod Linha', 'Cod_Linha', 'SERVIÇO', 'SERVICO', 'Num. Serviço', 'Num. Servico', 'servico', 'id_linha', 'Código da Linha']);
                 const linhaRawValue = linhaRaw !== null && linhaRaw !== undefined ? String(linhaRaw).trim() : '';
                 const normLinha = linhaRawValue ? (linhaRawValue.replace(/^0+/, '') || '0') : 'SEM LINHA';
                 const deParaEntry = (linhaRawValue ? deParaMap.get(`RAW:${linhaRawValue}`) : null) || deParaMap.get(`NORM:${normLinha}`);
 
                 const empresaRaw = getRowValue(row, ['EMPRESA', 'Empresa', 'empresa', 'EMPRESA EXECUTANTE', 'Cia']);
-                const empresa = normalizeDemandToken(deParaEntry?.empresa || empresaRaw || 'SEM EMPRESA');
-                const mercado = normalizeDemandToken(deParaEntry?.mercado || '') || 'OUTROS MERCADOS';
+                const empresa = normalizeDemandToken(empresaRaw || deParaEntry?.empresa || 'SEM EMPRESA');
+                
+                const mercadoStr = getRowValue(row, ['Mercado', 'MERCADO']);
+                const mercado = normalizeDemandToken(mercadoStr || deParaEntry?.mercado || '') || 'OUTROS MERCADOS';
 
-                const ocupacaoRaw = getRowValue(row, ['PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao', 'Pax Total', 'TRANSITADO', 'Pax_Total', 'pax']);
+                const ocupacaoRaw = getRowValue(row, ['PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao', 'Pax Total', 'TRANSITADO', 'Pax_Total', 'pax', 'Pax Absoluto']);
                 const capacidadeRaw = getRowValue(row, ['Capacidade', 'CAPACIDADE', 'Oferta', 'OFERTA', 'Vagas', 'VAGAS', 'Cap', 'Cap_Total', 'oferta']);
-                const apvRaw = getRowValue(row, ['%Ocupação', '% Ocupação', 'APV', 'IPV', 'IPV 3', 'IPV3', '% APV', 'Aproveitamento', 'APROVEITAMENTO', 'apv']);
 
                 let ocupacao = toNumber(ocupacaoRaw);
                 let capacidade = toNumber(capacidadeRaw);
-                const apvRatio = parseRatio(apvRaw);
-                if (!Number.isFinite(capacidade) && Number.isFinite(ocupacao) && Number.isFinite(apvRatio) && apvRatio > 0) capacidade = ocupacao / apvRatio;
-                if (!Number.isFinite(ocupacao) && Number.isFinite(capacidade) && Number.isFinite(apvRatio)) ocupacao = capacidade * apvRatio;
 
                 if ((!Number.isFinite(ocupacao) || ocupacao <= 0) && (!Number.isFinite(capacidade) || capacidade <= 0)) { stats.skippedEmpty++; continue; }
                 if (!Number.isFinite(ocupacao) && !Number.isFinite(capacidade)) { stats.skippedNoValues++; continue; }

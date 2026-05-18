@@ -177,6 +177,8 @@ const createMainWindow = async () => {
     minHeight: 720,
     show: false,
     autoHideMenuBar: true,
+    frame: false,
+    titleBarStyle: 'hidden',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -215,6 +217,28 @@ const createMainWindow = async () => {
     if (canceled) return [];
     return filePaths;
   });
+
+  // Controles Customizados de Janela
+  ipcMain.on('window:minimize', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win) win.minimize();
+  });
+  
+  ipcMain.on('window:maximize', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win) {
+      if (win.isMaximized()) win.restore();
+      else win.maximize();
+    }
+  });
+
+  ipcMain.on('window:close', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win) win.close();
+  });
+
+  mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized-changed', true));
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximized-changed', false));
 };
 
 app.whenReady().then(async () => {

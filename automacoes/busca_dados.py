@@ -441,7 +441,15 @@ def run(
     dados_tabela_excel = []
     
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--start-maximized"])
+        browser = p.chromium.launch(
+            headless=False,
+            args=[
+                "--headless=new",          # Usa o motor real do Chrome (igual ao Electron show:false)
+                "--use-gl=egl",            # Força a placa de vídeo a funcionar no modo oculto
+                "--window-size=1920,1080", # Trava a resolução na raiz
+                "--disable-blink-features=AutomationControlled" # Esconde da MS que somos um robô
+            ]
+        )
         context = browser.new_context(no_viewport=True)
         page = context.new_page()
 

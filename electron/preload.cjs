@@ -10,4 +10,13 @@ contextBridge.exposeInMainWorld('autoToolsRuntime', {
   // Novas funções para diálogos modernos
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
   openExcelFiles: () => ipcRenderer.invoke('dialog:openExcelFiles'),
+  // Controles de Janela
+  windowControls: {
+    minimize: () => ipcRenderer.send('window:minimize'),
+    maximize: () => ipcRenderer.send('window:maximize'),
+    close: () => ipcRenderer.send('window:close'),
+    onMaximizeChanged: (callback) => {
+      ipcRenderer.on('window:maximized-changed', (_, isMaximized) => callback(isMaximized));
+    }
+  }
 });

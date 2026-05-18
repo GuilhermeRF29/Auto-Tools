@@ -13,6 +13,7 @@ import type { View } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useUI } from '../context/UIContext';
 import { useTasks } from '../context/TaskContext';
+import WindowControls from '../components/WindowControls';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -155,11 +156,11 @@ export default function MainLayout({ children }: MainLayoutProps) {
           {/* === CONTEÚDO PRINCIPAL === */}
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
             {/* Header */}
-            <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shadow-sm z-10 transition-all">
+            <header className="drag-region h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:pr-4 sm:pl-8 shadow-sm z-10 transition-all">
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setIsSidebarOpen(true)}
-                  className="p-2 -ml-2 text-slate-600 md:hidden hover:bg-slate-100 rounded-lg transition-colors"
+                  className="no-drag p-2 -ml-2 text-slate-600 md:hidden hover:bg-slate-100 rounded-lg transition-colors"
                   aria-label="Menu"
                 >
                   <Menu size={20} />
@@ -174,7 +175,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
 
                 <button
                   onClick={() => setIsSearchOpen(true)}
-                  className="flex items-center bg-slate-100 rounded-xl px-4 py-2 w-32 xs:w-40 sm:w-[400px] border border-slate-200 transition-all hover:bg-white hover:border-blue-300 group shadow-sm"
+                  className="no-drag flex items-center bg-slate-100 rounded-xl px-4 py-2 w-32 xs:w-40 sm:w-[400px] border border-slate-200 transition-all hover:bg-white hover:border-blue-300 group shadow-sm"
                 >
                   <Search size={16} className="text-slate-400 mr-3 group-hover:text-blue-600 transition-colors" />
                   <span className="text-xs sm:text-sm font-bold text-slate-400 group-hover:text-slate-600 transition-colors flex-1 text-left">O que você procura?</span>
@@ -182,8 +183,10 @@ export default function MainLayout({ children }: MainLayoutProps) {
                 </button>
               </div>
 
-              {/* Menu de perfil */}
-              <div className="flex items-center gap-2 sm:gap-4 relative" ref={profileRef}>
+              {/* Controles da Direita */}
+              <div className="flex items-center gap-2 sm:gap-4">
+                {/* Menu de perfil */}
+                <div className="flex items-center gap-2 sm:gap-4 relative no-drag" ref={profileRef}>
                 <div className="text-right hidden xs:block cursor-pointer" onClick={() => setIsProfileOpen(!isProfileOpen)}>
                   <p className="text-xs sm:text-sm font-bold text-slate-800 truncate max-w-[120px]">{user?.nome}</p>
                   <p className="text-[10px] sm:text-xs text-slate-500 font-medium opacity-70">Operacional</p>
@@ -260,7 +263,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
                   )}
                 </AnimatePresence>
               </div>
-            </header>
+              <WindowControls />
+            </div>
+          </header>
 
             {/* Widget flutuante global de progresso (visível em qualquer view exceto reports) */}
             {runningTasks.length > 0 && currentView !== 'reports' && (

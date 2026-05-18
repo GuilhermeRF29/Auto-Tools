@@ -92,9 +92,11 @@ export const DEMAND_COLUMN_ALIASES = [
     'Data Referencia', 'Data Referência', 'DATA REFERENCIA',
     'Data Base', 'DATA BASE', 'Snapshot Date', 'Data_Observacao', 'Data Observao', 'DATA OBSERVAO',
     'Data Viagem', 'DATA VIAGEM', 'DATA', 'Data', 'DT_VIAGEM', 'data_viagem', 'dt_viagem', 'DATA DA VIAGEM',
-    'LINHA', 'Linha', 'Cod Linha', 'Cod_Linha', 'SERVIÇO', 'SERVICO', 'Num. Serviço', 'Num. Servico', 'Servio', 'SERVIO', 'servico', 'id_linha',
+    'Ano', 'Mês', 'Mes', 'Dia', 'Tipo Linha', 'TIPO LINHA',
+    'LINHA', 'Linha', 'Cod Linha', 'Cod_Linha', 'Código da Linha', 'SERVIÇO', 'SERVICO', 'Num. Serviço', 'Num. Servico', 'Servio', 'SERVIO', 'servico', 'id_linha',
     'EMPRESA', 'Empresa', 'empresa', 'EMPRESA EXECUTANTE', 'Cia',
-    'PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao', 'Ocupao', 'OCUPAO', 'Pax Total', 'TRANSITADO', 'Pax_Total', 'Ocup', 'pax',
+    'Mercado', 'MERCADO', 'Concatenar Origem e Destino',
+    'PAX', 'Passageiro', 'PASSAGEIROS', 'Ocupação', 'OCUPAÇÃO', 'Ocupacao', 'Ocupao', 'OCUPAO', 'Pax Total', 'TRANSITADO', 'Pax_Total', 'Ocup', 'pax', 'Pax Absoluto',
     'Capacidade', 'CAPACIDADE', 'Oferta', 'OFERTA', 'Vagas', 'VAGAS', 'Cap', 'Cap_Total', 'oferta',
     '%Ocupação', '% Ocupação', 'APV', 'IPV', 'IPV 3', 'IPV3', '% APV', 'Aproveitamento', 'APROVEITAMENTO', '%Ocupao', '% OCUPAO', 'apv'
 ];
