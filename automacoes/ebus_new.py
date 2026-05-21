@@ -1175,7 +1175,7 @@ def executar_ebus(
 
             opcoes = Options()
             opcoes.add_argument("--window-size=1920,1080")
-            opcoes.add_argument("--headless")
+            # opcoes.add_argument("--headless")
 
             driver_path = get_driver_path()
             if driver_path and "chrome" in Path(driver_path).name.lower():

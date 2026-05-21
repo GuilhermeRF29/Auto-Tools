@@ -7,3 +7,88 @@
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* Card Expansion Helpers */
+.card-expanded-active {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 92vh !important;
+  width: 95vw !important;
+}
+
+body.has-expanded-card .main-view-container {
+  transform: none !important;
+  will-change: auto !important;
+}
+
+/* Elevate the main content wrapper over the sidebar, and main over the header */
+body.has-expanded-card .main-content-wrapper {
+  z-index: 30 !important;
+}
+
+body.has-expanded-card main {
+  z-index: 9999 !important;
+}
+
+/* Ensure scrollable containers take up remaining height inside expanded card */
+.card-expanded-active .overflow-x-auto,
+.card-expanded-active .custom-scrollbar,
+.card-expanded-active .overflow-auto {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+}
+
+/* Make Recharts containers grow to fill the available height */
+/* min-width: 100% preserves any inline horizontal scrolling styles while stretching small charts */
+.card-expanded-active .h-\[220px\],
+.card-expanded-active .h-\[320px\],
+.card-expanded-active .h-\[360px\],
+.card-expanded-active .h-\[440px\],
+.card-expanded-active .h-\[460px\],
+.card-expanded-active .h-\[560px\] {
+  flex: 1 1 0% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  min-width: 100% !important;
+}
+
+/* Release any max-height constraints on containers */
+.card-expanded-active .max-h-\[220px\],
+.card-expanded-active .max-h-\[320px\],
+.card-expanded-active .max-h-\[330px\],
+.card-expanded-active .max-h-\[360px\],
+.card-expanded-active .max-h-\[420px\],
+.card-expanded-active .max-h-\[460px\],
+.card-expanded-active .max-h-\[620px\] {
+  max-height: none !important;
+}
+
+/* Tables should vertically stretch to fill the height if they are smaller than the screen */
+.card-expanded-active table {
+  flex: 1 1 auto !important;
+  min-height: 100% !important;
+  min-width: 100% !important;
+}
+
+/* Increase specific small text sizes to improve readability on big screens */
+.card-expanded-active .text-xs { font-size: 0.85rem !important; line-height: 1.25rem !important; }
+.card-expanded-active .text-sm { font-size: 1rem !important; line-height: 1.5rem !important; }
+.card-expanded-active .text-base { font-size: 1.125rem !important; line-height: 1.75rem !important; }
+.card-expanded-active .text-\[11px\] { font-size: 13px !important; }
+.card-expanded-active .text-\[10px\] { font-size: 12px !important; }
+
+/* Override fixed-width containers if any inside chart */
+.card-expanded-active .min-w-max {
+  min-width: 100% !important;
+}
+
+/* If a card is split in two columns on desktop, make them stack vertically or fill height */
+.card-expanded-active .grid {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+}

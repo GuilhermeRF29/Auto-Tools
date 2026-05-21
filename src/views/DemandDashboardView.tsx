@@ -1183,7 +1183,7 @@ const DemandDashboardView = () => {
       </Card>
 
       {showRemovedDatesTable && removedDailyColumns.length > 0 && (
-        <Card className="p-5">
+        <Card className="p-5" expandable>
           <div className="mb-4 flex items-center gap-3">
             <div className="rounded-2xl border border-amber-100 bg-amber-50 p-2 text-amber-700 shadow-sm">
               <CalendarDays size={16} />
@@ -1296,7 +1296,7 @@ const DemandDashboardView = () => {
         </Card>
       </section>
 
-      <Card className="p-5">
+      <Card className="p-5" expandable>
         <div className="mb-4 flex items-center gap-3">
           <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-2 text-cyan-700 shadow-sm">
             <BarChart3 size={16} />
@@ -1389,7 +1389,7 @@ const DemandDashboardView = () => {
         </div>
       </Card>
 
-      <Card className="p-5">
+      <Card className="p-5" expandable>
         <div className="mb-4 flex items-center gap-3">
           <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-2 text-cyan-700 shadow-sm">
             <CalendarDays size={16} />
@@ -1447,7 +1447,7 @@ const DemandDashboardView = () => {
         </div>
       </Card>
 
-        <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200/60 p-6">
+      <Card className="p-6 bg-white" expandable>
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div className="flex items-center gap-4">
               <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-2 text-cyan-700 shadow-sm">
@@ -1621,7 +1621,7 @@ const DemandDashboardView = () => {
             </tfoot>
           </table>
         </div>
-      </div>
+      </Card>
 
       {loading && (
         <div className="fixed bottom-6 right-6 rounded-2xl border border-blue-100 bg-white px-4 py-3 text-xs font-black text-blue-700 shadow-xl">

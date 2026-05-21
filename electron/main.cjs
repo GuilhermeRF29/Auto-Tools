@@ -56,9 +56,9 @@ const bootstrapDataDir = (dataDir) => {
 
   seedFiles.forEach((file) => {
     // Tenta pegar da raiz ou da pasta unpacked
-    const src = fs.existsSync(path.join(unpackedPath, file)) 
-                ? path.join(unpackedPath, file) 
-                : path.join(appPath, file);
+    const src = fs.existsSync(path.join(unpackedPath, file))
+      ? path.join(unpackedPath, file)
+      : path.join(appPath, file);
     const dest = path.join(dataDir, file);
 
     if (fs.existsSync(src) && !fs.existsSync(dest)) {
@@ -78,7 +78,7 @@ const startBackend = () => {
   const serverEntry = getServerEntry();
   const dataDir = path.join(app.getPath('userData'), 'runtime-data');
   const logFile = path.join(dataDir, 'backend_log.txt');
-  
+
   fs.mkdirSync(dataDir, { recursive: true });
   bootstrapDataDir(dataDir);
 
@@ -124,7 +124,7 @@ const startBackend = () => {
   backendProcess = spawn(process.execPath, [serverEntry], {
     cwd: path.dirname(serverEntry),
     env,
-    shell: false, 
+    shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -152,9 +152,9 @@ const stopBackend = () => {
       const pid = backendProcess.pid;
       console.log(`[ELECTRON] Finalizando árvore de processos do backend (PID ${pid})...`);
       // Usamos taskkill /F /T para garantir que o processo e seus filhos (como o Python) morram
-      spawn('taskkill', ['/F', '/T', '/PID', pid.toString()], { 
+      spawn('taskkill', ['/F', '/T', '/PID', pid.toString()], {
         shell: false,
-        windowsHide: true 
+        windowsHide: true
       });
     } else {
       backendProcess.kill('SIGTERM');
@@ -172,9 +172,9 @@ const stopBackend = () => {
 const createMainWindow = async () => {
   mainWindow = new BrowserWindow({
     width: 1420,
-    height: 920,
-    minWidth: 1180,
-    minHeight: 720,
+    height: 800,
+    minWidth: 500,
+    minHeight: 500,
     show: false,
     autoHideMenuBar: true,
     frame: false,
@@ -223,7 +223,7 @@ const createMainWindow = async () => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (win) win.minimize();
   });
-  
+
   ipcMain.on('window:maximize', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (win) {

@@ -728,7 +728,7 @@ const ApresentacoesView = () => {
       </section>
 
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        <Card className="xl:col-span-8 p-5">
+        <Card className="xl:col-span-8 p-5" expandable>
           <SectionTitle
             icon={<BarChart3 size={16} />}
             title="Revenue aplicado"
@@ -790,7 +790,7 @@ const ApresentacoesView = () => {
           )}
         </Card>
 
-        <Card className="xl:col-span-4 p-5">
+        <Card className="xl:col-span-4 p-5" expandable>
           <SectionTitle icon={<Gauge size={16} />} title="Faixa Qtd. % R$" subtitle="Mapa Faixa, contagem, percentual e media Revenue" />
           {faixa.length === 0 ? (
             <EmptyState text="Sem dados para mapa de faixas." />
@@ -830,7 +830,7 @@ const ApresentacoesView = () => {
       </section>
 
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        <Card className="xl:col-span-8 p-5">
+        <Card className="xl:col-span-8 p-5" expandable>
           <SectionTitle
             icon={<TrendingUp size={16} />}
             title="Evolucao TM x ADVP"
@@ -866,7 +866,7 @@ const ApresentacoesView = () => {
           )}
         </Card>
 
-        <Card className="xl:col-span-4 p-5">
+        <Card className="xl:col-span-4 p-5" expandable>
           <SectionTitle
             icon={<TrendingUp size={16} />}
             title="Total revenue aplicado"
@@ -911,7 +911,7 @@ const ApresentacoesView = () => {
       </section>
 
       <section className="grid grid-cols-1 gap-5">
-        <Card className="p-5">
+        <Card className="p-5" expandable>
           <SectionTitle icon={<Gauge size={16} />} title="ADVP" subtitle="X: ADVP | Y: Contagem | Legenda: Status Revenue" />
           {advpStatus.length === 0 ? (
             <EmptyState text="Sem dados de ADVP no periodo." />
@@ -945,7 +945,7 @@ const ApresentacoesView = () => {
       </section>
 
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        <Card className="xl:col-span-7 p-5">
+        <Card className="xl:col-span-7 p-5" expandable>
           <SectionTitle icon={<BarChart3 size={16} />} title="Revenue por canal venda" subtitle="Participacao total por canal" />
           {revenueCanalTotal.length === 0 ? (
             <EmptyState text="Sem canais no recorte selecionado." />
@@ -991,7 +991,7 @@ const ApresentacoesView = () => {
           )}
         </Card>
 
-        <Card className="xl:col-span-5 p-5">
+        <Card className="xl:col-span-5 p-5" expandable>
           <SectionTitle icon={<Gauge size={16} />} title="Aproveitamento aplicacao" subtitle="Status Revenue" />
           {aproveitamento.length === 0 ? (
             <EmptyState text="Sem distribuicao de status." />
@@ -1014,7 +1014,7 @@ const ApresentacoesView = () => {
       </section>
 
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        <Card className="xl:col-span-8 p-5">
+        <Card className="xl:col-span-8 p-5" expandable>
           <SectionTitle
             icon={<BarChart3 size={16} />}
             title="Revenue por analista x indicador"
@@ -1041,7 +1041,7 @@ const ApresentacoesView = () => {
           )}
         </Card>
 
-        <Card className="xl:col-span-4 p-5">
+        <Card className="xl:col-span-4 p-5" expandable>
           <SectionTitle icon={<BarChart3 size={16} />} title="Justificativa" subtitle="Contagem por justificativa" />
           {justificativas.length === 0 ? (
             <EmptyState text="Sem justificativas no periodo." />
@@ -1065,7 +1065,7 @@ const ApresentacoesView = () => {
       </section>
 
       <section className="grid grid-cols-1 gap-5">
-        <Card className="p-5">
+        <Card className="p-5" expandable>
           <SectionTitle icon={<Database size={16} />} title="Qtd. rotas aplicadas" subtitle="Rota, contagem e media de Revenue aplicado" />
           {rotas.length === 0 ? (
             <EmptyState text="Sem rotas para exibir." />

@@ -154,7 +154,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
           </aside>
 
           {/* === CONTEÚDO PRINCIPAL === */}
-          <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden main-content-wrapper relative">
             {/* Header */}
             <header className="drag-region h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:pr-4 sm:pl-8 shadow-sm z-10 transition-all">
               <div className="flex items-center gap-3">

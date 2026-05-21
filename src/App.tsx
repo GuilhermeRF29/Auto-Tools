@@ -29,6 +29,7 @@ import SettingsView from './views/SettingsView';
 import {
   clearWindowsHelloHint,
   disableWindowsHello,
+  getWindowsHelloHint,
   getWindowsHelloServerState,
   isWindowsHelloAvailable,
   registerWindowsHello,
@@ -329,7 +330,7 @@ function AppContent() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -15 }}
           transition={{ type: 'spring', stiffness: 350, damping: 35, mass: 0.8 }}
-          className="w-full h-full"
+          className="w-full h-full main-view-container"
         >
           {currentView === 'dashboard' && (
             <DashboardView 

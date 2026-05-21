@@ -667,7 +667,7 @@ const ComparativoSemanalSection = ({ rows, loading }: { rows: RioShareRow[]; loa
   }, [chartData]);
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" expandable>
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-center gap-3">
           <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-2 text-indigo-700">
@@ -999,7 +999,7 @@ const AcompanhamentoDiarioSection = ({ rows, loading }: { rows: RioShareRow[]; l
 
   return (
     <div className="space-y-4">
-      <Card className="p-5">
+      <Card className="p-5" expandable>
         <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-center gap-3">
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-2 text-emerald-700">
@@ -1239,7 +1239,7 @@ const QuadroHorariosSection = ({ rows, loading, dayStart, dayEnd }: { rows: RioS
   );
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" expandable>
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-center gap-3">
           <div className="rounded-2xl border border-slate-200 bg-slate-100 p-2 text-slate-700">
@@ -1499,7 +1499,7 @@ const ShareSection = ({
   }, [rows]);
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" expandable>
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="rounded-2xl border border-blue-100 bg-blue-50 p-2 text-blue-700">
@@ -1657,7 +1657,7 @@ const PaxViagensSection = ({ rows, loading }: { rows: RioShareRow[]; loading: bo
   }, [chartData]);
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" expandable>
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-center gap-3">
           <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-2 text-cyan-700">

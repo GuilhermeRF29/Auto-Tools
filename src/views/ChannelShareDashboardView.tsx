@@ -220,7 +220,7 @@ const MatrixTableCard = ({
 
   return (
     <div>
-      <Card className="p-5">
+      <Card className="p-5" expandable>
         <div className="mb-4 flex items-center gap-3">
           <div className={cn('rounded-2xl border p-2 text-sm shadow-sm', toneClass)}>
             <Table2 size={16} />
