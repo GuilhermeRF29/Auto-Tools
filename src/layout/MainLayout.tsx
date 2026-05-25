@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import {
   Home, FileText, Lock, Search, User,
@@ -40,6 +40,18 @@ export default function MainLayout({ children }: MainLayoutProps) {
     updateStatus
   } = useUI();
 
+  const [isMaximized, setIsMaximized] = useState(false);
+  const runtime = (window as any).autoToolsRuntime;
+  const isElectron = runtime?.isElectron;
+
+  useEffect(() => {
+    if (isElectron && runtime.windowControls?.onMaximizeChanged) {
+      runtime.windowControls.onMaximizeChanged((maximized: boolean) => {
+        setIsMaximized(maximized);
+      });
+    }
+  }, [isElectron, runtime]);
+
   const profileRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,7 +66,11 @@ export default function MainLayout({ children }: MainLayoutProps) {
 
   return (
     <MotionConfig reducedMotion={animationsEnabled ? 'never' : 'always'}>
-      <div className={cn("flex flex-col h-screen font-sans overflow-hidden", !animationsEnabled && "animations-disabled")}>
+      <div className={cn(
+        "flex flex-col h-screen font-sans overflow-hidden bg-white",
+        (isElectron && !isMaximized) && "rounded-[2rem] border border-slate-200 shadow-2xl",
+        !animationsEnabled && "animations-disabled"
+      )}>
         <style>{`
           .animate-ticker {
             display: inline-block;
