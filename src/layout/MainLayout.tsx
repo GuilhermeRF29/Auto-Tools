@@ -3,7 +3,7 @@ import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import {
   Home, FileText, Lock, Search, User,
   CheckCircle, Loader2, Calculator, LogOut,
-  X, Settings, Menu, BarChart3, Wrench
+  X, Settings, Menu, BarChart3, Wrench, BookOpen
 } from 'lucide-react';
 
 import logoApp from '../assets/logo_app.png';
@@ -36,7 +36,8 @@ export default function MainLayout({ children }: MainLayoutProps) {
     isSidebarOpen, setIsSidebarOpen,
     isSearchOpen, setIsSearchOpen,
     isProfileOpen, setIsProfileOpen,
-    animationsEnabled
+    animationsEnabled,
+    updateStatus
   } = useUI();
 
   const profileRef = useRef<HTMLDivElement>(null);
@@ -234,6 +235,15 @@ export default function MainLayout({ children }: MainLayoutProps) {
                           Meu Perfil
                         </button>
                         <button
+                          onClick={() => { setCurrentView('manual'); setIsProfileOpen(false); }}
+                          className="w-full flex items-center gap-3 p-4 hover:bg-blue-50/50 rounded-2xl transition-all text-sm font-bold text-slate-600 group"
+                        >
+                          <div className="w-8 h-8 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-white group-hover:text-blue-600 transition-colors">
+                            <BookOpen size={16} />
+                          </div>
+                          Manual do Usuário
+                        </button>
+                        <button
                           onClick={() => { setCurrentView('settings'); setIsProfileOpen(false); }}
                           className="w-full flex items-center gap-3 p-4 hover:bg-blue-50/50 rounded-2xl transition-all text-sm font-bold text-slate-600 group"
                         >
@@ -257,7 +267,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
                       </div>
 
                       <div className="p-3 bg-slate-50/50 text-center">
-                        <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">AutoTools v1.5.0</p>
+                        <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">
+                          AutoTools v{updateStatus.currentVersion || '1.8.6'}
+                        </p>
                       </div>
                     </motion.div>
                   )}

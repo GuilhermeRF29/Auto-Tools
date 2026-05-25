@@ -26,6 +26,7 @@ import VaultView from './views/VaultView';
 import CalculatorView from './views/CalculatorView';
 import ToolsView from './views/ToolsView';
 import SettingsView from './views/SettingsView';
+import ManualView from './views/ManualView';
 import {
   clearWindowsHelloHint,
   disableWindowsHello,
@@ -398,6 +399,7 @@ function AppContent() {
               currentUserId={(user as any)?.id ?? null}
             />
           )}
+          {currentView === 'manual' && <ManualView />}
         </motion.div>
       </AnimatePresence>
     </MainLayout>

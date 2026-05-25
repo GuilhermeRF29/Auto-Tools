@@ -170,44 +170,49 @@ const stopBackend = () => {
 };
 
 const createMainWindow = async () => {
+  // Criação da janela principal do Electron com configurações de design premium
   mainWindow = new BrowserWindow({
     width: 1420,
     height: 800,
     minWidth: 500,
     minHeight: 500,
-    show: false,
-    autoHideMenuBar: true,
-    frame: false,
-    titleBarStyle: 'hidden',
+    show: false, // Mantém a janela oculta até carregar totalmente o HTML/URL (evita flash branco)
+    autoHideMenuBar: true, // Oculta a barra de menu clássica (Arquivo, Editar, etc.)
+    frame: false, // Desativa a moldura padrão do Windows (cria janela chromeless)
+    titleBarStyle: 'hidden', // Esconde a barra de títulos do Windows
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
+      preload: path.join(__dirname, 'preload.cjs'), // Pre-carregador para expor IPC seguro
+      contextIsolation: true, // Garante que scripts da página web não acessem o contexto do Node diretamente
+      nodeIntegration: false, // Impede injeção direta do Node no frontend por segurança
+      sandbox: false, // Permite acesso a recursos controlados necessários no Preload
     },
   });
 
+  // Define a URL alvo de carregamento (Vite Dev Server em desenvolvimento ou Express Local em produção)
   const targetUrl = isDev
     ? DEV_RENDERER_URL
     : `http://127.0.0.1:${SERVER_PORT}`;
 
   await mainWindow.loadURL(targetUrl);
-  mainWindow.show();
+  mainWindow.show(); // Exibe a janela já renderizada com os dados carregados
 
   if (isDev) {
+    // Abre a ferramenta do desenvolvedor (DevTools) desconectada da janela em modo dev
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
 
-  // Handlers para Diálogos Nativos (Modernos)
+  // Handlers para Diálogos Nativos (Modernos) utilizando chamadas assíncronas do Electron dialog
   ipcMain.handle('dialog:openDirectory', async () => {
+    // Abre caixa de diálogo nativa do Windows para seleção de diretório
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory', 'createDirectory']
     });
     if (canceled) return '';
-    return filePaths[0];
+    return filePaths[0]; // Retorna a pasta selecionada ou vazio se cancelado
   });
 
   ipcMain.handle('dialog:openExcelFiles', async () => {
+    // Abre caixa de diálogo nativa do Windows para seleção múltipla de planilhas Excel
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       properties: ['openFile', 'multiSelections'],
       filters: [
@@ -215,15 +220,22 @@ const createMainWindow = async () => {
       ]
     });
     if (canceled) return [];
-    return filePaths;
+    return filePaths; // Retorna array de arquivos selecionados
   });
 
-  // Controles Customizados de Janela
+  // =========================================================================
+  // Controles Customizados de Janela (IPC Lógica)
+  // Como o app usa 'frame: false', os botões da barra superior enviam sinais IPC 
+  // que o Processo Principal (este arquivo) escuta para manipular a janela nativa.
+  // =========================================================================
+  
+  // Minimiza a janela atual
   ipcMain.on('window:minimize', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (win) win.minimize();
   });
 
+  // Maximiza ou restaura o tamanho original da janela
   ipcMain.on('window:maximize', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (win) {
@@ -232,11 +244,14 @@ const createMainWindow = async () => {
     }
   });
 
+  // Fecha o aplicativo completamente
   ipcMain.on('window:close', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (win) win.close();
   });
 
+  // Escuta mudanças de estado da janela (se o usuário maximizar clicando nas bordas, por exemplo)
+  // e notifica o frontend para atualizar o ícone do botão (Maximizado vs Restaurado)
   mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized-changed', true));
   mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximized-changed', false));
 };
