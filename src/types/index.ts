@@ -5,7 +5,7 @@
  */
 
 /** Identificador das views/telas disponíveis na navegação principal. */
-export type View = 'dashboard' | 'dashboards' | 'presentations' | 'demand' | 'rioShare' | 'channelShare' | 'reports' | 'vault' | 'calculator' | 'tools' | 'settings' | 'history';
+export type View = 'dashboard' | 'dashboards' | 'presentations' | 'demand' | 'rioShare' | 'channelShare' | 'reports' | 'vault' | 'calculator' | 'tools' | 'settings' | 'history' | 'manual';
 
 /** Usuário autenticado na aplicação. */
 export interface User {

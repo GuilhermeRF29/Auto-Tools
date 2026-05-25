@@ -19,6 +19,18 @@
 
 **Auto Tools** é uma aplicação interna de automação que combina um frontend moderno em React com um backend Node.js/Express que orquestra scripts Python para processamento de dados.
 
+---
+
+## 📚 Documentação do Projeto
+
+Para informações detalhadas sobre a aplicação, consulte os guias dedicados na pasta `docs/`:
+
+*   📖 **[Manual do Usuário](file:///c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/docs/USER_MANUAL.md)** — Guia completo sobre o funcionamento de cada tela, botões e recursos da interface para o usuário final.
+*   🚀 **[Guia de Execução](file:///c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/docs/EXECUTION_GUIDE.md)** — Passo a passo para rodar localmente em desenvolvimento, compilar e distribuir o aplicativo portátil para usuários finais.
+*   🛠️ **[Documentação Técnica](file:///c:/Users/guilherme.felix/Documents/Temporário VS/Project_Automation3/docs/DOCUMENTATION.md)** — Detalhamento técnico da arquitetura, fluxo assíncrono de automações, estrutura de banco de dados e mapeamento de arquivos individuais do sistema.
+
+---
+
 ### Principais funcionalidades:
 
 - 📊 **Dashboards interativos** — Revenue, Demanda (Forecast), Rio x SP Market Share, e Performance de Canais
