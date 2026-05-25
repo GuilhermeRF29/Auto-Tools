@@ -172,14 +172,16 @@ const stopBackend = () => {
 const createMainWindow = async () => {
   // Criação da janela principal do Electron com configurações de design premium
   mainWindow = new BrowserWindow({
-    width: 1420,
-    height: 800,
+    width: 1000,
+    height: 660,
     minWidth: 500,
     minHeight: 500,
     show: false, // Mantém a janela oculta até carregar totalmente o HTML/URL (evita flash branco)
     autoHideMenuBar: true, // Oculta a barra de menu clássica (Arquivo, Editar, etc.)
     frame: false, // Desativa a moldura padrão do Windows (cria janela chromeless)
-    titleBarStyle: 'hidden', // Esconde a barra de títulos do Windows
+    transparent: true, // Permite transparência na janela para o card de login flutuante
+    hasShadow: false, // Desativado para evitar moldura cinza/sombra retangular do Windows em janelas transparentes
+    backgroundColor: '#00000000', // Fundo totalmente transparente
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'), // Pre-carregador para expor IPC seguro
       contextIsolation: true, // Garante que scripts da página web não acessem o contexto do Node diretamente
@@ -248,6 +250,19 @@ const createMainWindow = async () => {
   ipcMain.on('window:close', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (win) win.close();
+  });
+
+  // Define o tamanho e resiliência da janela
+  ipcMain.on('window:set-size', (e, width, height, resizable = true) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win) {
+      const isMax = win.isMaximized();
+      if (isMax) win.unmaximize();
+      win.setResizable(true); // Permite redimensionar programaticamente
+      win.setSize(width, height);
+      win.setResizable(resizable);
+      win.center();
+    }
   });
 
   // Escuta mudanças de estado da janela (se o usuário maximizar clicando nas bordas, por exemplo)

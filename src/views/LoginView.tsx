@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { motion, MotionConfig } from 'motion/react';
-import { CheckCircle, Fingerprint, Loader2, RefreshCw, ShieldAlert, ShieldCheck, Smartphone } from 'lucide-react';
+import { CheckCircle, Fingerprint, Loader2, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Minus, X } from 'lucide-react';
 import logoApp from '../assets/logo_app.png';
 
 import { useAuth } from '../context/AuthContext';
@@ -51,6 +51,8 @@ const createDeviceFingerprint = () => {
 };
 
 export default function LoginView({ serverStatus, serverInfo, animationsEnabled }: LoginViewProps) {
+  const runtime = (window as any).autoToolsRuntime;
+  const isElectron = runtime?.isElectron;
   const { setUser, isLoggingIn } = useAuth(); // using global auth context
   const { showAlert } = useDialog();
   const { updateStatus } = useUI();
@@ -388,13 +390,17 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
 
   return (
     <MotionConfig reducedMotion={animationsEnabled ? 'never' : 'always'}>
-      <motion.div className={cn("flex min-h-screen w-full items-center justify-center font-sans p-4 sm:p-10 overflow-y-auto overflow-x-hidden relative bg-slate-50", !animationsEnabled && "animations-disabled")}>
-        <BackgroundAnimation />
+      <motion.div className={cn(
+        "flex min-h-screen w-full items-center justify-center font-sans p-4 sm:p-10 overflow-y-auto overflow-x-hidden relative",
+        isElectron ? "bg-transparent" : "bg-slate-50",
+        !animationsEnabled && "animations-disabled"
+      )}>
+        {!isElectron && <BackgroundAnimation />}
         <motion.div 
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 300, damping: 30, duration: 0.6 }}
-          className="flex w-full max-w-4xl h-auto min-h-[520px] my-auto overflow-hidden rounded-[2rem] shadow-2xl bg-white border border-slate-200 relative"
+          className="flex w-full max-w-4xl h-auto min-h-[520px] my-auto overflow-hidden rounded-[2rem] shadow-2xl bg-white border border-slate-200 relative drag-region"
         >
 
         {/* Lado Esquerdo - Branding */}
@@ -444,7 +450,29 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
         </div>
 
         {/* Lado Direito - Formulário */}
-        <div className="flex-1 p-8 sm:p-12 flex flex-col justify-center overflow-y-auto custom-scrollbar">
+        <div className="flex-1 p-8 sm:p-12 flex flex-col justify-center overflow-y-auto custom-scrollbar no-drag relative">
+          
+          {/* Botões de controle de janela no topo direito (Electron) */}
+          {isElectron && (
+            <div className="absolute top-4 right-4 z-50 flex items-center gap-1 no-drag">
+              <button
+                type="button"
+                onClick={() => runtime.windowControls.minimize()}
+                className="flex items-center justify-center w-8 h-8 rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
+                aria-label="Minimizar"
+              >
+                <Minus size={16} strokeWidth={2.5} />
+              </button>
+              <button
+                type="button"
+                onClick={() => runtime.windowControls.close()}
+                className="flex items-center justify-center w-8 h-8 rounded-xl hover:bg-rose-500 hover:text-white text-slate-500 transition-colors"
+                aria-label="Fechar"
+              >
+                <X size={16} strokeWidth={2.5} />
+              </button>
+            </div>
+          )}
           <div className="max-w-xs mx-auto w-full">
             {/* Logo Mobile */}
             <div className="flex flex-col items-center mb-6 md:hidden animate-in fade-in slide-in-from-top-4 duration-500">

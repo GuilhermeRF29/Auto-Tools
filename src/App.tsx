@@ -261,6 +261,17 @@ function AppContent() {
     }
   };
 
+  useEffect(() => {
+    const runtime = (window as any).autoToolsRuntime;
+    if (runtime?.isElectron && runtime.windowControls?.setSize) {
+      if (!user) {
+        runtime.windowControls.setSize(1000, 660, false);
+      } else {
+        runtime.windowControls.setSize(1420, 800, true);
+      }
+    }
+  }, [user]);
+
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [serverInfo, setServerInfo] = useState<ServerHealthInfo | null>(null);
 

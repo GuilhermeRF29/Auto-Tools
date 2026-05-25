@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('autoToolsRuntime', {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
+    setSize: (width, height, resizable) => ipcRenderer.send('window:set-size', width, height, resizable),
     onMaximizeChanged: (callback) => {
       ipcRenderer.on('window:maximized-changed', (_, isMaximized) => callback(isMaximized));
     }
