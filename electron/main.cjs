@@ -255,9 +255,13 @@ const createMainWindow = async (isLoggedIn = false) => {
     minHeight: 500,
     show: false,
     autoHideMenuBar: true,
-    frame: false,        // Janela sem moldura — usamos botões e drag personalizados
-    transparent: false,  // Alterado para false para reativar o Windows Snap
-    hasShadow: true,     // Ativada a sombra nativa já que transparent está false
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#ffffff',
+      symbolColor: '#475569',
+      height: 64
+    },
+    hasShadow: true,
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -273,9 +277,13 @@ const createMainWindow = async (isLoggedIn = false) => {
     minHeight: 500,
     show: false,
     autoHideMenuBar: true,
-    frame: false,        // Janela sem moldura na tela de login
-    transparent: false,  // Alterado para false para reativar o Windows Snap
-    hasShadow: true,     // Ativada sombra nativa
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#ffffff',
+      symbolColor: '#475569',
+      height: 48
+    },
+    hasShadow: true,
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

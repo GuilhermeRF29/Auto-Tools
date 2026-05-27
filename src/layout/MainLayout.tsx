@@ -292,7 +292,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
                   )}
                 </AnimatePresence>
               </div>
-              {!hasFrame && <WindowControls />}
+              {isElectron && (hasFrame ? <div className="w-[140px] h-10 no-drag" /> : <WindowControls />)}
             </div>
           </header>
 

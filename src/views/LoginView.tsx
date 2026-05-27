@@ -456,7 +456,7 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
         <div className="flex-1 p-8 sm:p-12 flex flex-col justify-center overflow-y-auto custom-scrollbar no-drag relative">
           
           {/* Botões de controle de janela no topo direito (Electron) */}
-          {isElectron && (
+          {isElectron && !runtime.hasFrame && (
             <div className="absolute top-4 right-4 z-50 flex items-center gap-1 no-drag">
               <button
                 type="button"
