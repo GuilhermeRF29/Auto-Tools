@@ -169,107 +169,163 @@ const stopBackend = () => {
   }
 };
 
-const createMainWindow = async () => {
-  // Criação da janela principal do Electron com configurações de design premium
-  mainWindow = new BrowserWindow({
+let currentUser = null;
+
+// =========================================================================
+// Listeners e Handlers Globais IPC do Electron
+// Registrados apenas uma vez no processo principal
+// =========================================================================
+
+// Diálogos nativos
+ipcMain.handle('dialog:openDirectory', async () => {
+  if (!mainWindow) return '';
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (canceled) return '';
+  return filePaths[0];
+});
+
+ipcMain.handle('dialog:openExcelFiles', async () => {
+  if (!mainWindow) return [];
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Arquivos Excel', extensions: ['xlsx', 'xls', 'xlsm'] }
+    ]
+  });
+  if (canceled) return [];
+  return filePaths;
+});
+
+// Gerenciamento de sessão em memória
+ipcMain.on('auth:set-user', (e, user) => {
+  currentUser = user;
+});
+
+ipcMain.on('auth:get-user-sync', (e) => {
+  e.returnValue = currentUser;
+});
+
+// Ação de recriação de janela
+ipcMain.on('window:recreate', (e, isLoggedIn) => {
+  recreateMainWindow(isLoggedIn);
+});
+
+// Controles de janela para a tela de login (frameless)
+ipcMain.on('window:minimize', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win) win.minimize();
+});
+
+ipcMain.on('window:maximize', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win) {
+    if (win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+  }
+});
+
+ipcMain.on('window:close', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win) win.close();
+});
+
+ipcMain.on('window:set-size', (e, width, height, resizable = true) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win) {
+    const isMax = win.isMaximized();
+    if (isMax) win.unmaximize();
+    win.setResizable(true);
+    win.setSize(width, height);
+    win.setResizable(resizable);
+    win.center();
+  }
+});
+
+const createMainWindow = async (isLoggedIn = false) => {
+  // Configurações base da janela conforme o estado de autenticação
+  const windowOptions = isLoggedIn ? {
+    width: 1420,
+    height: 800,
+    minWidth: 500,
+    minHeight: 500,
+    show: false,
+    autoHideMenuBar: true,
+    frame: false,        // Janela sem moldura — usamos botões e drag personalizados
+    transparent: false,  // Alterado para false para reativar o Windows Snap
+    hasShadow: true,     // Ativada a sombra nativa já que transparent está false
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false,
+    },
+  } : {
     width: 1000,
     height: 660,
     minWidth: 500,
     minHeight: 500,
-    show: false, // Mantém a janela oculta até carregar totalmente o HTML/URL (evita flash branco)
-    autoHideMenuBar: true, // Oculta a barra de menu clássica (Arquivo, Editar, etc.)
-    frame: false, // Desativa a moldura padrão do Windows (cria janela chromeless)
-    transparent: true, // Permite transparência na janela para o card de login flutuante
-    hasShadow: false, // Desativado para evitar moldura cinza/sombra retangular do Windows em janelas transparentes
-    backgroundColor: '#00000000', // Fundo totalmente transparente
+    show: false,
+    autoHideMenuBar: true,
+    frame: false,        // Janela sem moldura na tela de login
+    transparent: false,  // Alterado para false para reativar o Windows Snap
+    hasShadow: true,     // Ativada sombra nativa
+    backgroundColor: '#ffffff',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'), // Pre-carregador para expor IPC seguro
-      contextIsolation: true, // Garante que scripts da página web não acessem o contexto do Node diretamente
-      nodeIntegration: false, // Impede injeção direta do Node no frontend por segurança
-      sandbox: false, // Permite acesso a recursos controlados necessários no Preload
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
     },
-  });
+  };
 
-  // Define a URL alvo de carregamento (Vite Dev Server em desenvolvimento ou Express Local em produção)
+  mainWindow = new BrowserWindow(windowOptions);
+
   const targetUrl = isDev
     ? DEV_RENDERER_URL
     : `http://127.0.0.1:${SERVER_PORT}`;
 
   await mainWindow.loadURL(targetUrl);
-  mainWindow.show(); // Exibe a janela já renderizada com os dados carregados
+  mainWindow.show();
 
   if (isDev) {
-    // Abre a ferramenta do desenvolvedor (DevTools) desconectada da janela em modo dev
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
 
-  // Handlers para Diálogos Nativos (Modernos) utilizando chamadas assíncronas do Electron dialog
-  ipcMain.handle('dialog:openDirectory', async () => {
-    // Abre caixa de diálogo nativa do Windows para seleção de diretório
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openDirectory', 'createDirectory']
-    });
-    if (canceled) return '';
-    return filePaths[0]; // Retorna a pasta selecionada ou vazio se cancelado
-  });
-
-  ipcMain.handle('dialog:openExcelFiles', async () => {
-    // Abre caixa de diálogo nativa do Windows para seleção múltipla de planilhas Excel
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openFile', 'multiSelections'],
-      filters: [
-        { name: 'Arquivos Excel', extensions: ['xlsx', 'xls', 'xlsm'] }
-      ]
-    });
-    if (canceled) return [];
-    return filePaths; // Retorna array de arquivos selecionados
-  });
-
-  // =========================================================================
-  // Controles Customizados de Janela (IPC Lógica)
-  // Como o app usa 'frame: false', os botões da barra superior enviam sinais IPC 
-  // que o Processo Principal (este arquivo) escuta para manipular a janela nativa.
-  // =========================================================================
-  
-  // Minimiza a janela atual
-  ipcMain.on('window:minimize', (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (win) win.minimize();
-  });
-
-  // Maximiza ou restaura o tamanho original da janela
-  ipcMain.on('window:maximize', (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (win) {
-      if (win.isMaximized()) win.restore();
-      else win.maximize();
+  // Notificar o frontend sobre mudanças de maximização
+  mainWindow.on('maximize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:maximized-changed', true);
     }
   });
-
-  // Fecha o aplicativo completamente
-  ipcMain.on('window:close', (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (win) win.close();
-  });
-
-  // Define o tamanho e resiliência da janela
-  ipcMain.on('window:set-size', (e, width, height, resizable = true) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (win) {
-      const isMax = win.isMaximized();
-      if (isMax) win.unmaximize();
-      win.setResizable(true); // Permite redimensionar programaticamente
-      win.setSize(width, height);
-      win.setResizable(resizable);
-      win.center();
+  mainWindow.on('unmaximize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:maximized-changed', false);
     }
   });
-
-  // Escuta mudanças de estado da janela (se o usuário maximizar clicando nas bordas, por exemplo)
-  // e notifica o frontend para atualizar o ícone do botão (Maximizado vs Restaurado)
-  mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized-changed', true));
-  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximized-changed', false));
 };
+
+let isRecreating = false;
+
+const recreateMainWindow = async (isLoggedIn) => {
+  isRecreating = true;
+  if (mainWindow) {
+    mainWindow.destroy();
+    mainWindow = null;
+  }
+  await createMainWindow(isLoggedIn);
+  isRecreating = false;
+};
+
+// Flags de aceleração GPU para melhor performance com janela transparente
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 
 app.whenReady().then(async () => {
   try {
@@ -279,7 +335,7 @@ app.whenReady().then(async () => {
       throw new Error('Backend não ficou disponível a tempo.');
     }
 
-    await createMainWindow();
+    await createMainWindow(false);
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
     dialog.showErrorBox('Falha ao iniciar Auto Tools', message);
@@ -289,11 +345,12 @@ app.whenReady().then(async () => {
 
 app.on('activate', async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    await createMainWindow();
+    await createMainWindow(false);
   }
 });
 
 app.on('window-all-closed', () => {
+  if (isRecreating) return;
   if (process.platform !== 'darwin') {
     app.quit();
   }

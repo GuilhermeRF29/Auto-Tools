@@ -43,6 +43,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
   const [isMaximized, setIsMaximized] = useState(false);
   const runtime = (window as any).autoToolsRuntime;
   const isElectron = runtime?.isElectron;
+  const hasFrame = runtime?.hasFrame;
 
   useEffect(() => {
     if (isElectron && runtime.windowControls?.onMaximizeChanged) {
@@ -68,7 +69,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
     <MotionConfig reducedMotion={animationsEnabled ? 'never' : 'always'}>
       <div className={cn(
         "flex flex-col h-screen font-sans overflow-hidden bg-white",
-        (isElectron && !isMaximized) && "rounded-[2rem] border border-slate-200 shadow-2xl",
+        // Removido rounded-2xl e shadow-2xl pois o Windows 11 cuidará das bordas nativamente com transparent: false
         !animationsEnabled && "animations-disabled"
       )}>
         <style>{`
@@ -291,7 +292,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
                   )}
                 </AnimatePresence>
               </div>
-              <WindowControls />
+              {!hasFrame && <WindowControls />}
             </div>
           </header>
 

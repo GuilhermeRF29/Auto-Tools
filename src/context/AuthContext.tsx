@@ -14,7 +14,14 @@ const AUTH_USER_STORAGE_KEY = 'autotools:auth:user';
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [userState, setUserState] = useState<User | null>(() => {
     try {
-      // Keep auth only for the current browser tab/session for better security.
+      // Tenta obter do Electron (seco em memória no main process) para manter sessão entre recriação de janelas
+      const runtime = (window as any).autoToolsRuntime;
+      if (runtime?.isElectron && runtime.auth?.getUserSync) {
+        const savedUser = runtime.auth.getUserSync();
+        if (savedUser) return savedUser;
+      }
+
+      // Fallback para session storage clássico em ambiente web
       const raw = sessionStorage.getItem(AUTH_USER_STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw) as Partial<User>;
@@ -29,6 +36,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const setUser = (nextUser: User | null) => {
     setUserState(nextUser);
+
+    // Sincronização com o processo principal do Electron
+    const runtime = (window as any).autoToolsRuntime;
+    if (runtime?.isElectron && runtime.auth && runtime.windowControls?.recreateWindow) {
+      runtime.auth.setUser(nextUser);
+      runtime.windowControls.recreateWindow(!!nextUser);
+    }
+
     try {
       if (!nextUser) {
         sessionStorage.removeItem(AUTH_USER_STORAGE_KEY);

@@ -391,8 +391,8 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
   return (
     <MotionConfig reducedMotion={animationsEnabled ? 'never' : 'always'}>
       <motion.div className={cn(
-        "flex min-h-screen w-full items-center justify-center font-sans p-4 sm:p-10 overflow-y-auto overflow-x-hidden relative",
-        isElectron ? "bg-transparent" : "bg-slate-50",
+        "flex min-h-screen w-full items-center justify-center font-sans overflow-y-auto overflow-x-hidden relative",
+        isElectron ? "bg-white p-0" : "bg-slate-50 p-4 sm:p-10",
         !animationsEnabled && "animations-disabled"
       )}>
         {!isElectron && <BackgroundAnimation />}
@@ -400,7 +400,10 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 300, damping: 30, duration: 0.6 }}
-          className="flex w-full max-w-4xl h-auto min-h-[520px] my-auto overflow-hidden rounded-[2rem] shadow-2xl bg-white border border-slate-200 relative drag-region"
+          className={cn(
+            "flex w-full bg-white relative drag-region overflow-hidden",
+            isElectron ? "h-screen max-w-none min-h-screen rounded-none shadow-none" : "max-w-4xl h-auto min-h-[520px] my-auto rounded-[2rem] shadow-2xl"
+          )}
         >
 
         {/* Lado Esquerdo - Branding */}
