@@ -391,7 +391,7 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
   return (
     <MotionConfig reducedMotion={animationsEnabled ? 'never' : 'always'}>
       <motion.div className={cn(
-        "flex min-h-screen w-full items-center justify-center font-sans overflow-y-auto overflow-x-hidden relative",
+        "flex h-screen w-full items-center justify-center font-sans overflow-hidden relative",
         isElectron ? "bg-white p-0" : "bg-slate-50 p-4 sm:p-10",
         !animationsEnabled && "animations-disabled"
       )}>
@@ -402,7 +402,7 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
           transition={{ type: 'spring', stiffness: 300, damping: 30, duration: 0.6 }}
           className={cn(
             "flex w-full bg-white relative drag-region overflow-hidden",
-            isElectron ? "h-screen max-w-none min-h-screen rounded-none shadow-none" : "max-w-4xl h-auto min-h-[520px] my-auto rounded-[2rem] shadow-2xl"
+            isElectron ? "h-full max-w-none min-h-full rounded-none shadow-none" : "max-w-4xl h-auto min-h-[520px] my-auto rounded-[2rem] shadow-2xl"
           )}
         >
 
@@ -456,7 +456,7 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
         <div className="flex-1 p-8 sm:p-12 flex flex-col justify-center overflow-y-auto custom-scrollbar no-drag relative">
           
           {/* Botões de controle de janela no topo direito (Electron) */}
-          {isElectron && !runtime.hasFrame && (
+          {isElectron && (
             <div className="absolute top-4 right-4 z-50 flex items-center gap-1 no-drag">
               <button
                 type="button"

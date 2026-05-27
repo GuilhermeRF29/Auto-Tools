@@ -99,6 +99,7 @@
       }
     ],
     "win": {
+      "icon": "electron/icon.png",
       "target": [
         {
           "target": "dir",

@@ -249,18 +249,15 @@ ipcMain.on('window:set-size', (e, width, height, resizable = true) => {
 const createMainWindow = async (isLoggedIn = false) => {
   // Configurações base da janela conforme o estado de autenticação
   const windowOptions = isLoggedIn ? {
+    icon: path.join(__dirname, 'icon.png'),
     width: 1420,
     height: 800,
     minWidth: 500,
     minHeight: 500,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#ffffff',
-      symbolColor: '#475569',
-      height: 64
-    },
+    frame: false,
+    transparent: false,
     hasShadow: true,
     backgroundColor: '#ffffff',
     webPreferences: {
@@ -271,18 +268,15 @@ const createMainWindow = async (isLoggedIn = false) => {
       backgroundThrottling: false,
     },
   } : {
-    width: 1000,
-    height: 660,
+    icon: path.join(__dirname, 'icon.png'),
+    width: 900,
+    height: 500,
     minWidth: 500,
     minHeight: 500,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#ffffff',
-      symbolColor: '#475569',
-      height: 48
-    },
+    frame: false,
+    transparent: false,
     hasShadow: true,
     backgroundColor: '#ffffff',
     webPreferences: {

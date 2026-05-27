@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('autoToolsRuntime', {
   isElectron: true,
-  hasFrame: true,       // true = titleBarStyle 'hidden' draws native buttons
+  hasFrame: false,
   versions: {
     electron: process.versions.electron,
     chrome: process.versions.chrome,
