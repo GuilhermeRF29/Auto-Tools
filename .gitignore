@@ -12,12 +12,15 @@ padrao/
 token.json
 firebase-credentials.json
 core/credentials.json
+automacoes/auth.json
+.tmp_bkp_secrets/
 src_backend/data/webauthn_store.json
 .env
 .env.local
 
 # Logs e arquivos temporários
 *.log
+logs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -229,3 +232,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Documentação
+docs/
+Documentação/
+
+# Local backups and secret keys
+*.bak
+.vault_key

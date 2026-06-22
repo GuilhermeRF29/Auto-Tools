@@ -28,7 +28,7 @@ const resolvePythonPath = () => {
   }
 
   // 3. Fallback para estrutura de venv (desenvolvimento ou legado)
-  const relativeVenv = path.join('..', 'venv', 'Scripts', 'python.exe');
+  const relativeVenv = path.join('venv', 'Scripts', 'python.exe');
   const absoluteVenv = path.join(ROOT_DIR, relativeVenv);
   
   if (fs.existsSync(absoluteVenv)) {

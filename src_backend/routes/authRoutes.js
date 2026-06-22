@@ -1,21 +1,19 @@
 import { Router } from 'express';
 import { runPythonCmd } from '../utils/pythonProxy.js';
+import { getDb } from '../db/sqliteNative.js';
 
 const router = Router();
 
-// LOGIN: Autenticar usuário
+// LOGIN: Autenticar usuário (primeiro tenta NativeSQLite, fallback Python)
 router.post('/login', async (req, res) => {
     const { usuario, senha } = req.body;
     try {
-        const pyCmd = `import sys, json; from core.banco import login_principal; print(json.dumps(login_principal(sys.argv[1], sys.argv[2])))`;
-        const result = await runPythonCmd(pyCmd, [usuario, senha]);
-
-        if (Array.isArray(result) && result[0] !== null) {
-            const [id, nome] = result;
-            res.json({ success: true, user: { id, nome, usuario } });
-        } else {
-            res.json({ success: false, error: 'Usuário ou senha inválidos' });
+        const native = getDb();
+        const user = native.validateLogin(usuario, senha);
+        if (user) {
+            return res.json({ success: true, user: { id: user.id, nome: user.nome, usuario } });
         }
+        return res.json({ success: false, error: 'Usuário ou senha inválidos' });
     } catch (e) {
         console.error(`[AUTH_ERROR] Falha no login: `, e.message);
         res.status(500).json({ success: false, error: 'Erro interno no banco de dados', details: e.message });
@@ -26,7 +24,6 @@ router.post('/login', async (req, res) => {
 router.post('/register', async (req, res) => {
     const { usuario, senha, nome } = req.body;
     const pyCmd = `import sys, json; from core.banco import cadastrar_usuario_principal; print(json.dumps(cadastrar_usuario_principal(sys.argv[1], sys.argv[2], sys.argv[3])))`;
-    // Requer conexão online para registro para garantir unicidade global
     try {
         const checkFire = `from core import banco; print('true' if bool(banco.get_firestore()) else 'false')`;
         const fireAvailable = await runPythonCmd(checkFire);
@@ -38,7 +35,6 @@ router.post('/register', async (req, res) => {
         if (result === true) {
             res.json({ success: true });
         } else {
-            // Em caso do python retornar false, cadastro não foi aceito por usuário já existente
             res.json({ success: false, error: 'Usuário já existe' });
         }
     } catch (e) {

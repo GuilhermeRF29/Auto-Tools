@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import type { User } from '../types';
+import { setAccessToken } from '../utils/authMemory';
 
 interface AuthContextData {
   user: User | null;
@@ -57,10 +58,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      logout();
+    };
+    window.addEventListener('auth-expired', handleAuthExpired);
+    return () => window.removeEventListener('auth-expired', handleAuthExpired);
+  }, []);
+
   // Load from local storage if desired, but currently it was just state initialized to null
   // We'll keep the same behavior: just state, no local storage for now (as in original App.tsx)
 
   const logout = () => {
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+    setAccessToken(null);
     setUser(null);
   };
 

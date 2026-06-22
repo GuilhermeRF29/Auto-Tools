@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback, ReactNode } from 'react';
 import type { RunningTask } from '../types';
+import { getAccessToken } from '../utils/authMemory';
 
 interface TaskContextData {
   runningTasks: RunningTask[];
@@ -40,7 +41,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setRunningTasks(prev => [newTask, ...prev]);
       lastActivityRef.current.set(jobId, Date.now());
 
-      const eventSource = new EventSource(`/api/automation-progress/${jobId}`);
+      const token = getAccessToken();
+      const eventSourceUrl = token 
+        ? `/api/automation-progress/${jobId}?token=${encodeURIComponent(token)}`
+        : `/api/automation-progress/${jobId}`;
+
+      const eventSource = new EventSource(eventSourceUrl);
       eventSourcesRef.current.set(jobId, eventSource);
 
       eventSource.onmessage = (event) => {
@@ -174,7 +180,11 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
     }, 80);
 
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      eventSourcesRef.current.forEach((es) => es.close());
+      eventSourcesRef.current.clear();
+    };
   }, []);
 
   return (

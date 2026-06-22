@@ -6,16 +6,16 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { X } from 'lucide-react';
 
-const Modal = ({ isOpen, onClose, title, children, footer }: any) => {
+const Modal = ({ isOpen, onClose, title, children, footer, className = '', overlayClassName = '' }: any) => {
   if (!isOpen) return null;
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm overflow-y-auto">
+      <div className={`fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm overflow-y-auto ${overlayClassName}`}>
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg flex flex-col relative border border-slate-200 overflow-visible my-auto"
+          className={`bg-white rounded-[2rem] shadow-2xl w-full max-w-lg flex flex-col relative border border-slate-200 overflow-visible my-auto ${className}`}
         >
           {/* Cabeçalho do modal */}
           <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 bg-white rounded-t-[2rem]">

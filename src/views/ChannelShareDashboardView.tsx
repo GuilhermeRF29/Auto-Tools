@@ -9,11 +9,12 @@ import {
   FolderOpen,
   Image as ImageIcon,
   Images,
+  Presentation,
   RefreshCw,
   Table2,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { pickExcelFiles } from '../utils/nativeDialogs';
+import { pickExcelFiles, saveFileAs } from '../utils/nativeDialogs';
 import { toPng } from 'html-to-image';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -40,6 +41,7 @@ type MatrixTable = {
 
 type MonthSheetOption = {
   month: number;
+  endMonth?: number;
   monthLabel: string;
   monthShort: string;
   sheetName: string;
@@ -113,6 +115,37 @@ const isNegativeTextValue = (value: string) => {
   return /^[-−]/.test(text) || /\s[-−]\d/.test(text) || /[-−]\d/.test(text);
 };
 
+const splitCurrencyText = (value: string) => {
+  const text = String(value || '').trim();
+  const match = text.match(/^(-)?\s*R\$\s*(.+)$/);
+  if (!match) return null;
+  return {
+    symbol: `${match[1] ? '-' : ''}R$`,
+    amount: match[2].trim(),
+  };
+};
+
+const CAPTURE_TARGET_WIDTH = 3840;
+const CAPTURE_MIN_PIXEL_RATIO = 2;
+const CAPTURE_MAX_PIXEL_RATIO = 6;
+
+const renderMatrixCellValue = (value: string, alignRight: boolean) => {
+  const text = String(value || '').trim();
+  if (!text) return ' ';
+
+  const currency = splitCurrencyText(text);
+  if (currency && alignRight) {
+    return (
+      <span className="flex w-full items-center justify-between gap-1 tabular-nums">
+        <span>{currency.symbol}</span>
+        <span>{currency.amount}</span>
+      </span>
+    );
+  }
+
+  return text;
+};
+
 const loadImage = (src: string) =>
   new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
@@ -162,25 +195,27 @@ const withExpandedCaptureLayout = async <T,>(element: HTMLElement, runCapture: (
 };
 
 const captureElementImage = async (element: HTMLElement) => {
-  const { dataUrl, width, height } = await withExpandedCaptureLayout(element, async () => {
+  const { dataUrl, width, height, pixelRatio } = await withExpandedCaptureLayout(element, async () => {
     const width = Math.ceil(Math.max(element.scrollWidth, element.getBoundingClientRect().width));
     const height = Math.ceil(Math.max(element.scrollHeight, element.getBoundingClientRect().height));
+    const pixelRatio = Math.max(
+      CAPTURE_MIN_PIXEL_RATIO,
+      Math.min(CAPTURE_MAX_PIXEL_RATIO, CAPTURE_TARGET_WIDTH / Math.max(width, 1)),
+    );
 
     const dataUrl = await toPng(element, {
       cacheBust: true,
       backgroundColor: '#ffffff',
-      pixelRatio: 2,
-      canvasWidth: width,
-      canvasHeight: height,
+      pixelRatio,
       width,
       height,
     });
 
-    return { dataUrl, width, height };
+    return { dataUrl, width, height, pixelRatio };
   });
 
   const image = await loadImage(dataUrl);
-  return { dataUrl, image, width, height };
+  return { dataUrl, image, width, height, pixelRatio };
 };
 
 const downloadDataUrl = (dataUrl: string, fileName: string) => {
@@ -217,6 +252,18 @@ const MatrixTableCard = ({
     return false;
   });
   const bodyRows = hasRows ? rows.slice(1) : [];
+  const isWideTable = headerCells.length > 8;
+  const firstColumnWidth = 210;
+  const dataColumnWidth = isWideTable ? 138 : 140;
+  const compactColumnWidth = 4;
+  const emptyColumns = headerCells.map((_cell, colIdx) =>
+    colIdx > 0 && rows.every((row) => !String(row.cells[colIdx]?.value || '').trim()),
+  );
+  const columnWidths = headerCells.map((_cell, colIdx) => {
+    if (colIdx === 0) return firstColumnWidth;
+    return emptyColumns[colIdx] ? compactColumnWidth : dataColumnWidth;
+  });
+  const tableMinWidth = columnWidths.reduce((total, width) => total + width, 0);
 
   return (
     <div>
@@ -237,26 +284,46 @@ const MatrixTableCard = ({
           </div>
         ) : (
           <div className="overflow-x-auto custom-scrollbar">
-            <table ref={captureRef} className="w-full min-w-max border-separate border-spacing-0 text-xs">
+            <table ref={captureRef} className="w-full table-fixed border-separate border-spacing-0 text-xs" style={{ minWidth: `${tableMinWidth}px` }}>
+              <colgroup>
+                {headerCells.map((_cell, colIdx) => (
+                  <col key={`col-${colIdx}`} style={{ width: `${columnWidths[colIdx]}px` }} />
+                ))}
+              </colgroup>
               <thead>
                 <tr className="bg-slate-900 text-white">
-                  {headerCells.map((cell, colIdx) => (
-                    <th
-                      key={`header-${colIdx}`}
-                      className={cn(
-                        'px-3 py-2 text-[11px] font-black uppercase tracking-wider',
-                        colIdx === 0 ? 'sticky left-0 z-20 min-w-[260px] bg-slate-900 text-left' : 'text-center',
-                      )}
-                    >
-                      {cell.value || ' '}
-                    </th>
-                  ))}
+                  {headerCells.map((cell, colIdx) => {
+                    const headerRowLabel = normalizeText(headerCells[0]?.value || '');
+                    const isHeaderCanaisRow = headerRowLabel === 'canal' || headerRowLabel.includes('canais');
+
+                    return (
+                      <th
+                        key={`header-${colIdx}`}
+                        className={cn(
+                          'overflow-hidden text-ellipsis py-2 font-black uppercase tracking-wider whitespace-nowrap leading-tight',
+                          emptyColumns[colIdx]
+                            ? 'px-0 text-[0px]'
+                            : cn('px-1.5', isWideTable ? 'text-[14px]' : 'text-[13px]'),
+                          colIdx === 0
+                            ? cn(
+                                'sticky left-0 z-20 bg-slate-900',
+                                isHeaderCanaisRow ? 'text-center' : 'text-left'
+                              )
+                            : isHeaderCanaisRow
+                              ? 'text-center'
+                              : 'text-right',
+                        )}
+                      >
+                        {cell.value || ' '}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
                 {bodyRows.map((row) => {
                   const rowLabel = normalizeText(row.cells[0]?.value || '');
-                  const isCanaisRow = rowLabel.includes('canais');
+                  const isCanaisRow = rowLabel === 'canal' || rowLabel.includes('canais');
                   const isTotalRow = rowLabel.includes('total');
 
                   return (
@@ -264,15 +331,30 @@ const MatrixTableCard = ({
                       {row.cells.map((cell, colIdx) => {
                         const columnIsComparative = comparativeColumns[colIdx] || false;
                         const isNegative = cell.isNegative || isNegativeTextValue(cell.value);
+                        const isEmptyTotalBridge =
+                          isTotalRow &&
+                          colIdx > 0 &&
+                          !String(cell.value || '').trim() &&
+                          (comparativeColumns[colIdx - 1] || false) &&
+                          (comparativeColumns[colIdx + 1] || false);
+                        const isTotalLightCell = isTotalRow && colIdx > 0 && (columnIsComparative || isEmptyTotalBridge);
 
                         return (
                           <td
                             key={`cell-${row.rowNumber}-${colIdx}`}
                             className={cn(
-                              'px-3 py-2 text-[13px] font-bold',
+                              'overflow-hidden text-ellipsis py-2 font-bold whitespace-nowrap leading-tight',
+                              emptyColumns[colIdx]
+                                ? 'px-0 text-[0px]'
+                                : cn('px-1.5', isWideTable ? 'text-[15px]' : 'text-[14px]'),
                               colIdx === 0
-                                ? 'sticky left-0 z-10 min-w-[260px] text-left font-black uppercase tracking-wide'
-                                : 'text-right',
+                                ? cn(
+                                    'sticky left-0 z-10 font-black uppercase tracking-wide',
+                                    isCanaisRow ? 'text-center' : 'text-left'
+                                  )
+                                : isCanaisRow
+                                  ? 'text-center'
+                                  : 'text-right',
                               !isCanaisRow &&
                                 !isTotalRow &&
                                 (colIdx === 0 ? 'bg-white text-slate-700' : 'text-slate-800'),
@@ -282,23 +364,16 @@ const MatrixTableCard = ({
                                 'bg-slate-900 text-white',
                               isTotalRow &&
                                 colIdx > 0 &&
-                                !columnIsComparative &&
+                                !isTotalLightCell &&
                                 'bg-slate-900 text-white',
                               isTotalRow &&
                                 colIdx > 0 &&
-                                columnIsComparative &&
-                                'bg-slate-200 text-slate-700',
-                              isTotalRow &&
-                                colIdx > 0 &&
-                                !columnIsComparative &&
-                                !String(cell.value || '').trim() &&
-                                (comparativeColumns[colIdx - 1] || false) &&
-                                (comparativeColumns[colIdx + 1] || false) &&
+                                isTotalLightCell &&
                                 'bg-slate-200 text-slate-700',
                             )}
                             style={isNegative && colIdx > 0 ? { color: '#dc2626' } : undefined}
                           >
-                            {cell.value || ' '}
+                            {renderMatrixCellValue(cell.value, colIdx > 0)}
                           </td>
                         );
                       })}
@@ -324,9 +399,11 @@ const ChannelShareDashboardView = () => {
   const [refreshAt, setRefreshAt] = useState<Date | null>(null);
   const [exportMode, setExportMode] = useState<'combined' | 'separate'>('combined');
   const [exporting, setExporting] = useState(false);
+  const [exportingPresentation, setExportingPresentation] = useState(false);
 
   const financeiroCaptureRef = useRef<HTMLTableElement>(null);
   const passageirosCaptureRef = useRef<HTMLTableElement>(null);
+  const ticketMedioCaptureRef = useRef<HTMLTableElement>(null);
 
   const loadData = useCallback(async ({ force = false, nextSheetName, nextFilePath }: { force?: boolean; nextSheetName?: string; nextFilePath?: string } = {}) => {
     const activeFilePath = (typeof nextFilePath === 'string' ? nextFilePath : selectedFilePath).trim();
@@ -409,40 +486,100 @@ const ChannelShareDashboardView = () => {
 
   const handleExportImage = async () => {
     if (exporting) return;
-    if (!financeiroCaptureRef.current || !passageirosCaptureRef.current) return;
+    if (!financeiroCaptureRef.current || !passageirosCaptureRef.current || !ticketMedioCaptureRef.current) return;
 
     setExporting(true);
     try {
       const monthToken = slugify(payload?.selectedMonthShort || payload?.selectedMonthLabel || 'mes');
-      const [financeiroShot, passageirosShot] = await Promise.all([
+      const [financeiroShot, passageirosShot, ticketMedioShot] = await Promise.all([
         captureElementImage(financeiroCaptureRef.current),
         captureElementImage(passageirosCaptureRef.current),
+        captureElementImage(ticketMedioCaptureRef.current),
       ]);
 
       if (exportMode === 'separate') {
         downloadDataUrl(financeiroShot.dataUrl, `share_canais_financeiro_${monthToken}.png`);
         downloadDataUrl(passageirosShot.dataUrl, `share_canais_passageiros_${monthToken}.png`);
+        downloadDataUrl(ticketMedioShot.dataUrl, `share_canais_ticket_medio_${monthToken}.png`);
         return;
       }
 
-      const gap = 24;
+      const gap = Math.round(24 * Math.max(financeiroShot.pixelRatio, passageirosShot.pixelRatio, ticketMedioShot.pixelRatio));
+      const financeiroWidth = financeiroShot.image.naturalWidth;
+      const financeiroHeight = financeiroShot.image.naturalHeight;
+      const passageirosWidth = passageirosShot.image.naturalWidth;
+      const passageirosHeight = passageirosShot.image.naturalHeight;
+      const ticketMedioWidth = ticketMedioShot.image.naturalWidth;
+      const ticketMedioHeight = ticketMedioShot.image.naturalHeight;
       const canvas = document.createElement('canvas');
-      canvas.width = Math.max(financeiroShot.width, passageirosShot.width);
-      canvas.height = financeiroShot.height + gap + passageirosShot.height;
+      canvas.width = Math.max(financeiroWidth, passageirosWidth, ticketMedioWidth);
+      canvas.height = financeiroHeight + gap + passageirosHeight + gap + ticketMedioHeight;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Nao foi possivel montar a imagem combinada.');
 
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(financeiroShot.image, 0, 0, financeiroShot.width, financeiroShot.height);
-      ctx.drawImage(passageirosShot.image, 0, financeiroShot.height + gap, passageirosShot.width, passageirosShot.height);
+      ctx.drawImage(financeiroShot.image, 0, 0);
+      ctx.drawImage(passageirosShot.image, 0, financeiroHeight + gap);
+      ctx.drawImage(ticketMedioShot.image, 0, financeiroHeight + gap + passageirosHeight + gap);
 
       downloadDataUrl(canvas.toDataURL('image/png'), `share_canais_tabelas_${monthToken}.png`);
     } catch {
       setError('Nao foi possivel exportar a imagem das tabelas. Tente novamente.');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleExportPresentation = async () => {
+    if (exportingPresentation) return;
+    if (!financeiroCaptureRef.current || !passageirosCaptureRef.current || !ticketMedioCaptureRef.current) return;
+
+    setExportingPresentation(true);
+    setError(null);
+    try {
+      const [financeiroShot, passageirosShot, ticketMedioShot] = await Promise.all([
+        captureElementImage(financeiroCaptureRef.current),
+        captureElementImage(passageirosCaptureRef.current),
+        captureElementImage(ticketMedioCaptureRef.current),
+      ]);
+
+      const response = await fetch('/api/channel-share-dashboard/presentation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          monthLabel: payload?.selectedMonthLabel || '',
+          monthShort: payload?.selectedMonthShort || '',
+          updateInfo: payload?.updateInfo?.text || '',
+          images: {
+            receita: financeiroShot.dataUrl,
+            pax: passageirosShot.dataUrl,
+            tm: ticketMedioShot.dataUrl,
+          },
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result?.path) {
+        throw new Error(result?.details || result?.error || 'Falha ao gerar apresentacao.');
+      }
+
+      if (window.autoToolsRuntime?.isElectron) {
+        const savedPath = await saveFileAs(result.path, result.fileName || 'Participação de canais.pptx');
+        if (!savedPath) return;
+        return;
+      }
+
+      const link = document.createElement('a');
+      link.href = `/api/download?path=${encodeURIComponent(result.path)}`;
+      link.setAttribute('download', result.fileName || 'participacao_canais.pptx');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err: any) {
+      setError(err?.message || 'Nao foi possivel gerar a apresentacao de Share de Canais.');
+    } finally {
+      setExportingPresentation(false);
     }
   };
 
@@ -556,6 +693,16 @@ const ChannelShareDashboardView = () => {
             </Button>
 
             <Button
+              variant="secondary"
+              className="h-10 rounded-xl border border-amber-200 px-3 text-[11px] text-amber-700 hover:bg-amber-50"
+              onClick={handleExportPresentation}
+              disabled={exportingPresentation || loading || !payload}
+            >
+              <Presentation size={14} className={cn('mr-1.5', exportingPresentation && 'animate-pulse')} />
+              Salvar PPT
+            </Button>
+
+            <Button
               className="h-10 rounded-xl bg-rose-600 px-3 text-[11px] text-white hover:bg-rose-700"
               onClick={() => loadData({ force: true })}
               disabled={loading || !selectedFilePath.trim()}
@@ -641,6 +788,7 @@ const ChannelShareDashboardView = () => {
           subtitle="Comparativo de ticket medio por periodo"
           table={payload?.tables?.ticketMedio}
           toneClass="border-amber-100 bg-amber-50 text-amber-700"
+          captureRef={ticketMedioCaptureRef}
         />
       </motion.div>
 

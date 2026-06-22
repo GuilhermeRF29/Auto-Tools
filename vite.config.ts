@@ -24,14 +24,23 @@ export default defineConfig(({ mode }) => {
         },
       },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
+      // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: {
         ignored: [
+          '**/*.db',
+          '**/*.db-wal',
+          '**/*.db-shm',
+          '**/*.pyc',
+          '**/*.pyo',
+          '**/__pycache__/**',
           '**/src_backend/data/**',
-          '**/Userbank.db',
           '**/padrao/**',
           '**/tmp_out_test/**',
+          '**/logs/**',
+          '**/automacoes/auth.json',
+          '**/automacoes/debug_*.png',
+          '**/docs/**',
         ],
       },
     },

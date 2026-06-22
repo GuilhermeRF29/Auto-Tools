@@ -2,13 +2,14 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { motion, MotionConfig } from 'motion/react';
 import { CheckCircle, Fingerprint, Loader2, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Minus, X } from 'lucide-react';
 import logoApp from '../assets/logo_app.png';
+import versionData from '../../version.json';
 
 import { useAuth } from '../context/AuthContext';
 import BackgroundAnimation from '../components/BackgroundAnimation';
 import Button from '../components/Button';
 import { cn } from '../utils/cn';
 import { useDialog } from '../context/DialogContext';
-import { useUI } from '../context/UIContext';
+import { useUpdate } from '../context/UpdateContext';
 import {
   authenticateWithWindowsHello,
   clearWindowsHelloHint,
@@ -23,6 +24,7 @@ import {
   setStoredPendingDeviceRequest,
   type PendingDeviceAccessRequest,
 } from '../utils/deviceAccess';
+import { setAccessToken } from '../utils/authMemory';
 
 interface LoginViewProps {
   serverStatus: 'checking' | 'online' | 'offline';
@@ -55,7 +57,7 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
   const isElectron = runtime?.isElectron;
   const { setUser, isLoggingIn } = useAuth(); // using global auth context
   const { showAlert } = useDialog();
-  const { updateStatus } = useUI();
+  const { updateStatus } = useUpdate();
   const [internalIsLoggingIn, setInternalIsLoggingIn] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [authData, setAuthData] = useState({ user: '', pass: '', name: '' });
@@ -295,12 +297,13 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
     setInternalIsLoggingIn(true);
     try {
       const deviceToken = getStoredDeviceToken();
-      const response = await fetch('/api/login', {
+      const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
           ...(deviceToken ? { 'x-autotools-device-token': deviceToken } : {})
         },
+        credentials: 'include',
         body: JSON.stringify({ usuario: authData.user, senha: authData.pass })
       });
       if (!response.ok) {
@@ -316,6 +319,9 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
 
       const data = await response.json();
       if (data && data.success === true) {
+        if (data.token) {
+          setAccessToken(data.token);
+        }
         setUser(data.user);
       } else {
         const msg = data?.error || 'Erro desconhecido ao autenticar.';
@@ -349,12 +355,13 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
     setInternalIsLoggingIn(true);
     try {
       const deviceToken = getStoredDeviceToken();
-      const response = await fetch('/api/register', {
+      const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
           ...(deviceToken ? { 'x-autotools-device-token': deviceToken } : {})
         },
+        credentials: 'include',
         body: JSON.stringify({ usuario: authData.user, senha: authData.pass, nome: authData.name })
       });
       if (!response.ok) {
@@ -439,7 +446,7 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
                 <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse mx-1.5 shadow-[0_0_8px_rgba(239,44,44,0.5)]"></div>
               )}
               <span className="text-[11px] font-bold text-slate-300 tracking-tight">
-                Servidor: {serverStatus === 'online' ? (serverInfo?.version || 'v1.5.0') : 'Servidor Desconectado'}
+                Servidor: {serverStatus === 'online' ? (serverInfo?.version || `v${versionData.version}`) : 'Servidor Desconectado'}
               </span>
               {updateStatus.hasUpdate && (
                 <div className="bg-blue-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full animate-bounce">
@@ -482,7 +489,7 @@ export default function LoginView({ serverStatus, serverInfo, animationsEnabled 
               <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 border border-slate-200 mb-6 shadow-sm overflow-hidden">
                 <div className={`w-1.5 h-1.5 rounded-full ${serverStatus === 'online' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500 animate-pulse'}`}></div>
                 <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest truncate max-w-[150px]">
-                  {serverStatus === 'online' ? 'Infra Ativa: ' + (serverInfo?.version || 'V1.5.0') : 'Offline - Verifique Conexão'}
+                  {serverStatus === 'online' ? 'Infra Ativa: ' + (serverInfo?.version || `v${versionData.version}`) : 'Offline - Verifique Conexão'}
                 </span>
               </div>
               <div className="w-16 h-16 mb-3">

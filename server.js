@@ -15,14 +15,19 @@
  * diretamente pelo Express com express.static('dist').
  */
 import express from 'express';
+import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { runPythonCmd } from './src_backend/utils/pythonProxy.js';
 import { PYTHON_PATH, getRootDir } from './src_backend/config.js';
+import { requireAuth, setupAuthRoutes } from './src_backend/middleware/authMiddleware.js';
+
+import { getDb } from './src_backend/db/sqliteNative.js';
 
 // Route imports
-import authRoutes from './src_backend/routes/authRoutes.js';
 import vaultRoutes from './src_backend/routes/vaultRoutes.js';
 import systemRoutes from './src_backend/routes/systemRoutes.js';
 import automationRoutes from './src_backend/routes/automationRoutes.js';
@@ -44,10 +49,35 @@ const canServeFrontend = fs.existsSync(distIndexPath);
 
 process.env.AUTOTOOLS_SERVER_PORT = String(port);
 
-app.use(express.json());
+app.set('trust proxy', 1);
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", "https://*", "wss://*"]
+    }
+  },
+  hsts: { maxAge: 31536000, includeSubDomains: true }
+}));
+
+app.use(cors({
+  origin: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
+}));
+
+app.use(express.json({ limit: '80mb' }));
+app.use(cookieParser());
+
+// Setup auth routes (login/logout/me) antes do middleware de proteção
+setupAuthRoutes(app);
 
 // Inicializar banco de dados e limpar histórico
-const initDbCmd = `import os; from core import banco; banco.configurar_banco(); l = banco.excluir_historico_antigo(dias=30); [os.remove(p) for p in l if os.path.exists(p)]; print('ok')`;
+const initDbCmd = `import os; from core import banco; banco.configurar_banco(); banco.sincronizar_usuarios_firebase_para_local(); l = banco.excluir_historico_antigo(dias=30); [os.remove(p) for p in l if os.path.exists(p)]; print('ok')`;
 runPythonCmd(initDbCmd).then(() => {
     console.log(`[SYSTEM] Banco de dados verificado/inicializado.`);
 }).catch((e) => {
@@ -57,9 +87,9 @@ runPythonCmd(initDbCmd).then(() => {
 
 app.get('/api/status', async (req, res) => {
     try {
-        const dbCheckCmd = `import json, sqlite3; from core.banco import DB_PATH\nstatus='ok'\nmessage='Conexao validada'\ntry:\n    conn=sqlite3.connect(DB_PATH)\n    conn.execute('SELECT 1')\n    conn.close()\nexcept Exception as e:\n    status='error'\n    message=str(e)\nprint(json.dumps({'dbStatus': status, 'dbMessage': message}))`;
-        const dbResult = await runPythonCmd(dbCheckCmd);
-        const dbStatus = dbResult?.dbStatus === 'ok' ? 'ok' : 'error';
+        const native = getDb();
+        const dbResult = native.healthCheck();
+        const dbStatus = dbResult?.status === 'ok' ? 'ok' : 'error';
 
         const localVersionPath = path.join(getRootDir(), 'version.json');
         let localVersion = { version: '1.5.0' };
@@ -76,7 +106,7 @@ app.get('/api/status', async (req, res) => {
             version: `v${localVersion.version}`,
             python: PYTHON_PATH,
             dbStatus,
-            dbMessage: dbResult?.dbMessage || 'Sem resposta da checagem de banco.',
+            dbMessage: dbResult?.message || 'Sem resposta da checagem de banco.',
             checkedAt: new Date().toISOString(),
         });
     } catch (e) {
@@ -96,17 +126,21 @@ app.use('/api', deviceAccessGuard);
 app.use('/api', deviceAccessRoutes);
 
 // APIs modulares
-app.use('/api', authRoutes);
-app.use('/api/credentials', vaultRoutes);
-app.use('/api', systemRoutes);
-app.use('/api', automationRoutes);
+// WebAuthn precisa ser público para o login funcionar
 app.use('/api', webauthnRoutes);
-app.use('/api', settingsRoutes);
-app.use('/api', tunnelRoutes);
+
+// Rotas públicas (não exigem token JWT)
 app.use('/api/system', updateRoutes);
 
-// Dashboards e relatorios (demanda, revenue, market share)
-app.use('/api', dashboardRoutes);
+// Rotas protegidas
+app.use('/api', requireAuth, systemRoutes);
+app.use('/api', requireAuth, settingsRoutes);
+app.use('/api', requireAuth, tunnelRoutes);
+
+// APIs protegidas por autenticação
+app.use('/api/credentials', requireAuth, vaultRoutes);
+app.use('/api', requireAuth, automationRoutes);
+app.use('/api', requireAuth, dashboardRoutes);
 
 // Fallback exclusivo da API
 app.use('/api', (req, res) => {

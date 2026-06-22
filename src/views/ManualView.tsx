@@ -6,7 +6,7 @@ import {
   Search, ArrowRight, Lightbulb, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import type { View } from '../types';
-import { useUI } from '../context/UIContext';
+import { useNavigation } from '../context/NavigationContext';
 import Card from '../components/Card';
 
 interface Section {
@@ -22,7 +22,7 @@ interface Section {
 }
 
 export default function ManualView() {
-  const { setCurrentView } = useUI();
+  const { setCurrentView } = useNavigation();
   const [activeTab, setActiveTab] = useState('window-controls');
   const [searchQuery, setSearchQuery] = useState('');
 

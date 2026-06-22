@@ -1,0 +1,115 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "username": "Auto Tools Team",
+  "model": "big-pickle",
+  "default_agent": "orchestrator",
+  "shell": "/bin/bash",
+  "logLevel": "INFO",
+  "share": "manual",
+  "autoupdate": "notify",
+  "snapshot": true,
+  "instructions": ["docs/RESUMO_EXECUTIVO.md", ".opencode/README.md"],
+  "permission": {
+    "edit": "ask",
+    "bash": {
+      "git status": "allow",
+      "git diff": "allow",
+      "git log --oneline *": "allow",
+      "git add *": "allow",
+      "git commit *": "allow",
+      "*": "ask"
+    }
+  },
+  "agent": {
+    "orchestrator": {
+      "description": "Coordination agent. Manages task sequencing across sprints, delegates to coder/reviewer/researcher, tracks progress.",
+      "mode": "primary",
+      "model": "big-pickle",
+      "temperature": 0.2,
+      "permission": {
+        "edit": "ask",
+        "bash": "allow"
+      }
+    },
+    "coder": {
+      "description": "Implementation agent. Reads task prompts, implements code changes, writes tests, commits. Invokes reviewer on completion.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0.3,
+      "permission": {
+        "edit": "allow",
+        "bash": "allow"
+      }
+    },
+    "reviewer": {
+      "description": "Quality assurance agent. Validates security, performance, and code quality. Can request changes or merge.",
+      "mode": "subagent",
+      "model": "big-pickle",
+      "temperature": 0.1,
+      "permission": {
+        "edit": "deny",
+        "bash": "allow"
+      }
+    },
+    "researcher": {
+      "description": "General research agent. Investigates technical questions, best practices, and library/documentation lookups.",
+      "mode": "subagent",
+      "model": "big-pickle",
+      "temperature": 0.1,
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "security-specialist": {
+      "description": "Security hardening specialist for Sprint 1 tasks (P1.1-P1.8). Credentials, path traversal, injection prevention, WAL mode, DPAPI.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0.2,
+      "permission": {
+        "edit": "allow",
+        "bash": "allow"
+      }
+    },
+    "performance-specialist": {
+      "description": "Performance optimization specialist for Sprint 2 tasks (P2.1-P2.8). SQLite migration, bundle size, lazy loading, cache, ASAR.",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0.2,
+      "permission": {
+        "edit": "allow",
+        "bash": "allow"
+      }
+    },
+    "security-researcher": {
+      "description": "Security domain researcher. Firebase credential patterns, Electron security, DPAPI integration, WAL mode benchmarks.",
+      "mode": "subagent",
+      "model": "big-pickle",
+      "temperature": 0.1,
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "perf-researcher": {
+      "description": "Performance domain researcher. SQLite vs better-sqlite3 benchmarks, React Profiler patterns, bundle optimization, cache strategies.",
+      "mode": "subagent",
+      "model": "big-pickle",
+      "temperature": 0.1,
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "architecture-researcher": {
+      "description": "Architecture domain researcher. Context splitting patterns, Python daemon patterns, cache layer design, scalability patterns.",
+      "mode": "subagent",
+      "model": "big-pickle",
+      "temperature": 0.1,
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    }
+  }
+}

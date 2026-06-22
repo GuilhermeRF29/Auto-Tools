@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import os
 import base64
 import json
@@ -546,6 +546,7 @@ def executar_adm(
     pasta_destino=None,
     arquivo_entrada=None,
     base_automacao=None,
+    headless=True,
 ):
     """Executa ADM em modo modular sem quebrar compatibilidade com chamadas antigas."""
 
@@ -710,7 +711,8 @@ def executar_adm(
             resultado = gerar_intervalos_mensais(data_inicio, data_final)
             opcoes = Options()
             opcoes.add_argument("--window-size=1920,1080")
-            # opcoes.add_argument("--headless")
+            if headless:
+                opcoes.add_argument("--headless=new")
 
             if callback_progresso:
                 callback_progresso(0.1, "Abrindo Navegador Invisível...")
@@ -995,7 +997,8 @@ if __name__ == '__main__':
             modo_execucao=params.get('acao', 'completo'),
             pasta_destino=params.get('pasta_saida'),
             arquivo_entrada=params.get('pasta_personalizada'),
-            base_automacao=params.get('base')
+            base_automacao=params.get('base'),
+            headless=params.get('headless', True),
         )
         print(json.dumps(resultado))
     except Exception as e:

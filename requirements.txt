@@ -30,6 +30,7 @@ requests>=2.31.0            # Requisições HTTP
 
 # === Utilitários ===
 Pillow>=10.0.0              # Manipulação de imagens (se necessário)
+python-pptx>=0.6.22         # Criação e manipulação de arquivos PowerPoint (usado na automação WoW)
 
 # === Cloud / Firebase ===
 firebase-admin>=6.4.0       # Integração com Google Firebase (Nuvem)

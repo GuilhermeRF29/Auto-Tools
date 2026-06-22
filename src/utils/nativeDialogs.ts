@@ -9,6 +9,7 @@ interface AutoToolsRuntime {
   isElectron: boolean;
   openDirectory: () => Promise<string>;
   openExcelFiles: () => Promise<string[]>;
+  saveFileAs?: (sourcePath: string, defaultFileName?: string) => Promise<string>;
 }
 
 declare global {
@@ -51,4 +52,17 @@ export const pickExcelFiles = async (): Promise<string[]> => {
     console.error('[PICK_FILES_ERROR]', error);
     return [];
   }
+};
+
+/**
+ * Salva um arquivo já gerado pelo backend usando o diálogo nativo do Electron.
+ * Em navegador, retorna string vazia para o chamador usar o fallback HTTP.
+ */
+export const saveFileAs = async (sourcePath: string, defaultFileName?: string): Promise<string> => {
+  if (window.autoToolsRuntime?.isElectron && typeof window.autoToolsRuntime.saveFileAs === 'function') {
+    const savedPath = await window.autoToolsRuntime.saveFileAs(sourcePath, defaultFileName);
+    return typeof savedPath === 'string' ? savedPath : '';
+  }
+
+  return '';
 };

@@ -122,7 +122,44 @@ def gerar_segmentos_mensais(data_inicio: datetime, data_fim: datetime):
 
     return segmentos
 
-def atualizar_planilha_comparativa(caminho_extracao, caminho_template, mes_sigla="ABR", ultimo_dia="01", ano_referencia=2026):
+
+def gerar_segmento_consolidado(data_inicio: datetime, data_fim: datetime):
+    if data_inicio.year != data_fim.year:
+        raise ValueError("A extracao consolidada deve comecar e terminar no mesmo ano.")
+
+    primeiro_dia = datetime(data_inicio.year, data_inicio.month, 1)
+    prox_mes_fim = datetime(
+        data_fim.year + (1 if data_fim.month == 12 else 0),
+        1 if data_fim.month == 12 else data_fim.month + 1,
+        1,
+    )
+    ultimo_dia = prox_mes_fim - timedelta(days=1)
+    if data_inicio != primeiro_dia or data_fim != ultimo_dia:
+        raise ValueError(
+            "A extracao consolidada exige meses completos, do dia 01 ao ultimo dia do mes final."
+        )
+
+    meses = list(range(data_inicio.month, data_fim.month + 1))
+    siglas = [SIGLAS_PTBR[mes] for mes in meses]
+    return {
+        "ano": data_inicio.year,
+        "meses": meses,
+        "meses_labels": [MESES_PTBR[mes] for mes in meses],
+        "periodo_sigla": siglas[0] if len(siglas) == 1 else f"{siglas[0]} {siglas[-1]}",
+        "dias": [str(dia) for dia in range(1, 32)],
+        "ultimo_dia": str(data_fim.day).zfill(2),
+        "mes_data": data_fim.month,
+    }
+
+
+def atualizar_planilha_comparativa(
+    caminho_extracao,
+    caminho_template,
+    mes_sigla="ABR",
+    ultimo_dia="01",
+    ano_referencia=2026,
+    mes_data=None,
+):
     
     if not os.path.exists(caminho_extracao) or not os.path.exists(caminho_template):
         raise FileNotFoundError("Arquivos base (Extracao ou Gabarito YoY) nao encontrados.")
@@ -138,11 +175,16 @@ def atualizar_planilha_comparativa(caminho_extracao, caminho_template, mes_sigla
     nome_aba_alvo = f"COMAPRATIVO {str(ano_ref - 1)[-2:]}X{str(ano_ref)[-2:]} {mes_sigla.upper()}"
     
     if nome_aba_alvo not in wb.sheetnames:
-        print(f"Mês base {nome_aba_alvo} detectado ausente. Duplicando histórico p/ criação...")
         aba_referencia = wb[wb.sheetnames[-1]]
-        nova_aba = wb.copy_worksheet(aba_referencia)
-        nova_aba.title = nome_aba_alvo
-        ws = nova_aba
+        if re.search(r"\(\d+\)$", aba_referencia.title.strip()):
+            print(f"Aba preparada '{aba_referencia.title}' encontrada. Renomeando para {nome_aba_alvo}...")
+            aba_referencia.title = nome_aba_alvo
+            ws = aba_referencia
+        else:
+            print(f"Mes base {nome_aba_alvo} detectado ausente. Duplicando historico para criacao...")
+            nova_aba = wb.copy_worksheet(aba_referencia)
+            nova_aba.title = nome_aba_alvo
+            ws = nova_aba
     else:
         ws = wb[nome_aba_alvo]
         print(f"Aba do Mês encontrada. Injetando em {nome_aba_alvo}...")
@@ -150,7 +192,7 @@ def atualizar_planilha_comparativa(caminho_extracao, caminho_template, mes_sigla
     mapa_meses = {"JAN": "01", "FEV": "02", "MAR": "03", "ABR": "04", 
                   "MAI": "05", "JUN": "06", "JUL": "07", "AGO": "08", 
                   "SET": "09", "OUT": "10", "NOV": "11", "DEZ": "12"}
-    num_mes = mapa_meses.get(mes_sigla.upper(), "01")
+    num_mes = str(mes_data).zfill(2) if mes_data else mapa_meses.get(mes_sigla.upper(), "01")
     
     # Data ancorada no filtro PBI invés do relógio do Windows
     data_alvo_str = f"{ultimo_dia}/{num_mes}/{ano_ref}"
@@ -222,12 +264,56 @@ def atualizar_planilha_comparativa(caminho_extracao, caminho_template, mes_sigla
                     else:
                         celula.number_format = '#,##0.00;[Red]-#,##0.00'
 
-    print("Campos preenchidos. Salvando sistema reativo de Layout...")
+    print("Campos preenchidos. Salvando e validando o arquivo Excel...")
+    caminho_template_path = Path(caminho_template)
+    caminho_temporario = caminho_template_path.with_name(
+        f".{caminho_template_path.stem}.{os.getpid()}.{int(time.time() * 1000)}.tmp{caminho_template_path.suffix}"
+    )
+    valor_data_esperado = ws["B2"].value
+
     try:
-        wb.save(caminho_template)
-        print(f" >>> [CONCLUÍDO] Sucesso absoluto! Verifique o arquivo: {caminho_template}")
-    except PermissionError:
-        print("\n [ERRO] O Excel alvo recusa modificações. Ele está ABERTO em seu computador? Feche a janela e tente de novo.")
+        wb.save(caminho_temporario)
+        wb.close()
+
+        wb_validacao = openpyxl.load_workbook(caminho_temporario, data_only=False, read_only=True)
+        try:
+            if nome_aba_alvo not in wb_validacao.sheetnames:
+                raise RuntimeError(f"A aba esperada '{nome_aba_alvo}' nao foi gravada no arquivo temporario.")
+            valor_data = wb_validacao[nome_aba_alvo]["B2"].value
+            if valor_data != valor_data_esperado:
+                raise RuntimeError(
+                    f"Falha na validacao da aba '{nome_aba_alvo}': B2 retornou {valor_data!r}."
+                )
+        finally:
+            wb_validacao.close()
+
+        os.replace(caminho_temporario, caminho_template_path)
+
+        wb_final = openpyxl.load_workbook(caminho_template_path, data_only=False, read_only=True)
+        try:
+            if nome_aba_alvo not in wb_final.sheetnames:
+                raise RuntimeError(f"A aba esperada '{nome_aba_alvo}' nao existe no arquivo final.")
+            if wb_final[nome_aba_alvo]["B2"].value != valor_data_esperado:
+                raise RuntimeError(f"O arquivo final nao preservou a atualizacao da aba '{nome_aba_alvo}'.")
+        finally:
+            wb_final.close()
+
+        print(f" >>> [CONCLUIDO] Arquivo atualizado e validado: {caminho_template_path}")
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Nao foi possivel substituir o arquivo '{caminho_template_path}'. "
+            "Feche o Excel e confirme permissao de escrita na pasta de rede antes de tentar novamente."
+        ) from exc
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+        try:
+            if caminho_temporario.exists():
+                caminho_temporario.unlink()
+        except Exception:
+            pass
 
 def limpar_valor(texto):
     """Remove espaços, R$ e caracteres não-numéricos para comparação segura."""
@@ -251,6 +337,7 @@ def extrair_numero(valor_texto):
 
 def run(
     mes_para_selecionar="04-Abril",
+    meses_para_selecionar=None,
     dias_para_selecionar=None,
     anos_para_processar=None,
     caminho_extracao=None,
@@ -258,9 +345,15 @@ def run(
     ano_referencia=2026,
     credenciais=None,
     callback_progresso=None,
+    headless=True,
+    periodo_sigla=None,
+    mes_data=None,
 ):
     # --- CONFIGURAÇÃO DE INPUTS ---
     dias_para_selecionar = dias_para_selecionar or [str(i) for i in range(1, 13)]
+    meses_para_selecionar = meses_para_selecionar or [mes_para_selecionar]
+    periodo_sigla = periodo_sigla or mes_para_selecionar.split('-')[1][:3].upper()
+    mes_data = int(mes_data or int(meses_para_selecionar[-1].split('-')[0]))
     anos_para_processar = anos_para_processar or ["2026", "2025"]
     caminho_extracao = str(caminho_extracao or (Path.cwd() / "analise_relatorio_performance.xlsx"))
 
@@ -273,15 +366,18 @@ def run(
         raise ValueError("Credenciais de acesso ao BI nao foram informadas.")
 
     if callback_progresso:
-        callback_progresso(0.02, f"Preparando extracao BI: {mes_para_selecionar} ({dias_para_selecionar[0]}-{dias_para_selecionar[-1]})")
+        meses_resumo = meses_para_selecionar[0]
+        if len(meses_para_selecionar) > 1:
+            meses_resumo = f"{meses_para_selecionar[0]} a {meses_para_selecionar[-1]}"
+        callback_progresso(0.02, f"Preparando extracao BI: {meses_resumo} ({dias_para_selecionar[0]}-{dias_para_selecionar[-1]})")
     
     # 11 Grupos Mapeados (Série Histórica e Fechamento)
     grupos_canais = {
-        "Guichê próprio": ["AG. PRÓPRIA", "AGÊNCIA", "AGENCIA MOVEL", "CALL CENTER", "GARAGEM", "RELACIONAMENTO COM O CLIENTE", "TERMINAL URBANO"],
+        "Guichê próprio": ["AG. PRÓPRIA", "AGÊNCIA", "CALL CENTER", "GARAGEM", "RELACIONAMENTO COM O CLIENTE", "TERMINAL URBANO"],
         "Guichê terceiro": ["AG. TERCEIRA", "ND"],
         "Venda corporativa": ["VENDA CORPORATIVA"],
         "Venda embarcada": ["VENDA EMBARCADA"],
-        "Sites próprios": ["INTERNET", "INTERNET PRÓPRIA"],
+        "Sites próprios": ["AGENCIA MOVEL", "INTERNET", "INTERNET PRÓPRIA"],
         "Sites terceiros": ["J3"],
         "Outlet de passagens": ["OUTLET"],
         "Clube giro": ["CLUBE GIRO"],
@@ -442,15 +538,16 @@ def run(
     
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=False
-            # args=[
-            #     "--headless=new",          # Usa o motor real do Chrome (igual ao Electron show:false)
-            #     "--use-gl=egl",            # Força a placa de vídeo a funcionar no modo oculto
-            #     "--window-size=1920,1080", # Trava a resolução na raiz
-            #     "--disable-blink-features=AutomationControlled" # Esconde da MS que somos um robô
-            # ]
+            headless=headless,
+            args=[
+                "--lang=pt-BR",
+            ]
         )
-        context = browser.new_context(no_viewport=True)
+        context = browser.new_context(
+            no_viewport=True,
+            locale="pt-BR",
+        )
+        context.add_init_script("Object.defineProperty(navigator, 'language', {get: () => 'pt-BR'});")
         page = context.new_page()
 
         # 2. Acessar o site
@@ -476,48 +573,20 @@ def run(
                              f"el.dispatchEvent(new MouseEvent('click', {{bubbles: true, ctrlKey: {is_ctrl}}}));"
                              f"}}")
 
-        def clicar_com_scroll(frame, texto, modifiers=None):
-            print(f"Buscando item: {texto}...")
-            # Encontra apenas spans visíveis com o texto exato
+        def clicar_com_teclas(frame, texto, modifiers=None):
+            print(f"Buscando item com teclas: {texto}...")
             target = frame.locator(f'span:text-is("{texto}") >> visible=true').first
-            
-            # Reposiciona o mouse fisicamente no centro do Menu Suspenso SEM forçar "ScrollIntoView" 
-            # para evitar que o Power BI dê aquele pulo lateral
-            try:
-                caixa = frame.locator('.slicerBody >> visible=true').first
-                box = caixa.bounding_box()
-                if box:
-                    page.mouse.move(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
-                time.sleep(0.3)
-            except:
-                pass
-            
-            for i in range(12): 
-                if target.is_visible():
-                    print(f"Item '{texto}' encontrado! Clicando...")
-                    force_click(target, modifiers)
-                    return True
-                for _ in range(3):
-                    page.mouse.wheel(0, 60)
-                    time.sleep(0.1)
-                time.sleep(0.4)
-            
-            print(f"Item '{texto}' não encontrado descendo. Resetando scroll para o topo...")
-            for _ in range(5):
-                 page.mouse.wheel(0, -1200)
-                 time.sleep(0.1)
-            time.sleep(0.5)
-            
-            for i in range(20): 
-                if target.is_visible():
-                    print(f"Item '{texto}' encontrado após reset! Clicando...")
-                    force_click(target, modifiers)
-                    return True
-                for _ in range(3):
-                    page.mouse.wheel(0, 60)
-                    time.sleep(0.1)
-                time.sleep(0.4)
-            
+            for tentativa in range(3):
+                page.keyboard.press("Home")
+                time.sleep(0.05)
+                for i in range(120):
+                    if target.is_visible():
+                        print(f"Item '{texto}' encontrado! Clicando...")
+                        force_click(target, modifiers)
+                        return True
+                    page.keyboard.press("ArrowDown")
+                    time.sleep(0.05)
+                print(f"Item '{texto}' não encontrado na descida {tentativa+1}/3. Resetando...")
             try:
                 force_click(target, modifiers)
                 return True
@@ -540,7 +609,7 @@ def run(
             for etapa in range(2):
                 clicou = False
                 for texto in opcoes_select_all:
-                    if clicar_com_scroll(frame, texto, modifiers=None):
+                    if clicar_com_teclas(frame, texto, modifiers=None):
                         clicou = True
                         break
 
@@ -551,7 +620,7 @@ def run(
                     )
                     return False
 
-                time.sleep(0.35)
+                time.sleep(0.15)
 
             return True
 
@@ -665,6 +734,7 @@ def run(
             # Variáveis Cascata entre Anos
             referencia_ano_anterior_orcado = "N/A"
             referencia_ano_anterior_realizado = "N/A"
+            meses_ja_configurados = False
             dias_ja_configurados = False
 
             # LOOP GIGANTE POR ANO (Ciclando 2X = Rodada 1 para Caching, Rodada 2 Extrativa Real)
@@ -693,7 +763,7 @@ def run(
                     try: 
                         dashboard_frame.locator("span").get_by_text(ano_atual, exact=True).click()
                     except:
-                        clicar_com_scroll(dashboard_frame, ano_atual, modifiers=None)
+                        clicar_com_teclas(dashboard_frame, ano_atual, modifiers=None)
                         
                     time.sleep(0.5)
                     menu_ano_dropdown.click() 
@@ -703,20 +773,22 @@ def run(
 
                 # Seleção de Mês Variável
                 menu_mes_dropdown = dashboard_frame.locator('div[role="combobox"][aria-label="Mês Formatado"]')
-                texto_mes_atual = menu_mes_dropdown.text_content() or ""
-                
-                if mes_para_selecionar not in texto_mes_atual:
-                    print(f"Limpando/Selecionando Mês ({mes_para_selecionar})...")
+                if not meses_ja_configurados:
+                    print(f"Limpando/Selecionando Mes(es): {meses_para_selecionar}...")
                     menu_mes_dropdown.click()
                     time.sleep(0.5)
                     resetar_multiselecao(dashboard_frame, "Mês Formatado")
                     time.sleep(0.3)
-                    clicar_com_scroll(dashboard_frame, mes_para_selecionar, modifiers=None)
+                    clicar_com_teclas(dashboard_frame, meses_para_selecionar[0], modifiers=None)
+                    for mes_extra in meses_para_selecionar[1:]:
+                        clicar_com_teclas(dashboard_frame, mes_extra, modifiers=["Control"])
+                        time.sleep(0.3)
                     time.sleep(0.5)
                     menu_mes_dropdown.click() # Fecha menu
                     esperar_carregamento(dashboard_frame)
+                    meses_ja_configurados = True
                 else:
-                    print(f"Mês {mes_para_selecionar} já consta como selecionado!")
+                    print(f"Meses {meses_para_selecionar} mantidos da interacao anterior!")
 
                 # Seleção de Dias (Até ontem)
                 if not dias_ja_configurados:
@@ -729,10 +801,10 @@ def run(
                     time.sleep(0.5)
                     
                     # Com a seleção limpa, marca o primeiro e soma os demais com Ctrl
-                    clicar_com_scroll(dashboard_frame, dias_para_selecionar[0], modifiers=None) 
+                    clicar_com_teclas(dashboard_frame, dias_para_selecionar[0], modifiers=None) 
                     time.sleep(0.8) # Delay estendido apenas no primeiro
                     for dia in dias_para_selecionar[1:]:
-                        clicar_com_scroll(dashboard_frame, dia, modifiers=["Control"])
+                        clicar_com_teclas(dashboard_frame, dia, modifiers=["Control"])
                         time.sleep(0.3)
                     menu_dia.click() # Recolhe
                     esperar_carregamento(dashboard_frame)
@@ -820,11 +892,11 @@ def run(
 
                     try:
                         # O primeiro sem modificador reseta os checkbox anteriores
-                        clicar_com_scroll(dashboard_frame, canais_selecionaveis[0], modifiers=None)
+                        clicar_com_teclas(dashboard_frame, canais_selecionaveis[0], modifiers=None)
                         time.sleep(0.3)
                         # Combina com Control para compor a matriz
                         for canal_extra in canais_selecionaveis[1:]:
-                            clicar_com_scroll(dashboard_frame, canal_extra, modifiers=["Control"])
+                            clicar_com_teclas(dashboard_frame, canal_extra, modifiers=["Control"])
                             time.sleep(0.3)
                     except Exception as e:
                         print(f"Atenção: Falha na filtragem da sub-matriz {nome_grupo}. ({e})")
@@ -842,7 +914,11 @@ def run(
                     r_tm_canal = extrair_valor_bi(dashboard_frame, "Fin Ticket Médio")
                     
                     # Cálculo matemático local vinculado à matriz mensal
-                    perc_do_mes = percentuais_orcado_matriz[nome_grupo].get(mes_para_selecionar, 0.0)
+                    percentuais_periodo = [
+                        percentuais_orcado_matriz[nome_grupo].get(mes, 0.0)
+                        for mes in meses_para_selecionar
+                    ]
+                    perc_do_mes = sum(percentuais_periodo) / len(percentuais_periodo)
                     orcamento_fatiado = v_total_orcado_num * perc_do_mes
 
                     print(f"Coleta do Grupo {nome_grupo}: Realizado={r_realizado} | Matriz Orcado={orcamento_fatiado:.2f}")
@@ -864,9 +940,9 @@ def run(
                 menu_canal.click()
                 time.sleep(0.5)
                 # Selecionar tudo roda 2 vezes para garantir toggle correto (marcar e desmarcar de fato)
-                clicar_com_scroll(dashboard_frame, "Selecionar tudo", modifiers=None)
+                clicar_com_teclas(dashboard_frame, "Selecionar tudo", modifiers=None)
                 time.sleep(0.5)
-                clicar_com_scroll(dashboard_frame, "Selecionar tudo", modifiers=None)
+                clicar_com_teclas(dashboard_frame, "Selecionar tudo", modifiers=None)
                 time.sleep(0.5)
                 menu_canal.click()
                 esperar_carregamento(dashboard_frame)
@@ -897,7 +973,7 @@ def run(
             print("="*50 + "\n")
             
             # --- START DA MIGRACÃO AUTOMÁTICA GABARITO ---
-            mes_sigla = mes_para_selecionar.split('-')[1][:3].upper()
+            mes_sigla = periodo_sigla
             ultimo_dia_selecionado = dias_para_selecionar[-1].zfill(2)
             print(f"Iniciando Micro-Serviço integrador do Excel para {mes_sigla} (Data Máx: {ultimo_dia_selecionado})...")
             if not caminho_template:
@@ -908,6 +984,7 @@ def run(
                 mes_sigla=mes_sigla,
                 ultimo_dia=ultimo_dia_selecionado,
                 ano_referencia=int(ano_referencia),
+                mes_data=mes_data,
             )
 
             if callback_progresso:
@@ -917,7 +994,7 @@ def run(
                 "arquivo_principal": str(caminho_template),
                 "arquivos_saida": [str(caminho_template)],
                 "pasta_final": str(Path(caminho_template).parent),
-                "mensagem": f"Extracao do mes {mes_para_selecionar} concluida.",
+                "mensagem": f"Extracao do periodo {periodo_sigla} concluida.",
             }
 
         except Exception as e:
@@ -937,6 +1014,8 @@ def executar_busca_dados(
     pasta_saida=None,
     callback_progresso=None,
     servico_credencial=DEFAULT_CRED_SERVICE,
+    headless=True,
+    modo_extracao="mensal",
 ):
     data_ini_dt = parse_frontend_date(data_ini)
     data_fim_dt = parse_frontend_date(data_fim)
@@ -964,7 +1043,14 @@ def executar_busca_dados(
     if not login_usuario or not senha_usuario:
         raise ValueError(f"Credenciais '{servico_credencial}' nao encontradas no Cofre.")
 
-    segmentos = gerar_segmentos_mensais(data_ini_dt, data_fim_dt)
+    modo_extracao = str(modo_extracao or "mensal").strip().lower()
+    if modo_extracao not in {"mensal", "consolidado"}:
+        raise ValueError("Modo de extracao invalido. Use 'mensal' ou 'consolidado'.")
+
+    if modo_extracao == "consolidado":
+        segmentos = [gerar_segmento_consolidado(data_ini_dt, data_fim_dt)]
+    else:
+        segmentos = gerar_segmentos_mensais(data_ini_dt, data_fim_dt)
     if not segmentos:
         raise ValueError("Nenhum segmento mensal foi gerado para o periodo informado.")
 
@@ -972,14 +1058,23 @@ def executar_busca_dados(
     arquivos_temporarios = []
 
     if callback_progresso:
-        callback_progresso(0.03, f"Periodo dividido em {len(segmentos)} mes(es).")
+        mensagem_periodo = (
+            f"Periodo consolidado em uma unica extracao ({segmentos[0]['periodo_sigla']})."
+            if modo_extracao == "consolidado"
+            else f"Periodo dividido em {len(segmentos)} mes(es)."
+        )
+        callback_progresso(0.03, mensagem_periodo)
 
     try:
         for idx, segmento in enumerate(segmentos, start=1):
-            mes_label = segmento["mes_label"]
+            meses_labels = segmento.get("meses_labels") or [segmento["mes_label"]]
+            mes_label = meses_labels[0]
             ano_atual = int(segmento["ano"])
             anos_processar = [str(ano_atual), str(ano_atual - 1)]
-            temp_xlsx = DEFAULT_TEMP_DIR / f"analise_performance_{ano_atual}_{int(segmento['mes']):02d}.xlsx"
+            meses_num = segmento.get("meses") or [int(segmento["mes"])]
+            periodo_sigla = segmento.get("periodo_sigla") or SIGLAS_PTBR[meses_num[0]]
+            mes_data = int(segmento.get("mes_data") or meses_num[-1])
+            temp_xlsx = DEFAULT_TEMP_DIR / f"analise_performance_{ano_atual}_{periodo_sigla.replace(' ', '_')}.xlsx"
             arquivos_temporarios.append(temp_xlsx)
 
             inicio_faixa = 0.08 + (idx - 1) * (0.82 / len(segmentos))
@@ -988,7 +1083,7 @@ def executar_busca_dados(
             if callback_progresso:
                 callback_progresso(
                     inicio_faixa,
-                    f"Processando mes {idx}/{len(segmentos)}: {mes_label} ({segmento['dias'][0]}-{segmento['dias'][-1]})",
+                    f"Processando periodo {idx}/{len(segmentos)}: {periodo_sigla} ({segmento['dias'][0]}-{segmento['dias'][-1]})",
                 )
 
             def cb_segmento(p, m):
@@ -999,6 +1094,7 @@ def executar_busca_dados(
 
             run(
                 mes_para_selecionar=mes_label,
+                meses_para_selecionar=meses_labels,
                 dias_para_selecionar=segmento["dias"],
                 anos_para_processar=anos_processar,
                 caminho_extracao=str(temp_xlsx),
@@ -1006,6 +1102,9 @@ def executar_busca_dados(
                 ano_referencia=ano_atual,
                 credenciais=(login_usuario, senha_usuario),
                 callback_progresso=cb_segmento,
+                headless=headless,
+                periodo_sigla=periodo_sigla,
+                mes_data=mes_data,
             )
     finally:
         for arq in arquivos_temporarios:
@@ -1034,7 +1133,11 @@ def executar_busca_dados(
         "arquivo_principal": str(arquivo_principal),
         "arquivos_saida": [str(arquivo_principal)],
         "pasta_final": str(pasta_saida_final),
-        "mensagem": f"Busca de dados concluida para {len(segmentos)} mes(es).",
+        "mensagem": (
+            f"Busca consolidada concluida para {segmentos[0]['periodo_sigla']}."
+            if modo_extracao == "consolidado"
+            else f"Busca de dados concluida para {len(segmentos)} mes(es)."
+        ),
     }
 
 
@@ -1063,6 +1166,8 @@ if __name__ == "__main__":
             pasta_saida=params.get("pasta_saida"),
             callback_progresso=progress_callback,
             servico_credencial=params.get("servico_credencial") or DEFAULT_CRED_SERVICE,
+            headless=params.get("headless", True),
+            modo_extracao=params.get("modo_extracao", "mensal"),
         )
         print(json.dumps(resultado, ensure_ascii=False))
     except Exception as e:

@@ -25,14 +25,12 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from datetime import datetime
-
-# Firebase Integration
+from core.vaultManager import get_vault
+from core.firebaseManager import get_firebase_manager
 try:
-    import firebase_admin
-    from firebase_admin import credentials, firestore, auth
-    HAS_FIREBASE = True
+    from firebase_admin import firestore
 except ImportError:
-    HAS_FIREBASE = False
+    firestore = None
 
 
 # ============================================================
@@ -60,60 +58,126 @@ else:
 
 DB_PATH = DATA_DIR / "Userbank.db"
 ENV_PATH = DATA_DIR / ".env"
-FIREBASE_CREDS_PATH = BASE_DIR / "firebase-credentials.json"
 DB_MIGRATION_BACKUP_DIR = DATA_DIR / "db_backups"
 APP_DB_SCHEMA_VERSION = 2
 
 # Global Firebase app instance
-_firebase_app = None
 FIRESTORE_TIMEOUT_SECONDS = float(os.getenv("AUTOTOOLS_FIREBASE_TIMEOUT_SECONDS", "5"))
 
 def inicializar_firebase():
-    """Inicializa o SDK do Firebase se as credenciais existirem."""
-    global _firebase_app
-    print(f"[FIREBASE_DEBUG] HAS_FIREBASE={HAS_FIREBASE}, already_app={_firebase_app is not None}")
-    
-    if not HAS_FIREBASE:
-        print("[FIREBASE_DEBUG] firebase_admin não instalado, retornando None")
-        return None
-    if _firebase_app:
-        print("[FIREBASE_DEBUG] Firebase já inicializado anteriormente")
-        return _firebase_app
-    
-    # Procurar credenciais em múltiplos locais
-    paths = [
-        FIREBASE_CREDS_PATH,
-        DATA_DIR / "firebase-credentials.json",
-        Path.cwd() / "firebase-credentials.json"
-    ]
-    print(f"[FIREBASE_DEBUG] Procurando credenciais em: {paths}")
-    
-    creds_file = next((p for p in paths if p.exists()), None)
-    if not creds_file:
-        print(f"[FIREBASE_DEBUG] Nenhum arquivo de credenciais encontrado")
-        return None
-    
-    print(f"[FIREBASE_DEBUG] Credenciais encontradas em: {creds_file}")
-    try:
-        cred = credentials.Certificate(str(creds_file))
-        print(f"[FIREBASE_DEBUG] Certificado carregado com sucesso")
-        _firebase_app = firebase_admin.initialize_app(cred)
-        print(f"[FIREBASE_DEBUG] Firebase app inicializado com sucesso")
-        return _firebase_app
-    except Exception as e:
-        print(f"[FIREBASE_ERROR] Erro ao inicializar Firebase: {type(e).__name__}: {e}")
-        import traceback
-        print(f"[FIREBASE_ERROR] Traceback completo:\n{traceback.format_exc()}")
-        return None
+    """Inicializa o SDK do Firebase (delegado ao FirebaseManager async)."""
+    mgr = get_firebase_manager()
+    mgr.initialize_async()
+    return mgr
 
 def get_firestore():
     """Retorna cliente do Firestore se disponível."""
-    if not inicializar_firebase():
+    mgr = get_firebase_manager()
+    if not mgr.is_ready:
+        return None
+    return mgr.get_firestore()
+
+
+def get_connection(db_path=None):
+    """Retorna conexão SQLite com WAL mode ativado."""
+    conn = sqlite3.connect(db_path or DB_PATH)
+    conn.execute('PRAGMA journal_mode = WAL')
+    conn.execute('PRAGMA synchronous = NORMAL')
+    return conn
+
+
+def _firestore_server_timestamp():
+    return firestore.SERVER_TIMESTAMP if firestore else datetime.now().isoformat()
+
+
+def _obter_usuario_por_id(user_id):
+    if not user_id:
         return None
     try:
-        return firestore.client()
-    except Exception:
+        with get_connection() as conn:
+            return conn.execute(
+                "SELECT id, nome, usuario FROM usuarios WHERE id = ?",
+                (user_id,)
+            ).fetchone()
+    except Exception as e:
+        print(f"[DB_ERROR] Erro ao buscar usuario por id={user_id}: {e}")
         return None
+
+
+def _upsert_usuario_local(nome, usuario, senha_hash):
+    if not usuario or not senha_hash:
+        return None
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO usuarios (nome, usuario, senha)
+            VALUES (?, ?, ?)
+            ON CONFLICT(usuario) DO UPDATE SET
+                nome = excluded.nome,
+                senha = excluded.senha
+            """,
+            (nome or usuario, usuario, str(senha_hash))
+        )
+        row = conn.execute(
+            "SELECT id, nome, usuario FROM usuarios WHERE usuario = ?",
+            (usuario,)
+        ).fetchone()
+    return row
+
+
+def sincronizar_usuario_firebase_para_local(usuario):
+    """Busca um usuario especifico no Firestore e atualiza o cache SQLite local."""
+    usuario = str(usuario or '').strip()
+    if not usuario:
+        return False
+
+    db = get_firestore()
+    if not db:
+        print("[FIREBASE] Indisponivel; usuario sera validado pelo cache local")
+        return False
+
+    try:
+        doc = db.collection("usuarios").document(usuario).get(timeout=FIRESTORE_TIMEOUT_SECONDS)
+        if not doc.exists:
+            print(f"[FIREBASE] Usuario {usuario} nao encontrado no Firestore")
+            return False
+
+        data = doc.to_dict() or {}
+        senha_hash = data.get("senha") or data.get("senha_hash")
+        if not senha_hash:
+            print(f"[FIREBASE] Usuario {usuario} sem senha/hash no Firestore")
+            return False
+
+        _upsert_usuario_local(data.get("nome") or usuario, data.get("usuario") or usuario, senha_hash)
+        print(f"[FIREBASE] Usuario {usuario} sincronizado para SQLite local")
+        return True
+    except Exception as e:
+        print(f"[FIREBASE] Erro ao sincronizar usuario {usuario}: {type(e).__name__}: {e}")
+        return False
+
+
+def sincronizar_usuarios_firebase_para_local(limit=500):
+    """Sincroniza usuarios remotos para o SQLite local no bootstrap do app."""
+    db = get_firestore()
+    if not db:
+        print("[FIREBASE] Indisponivel no bootstrap; mantendo SQLite local")
+        return 0
+
+    total = 0
+    try:
+        docs = db.collection("usuarios").limit(int(limit or 500)).stream(timeout=FIRESTORE_TIMEOUT_SECONDS)
+        for doc in docs:
+            data = doc.to_dict() or {}
+            usuario = data.get("usuario") or doc.id
+            senha_hash = data.get("senha") or data.get("senha_hash")
+            if not usuario or not senha_hash:
+                continue
+            _upsert_usuario_local(data.get("nome") or usuario, usuario, senha_hash)
+            total += 1
+        print(f"[FIREBASE] Bootstrap sincronizou {total} usuario(s) para SQLite local")
+    except Exception as e:
+        print(f"[FIREBASE] Erro no bootstrap de usuarios: {type(e).__name__}: {e}")
+    return total
 
 
 def _looks_like_legacy_seed_db(db_path):
@@ -122,7 +186,7 @@ def _looks_like_legacy_seed_db(db_path):
         return False
 
     try:
-        with sqlite3.connect(db_path) as conn:
+        with get_connection(str(db_path)) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
             tables = {row[0] for row in cursor.fetchall()}
@@ -182,14 +246,16 @@ def inicializar_env():
 
 def obter_fernet():
     """
-    Carrega a chave Fernet do .env e retorna uma instância pronta para uso.
-    
-    Returns:
-        Fernet: Instância de criptografia inicializada.
-    
-    Raises:
-        ValueError: Se CHAVE_LOGIN não foi encontrada no .env.
+    Retorna uma instância Fernet inicializada via vaultManager (DPAPI).
+    Compatível com versão anterior via .env como fallback.
     """
+    try:
+        vault = get_vault()
+        if vault:
+            return vault.get_fernet()
+    except Exception as e:
+        print(f"[VAULT_WARN] vaultManager falhou ({e}), tentando .env...")
+
     load_dotenv(ENV_PATH)
     chave = os.getenv("CHAVE_LOGIN")
     if chave is None:
@@ -223,7 +289,7 @@ def configurar_banco():
             print(f"[DB_DEBUG] Banco legado com dados de teste detectado; criando backup e iniciando banco limpo")
             _backup_legacy_db(DB_PATH)
 
-        conexao = sqlite3.connect(DB_PATH)
+        conexao = get_connection()
         print(f"[DB_DEBUG] Conexão SQLite estabelecida")
         cursor = conexao.cursor()
         cursor.execute("PRAGMA foreign_keys = ON")
@@ -295,6 +361,14 @@ def configurar_banco():
                             FOREIGN KEY (user_id) REFERENCES usuarios(id))''')
         print(f"[DB_DEBUG] Tabela 'relatorios_history' criada/verificada")
 
+        cursor.execute('''CREATE TABLE IF NOT EXISTS configuracoes (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id INTEGER NOT NULL,
+                            chave TEXT NOT NULL,
+                            valor TEXT,
+                            UNIQUE(user_id, chave))''')
+        print(f"[DB_DEBUG] Tabela 'configuracoes' criada/verificada")
+
         # Migração segura: adiciona job_id caso já exista sem a coluna
         try:
             cursor.execute("ALTER TABLE relatorios_history ADD COLUMN job_id TEXT")
@@ -305,6 +379,13 @@ def configurar_banco():
             print(f"[DB_DEBUG] Coluna 'job_id' adicionada a 'relatorios_history'")
         except sqlite3.OperationalError:
             print(f"[DB_DEBUG] Coluna 'job_id' já existe")
+
+        # Migração segura: adiciona log_output
+        try:
+            cursor.execute("ALTER TABLE relatorios_history ADD COLUMN log_output TEXT")
+            print(f"[DB_DEBUG] Coluna 'log_output' adicionada a 'relatorios_history'")
+        except sqlite3.OperationalError:
+            print(f"[DB_DEBUG] Coluna 'log_output' já existe")
 
         conexao.commit()
         conexao.close()
@@ -334,7 +415,7 @@ def cadastrar_usuario_principal(nome, usuario, senha):
         bool: True se cadastrado com sucesso, False se o usuário já existe.
     """
     print(f"[AUTH_DEBUG] Iniciando cadastro: usuario={usuario}")
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
     hash_senha = bcrypt.hashpw(senha.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     print(f"[AUTH_DEBUG] Senha hasheada com bcrypt, tentando INSERT no banco local")
@@ -403,7 +484,7 @@ def _validar_senha_usuario(user, senha_digitada):
     if senha_armazenada == senha_digitada:
         try:
             novo_hash = bcrypt.hashpw(senha_digitada.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-            with sqlite3.connect(DB_PATH) as conn:
+            with get_connection() as conn:
                 conn.execute("UPDATE usuarios SET senha = ? WHERE id = ?", (novo_hash, user_id))
             print(f"[AUTH_DEBUG] Senha legada migrada para bcrypt: user_id={user_id}")
         except Exception as e:
@@ -425,10 +506,12 @@ def login_principal(usuario, senha):
         tuple: (id, nome) se autenticado, (None, None) se inválido.
     """
     print(f"[AUTH_DEBUG] Iniciando login: usuario={usuario}")
+    print(f"[AUTH_DEBUG] Firebase como fonte principal: sincronizando usuario antes do cache local")
+    sincronizar_usuario_firebase_para_local(usuario)
     
     # 1. Verificação Local primeiro para não bloquear login em máquinas sem rede.
     try:
-        conexao = sqlite3.connect(DB_PATH)
+        conexao = get_connection()
         print(f"[AUTH_DEBUG] Conectado ao SQLite em {DB_PATH}")
         cursor = conexao.cursor()
         cursor.execute(
@@ -460,7 +543,7 @@ def login_principal(usuario, senha):
                 data = doc.to_dict()
                 print(f"[AUTH_DEBUG] Usuário encontrado no Firestore, atualizando local")
                 # Atualizar/Inserir no banco local para permitir login offline futuro
-                with sqlite3.connect(DB_PATH) as conn:
+                with get_connection() as conn:
                     conn.execute(
                         "INSERT OR REPLACE INTO usuarios (nome, usuario, senha) VALUES (?, ?, ?)",
                         (data['nome'], data['usuario'], str(data.get('senha', '')))
@@ -469,7 +552,7 @@ def login_principal(usuario, senha):
                 
                 # Agora tentar login localmente com a senha sincronizada
                 try:
-                    conexao = sqlite3.connect(DB_PATH)
+                    conexao = get_connection()
                     cursor = conexao.cursor()
                     cursor.execute(
                         "SELECT id, nome, senha FROM usuarios WHERE usuario = ?",
@@ -508,7 +591,7 @@ def verificar_senha_mestra(user_id, senha_digitada):
     Returns:
         bool: True se a senha confere, False caso contrário.
     """
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
     cursor.execute("SELECT senha FROM usuarios WHERE id = ?", (user_id,))
     resultado = cursor.fetchone()
@@ -517,6 +600,91 @@ def verificar_senha_mestra(user_id, senha_digitada):
     if resultado and bcrypt.checkpw(senha_digitada.encode('utf-8'), resultado[0]):
         return True
     return False
+
+
+# ============================================================
+# CONFIGURAÇÕES DO APP
+# ============================================================
+
+def _sincronizar_configuracoes_firebase_para_local(user_id):
+    db = get_firestore()
+    if not db:
+        return 0
+
+    usuario_row = _obter_usuario_por_id(user_id)
+    username = usuario_row[2] if usuario_row else None
+    if not username:
+        return 0
+
+    total = 0
+    try:
+        docs = db.collection("settings").document(username).collection("items").stream(
+            timeout=FIRESTORE_TIMEOUT_SECONDS
+        )
+        with get_connection() as conn:
+            for doc in docs:
+                data = doc.to_dict() or {}
+                key = data.get("key") or doc.id
+                value = data.get("value")
+                if key is None:
+                    continue
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO configuracoes (user_id, chave, valor)
+                    VALUES (?, ?, ?)
+                    """,
+                    (user_id, str(key), json.dumps(value, ensure_ascii=False))
+                )
+                total += 1
+    except Exception as e:
+        print(f"[FIREBASE] Erro ao sincronizar configurações: {e}")
+    return total
+
+
+def listar_configuracoes(user_id):
+    _sincronizar_configuracoes_firebase_para_local(user_id)
+    result = {}
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT chave, valor FROM configuracoes WHERE user_id = ?",
+                (user_id,)
+            ).fetchall()
+        for chave, valor in rows:
+            try:
+                result[chave] = json.loads(valor)
+            except Exception:
+                result[chave] = valor
+    except Exception as e:
+        print(f"[DB_ERROR] Erro ao listar configurações: {e}")
+    return result
+
+
+def salvar_configuracao(user_id, chave, valor_json):
+    valor = json.loads(valor_json)
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO configuracoes (user_id, chave, valor)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, chave, json.dumps(valor, ensure_ascii=False))
+        )
+
+    db = get_firestore()
+    if db:
+        try:
+            usuario_row = _obter_usuario_por_id(user_id)
+            username = usuario_row[2] if usuario_row else None
+            if username:
+                db.collection("settings").document(username).collection("items").document(chave).set({
+                    "key": chave,
+                    "value": valor,
+                    "updated_at": _firestore_server_timestamp()
+                }, timeout=FIRESTORE_TIMEOUT_SECONDS)
+        except Exception as e:
+            print(f"[FIREBASE] Erro ao salvar configuração: {e}")
+    return True
 
 
 # ============================================================
@@ -542,7 +710,7 @@ def adicionar_credencial_site(user_id, servico, login_site, senha_site,
     fernet = obter_fernet()
     senha_cripto = fernet.encrypt(senha_site.encode('utf-8')).decode('utf-8')
 
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
 
     if eh_personalizado:
@@ -578,7 +746,7 @@ def adicionar_credencial_site(user_id, servico, login_site, senha_site,
         try:
             # Pegar o nome de usuário para usar como ID na nuvem (IDs numéricos mudam entre máquinas)
             username = None
-            with sqlite3.connect(DB_PATH) as conn:
+            with get_connection() as conn:
                 res = conn.execute("SELECT usuario FROM usuarios WHERE id = ?", (user_id,)).fetchone()
                 if res: username = res[0]
             
@@ -610,17 +778,50 @@ def listar_credenciais(user_id):
     Returns:
         list[dict]: Lista de credenciais com campos id, site, user, pass, type, url.
     """
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
 
-    # Buscar credenciais de sistemas pré-definidos
+    # --- Sincronização Nuvem -> Local ---
+    db = get_firestore()
+    if db:
+        try:
+            username = None
+            with get_connection() as conn:
+                res = conn.execute("SELECT usuario FROM usuarios WHERE id = ?", (user_id,)).fetchone()
+                if res: username = res[0]
+            
+            if username:
+                docs = db.collection("vault").document(username).collection("items").stream(
+                    timeout=FIRESTORE_TIMEOUT_SECONDS
+                )
+                with get_connection() as conn:
+                    for doc in docs:
+                        d = doc.to_dict()
+                        if d.get("type") == "custom":
+                            conn.execute("DELETE FROM acessos_personalizados WHERE user_id = ? AND nome_site = ?", (user_id, d['servico']))
+                            conn.execute(
+                                "INSERT INTO acessos_personalizados (nome_site, url_site, login_acesso, senha_acesso, user_id) VALUES (?, ?, ?, ?, ?)",
+                                (d['servico'], d['url'], d['login'], d['senha'], user_id)
+                            )
+                        else:
+                            conn.execute("DELETE FROM acessos WHERE user_id = ? AND servico = ?", (user_id, d['servico']))
+                            conn.execute(
+                                "INSERT INTO acessos (servico, login_acesso, senha_acesso, user_id) VALUES (?, ?, ?, ?)",
+                                (d['servico'], d['login'], d['senha'], user_id)
+                            )
+        except Exception as e:
+            print(f"[FIREBASE] Erro ao sincronizar cofre: {e}")
+
+    # Buscar credenciais limpas após sincronização
+    conexao = get_connection()
+    cursor = conexao.cursor()
+
     cursor.execute(
         "SELECT id, servico, login_acesso, senha_acesso FROM acessos WHERE user_id = ?",
         (user_id,)
     )
     dados_sist = cursor.fetchall()
 
-    # Buscar credenciais personalizadas
     cursor.execute(
         "SELECT id, nome_site, url_site, login_acesso, senha_acesso "
         "FROM acessos_personalizados WHERE user_id = ?",
@@ -631,35 +832,6 @@ def listar_credenciais(user_id):
 
     lista = []
     fernet = obter_fernet()
-
-    # --- Sincronização Nuvem -> Local ---
-    db = get_firestore()
-    if db:
-        try:
-            username = None
-            with sqlite3.connect(DB_PATH) as conn:
-                res = conn.execute("SELECT usuario FROM usuarios WHERE id = ?", (user_id,)).fetchone()
-                if res: username = res[0]
-            
-            if username:
-                docs = db.collection("vault").document(username).collection("items").stream(
-                    timeout=FIRESTORE_TIMEOUT_SECONDS
-                )
-                with sqlite3.connect(DB_PATH) as conn:
-                    for doc in docs:
-                        d = doc.to_dict()
-                        if d.get("type") == "custom":
-                            conn.execute(
-                                "INSERT OR REPLACE INTO acessos_personalizados (nome_site, url_site, login_acesso, senha_acesso, user_id) VALUES (?, ?, ?, ?, ?)",
-                                (d['servico'], d['url'], d['login'], d['senha'], user_id)
-                            )
-                        else:
-                            conn.execute(
-                                "INSERT OR REPLACE INTO acessos (servico, login_acesso, senha_acesso, user_id) VALUES (?, ?, ?, ?)",
-                                (d['servico'], d['login'], d['senha'], user_id)
-                            )
-        except Exception as e:
-            print(f"[FIREBASE] Erro ao sincronizar cofre: {e}")
 
     # Buscar credenciais de sistemas pré-definidos
     for d in dados_sist:
@@ -703,14 +875,36 @@ def excluir_credencial(credential_id, eh_personalizado=False):
     Returns:
         bool: Sempre True (operação concluída).
     """
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
+    servico = None
+    user_id = None
     if eh_personalizado:
+        cursor.execute("SELECT nome_site, user_id FROM acessos_personalizados WHERE id = ?", (credential_id,))
+        row = cursor.fetchone()
+        if row:
+            servico, user_id = row
         cursor.execute("DELETE FROM acessos_personalizados WHERE id = ?", (credential_id,))
     else:
+        cursor.execute("SELECT servico, user_id FROM acessos WHERE id = ?", (credential_id,))
+        row = cursor.fetchone()
+        if row:
+            servico, user_id = row
         cursor.execute("DELETE FROM acessos WHERE id = ?", (credential_id,))
     conexao.commit()
     conexao.close()
+
+    db = get_firestore()
+    if db and servico and user_id:
+        try:
+            usuario_row = _obter_usuario_por_id(user_id)
+            username = usuario_row[2] if usuario_row else None
+            if username:
+                db.collection("vault").document(username).collection("items").document(servico).delete(
+                    timeout=FIRESTORE_TIMEOUT_SECONDS
+                )
+        except Exception as e:
+            print(f"[FIREBASE] Erro ao excluir credencial do Firestore: {e}")
     return True
 
 
@@ -727,7 +921,41 @@ def buscar_credencial_site(user_id, servico):
         tuple: (login, senha_descriptografada) ou (None, None) se não encontrada.
     """
     try:
-        conexao = sqlite3.connect(DB_PATH)
+        db = get_firestore()
+        if db:
+            try:
+                usuario_row = _obter_usuario_por_id(user_id)
+                username = usuario_row[2] if usuario_row else None
+                if username:
+                    doc = db.collection("vault").document(username).collection("items").document(servico).get(
+                        timeout=FIRESTORE_TIMEOUT_SECONDS
+                    )
+                    if doc.exists:
+                        d = doc.to_dict() or {}
+                        nome_servico = d.get("servico") or servico
+                        with get_connection() as conn:
+                            if d.get("type") == "custom":
+                                conn.execute(
+                                    "DELETE FROM acessos_personalizados WHERE user_id = ? AND nome_site = ?",
+                                    (user_id, nome_servico)
+                                )
+                                conn.execute(
+                                    "INSERT INTO acessos_personalizados (nome_site, url_site, login_acesso, senha_acesso, user_id) VALUES (?, ?, ?, ?, ?)",
+                                    (nome_servico, d.get("url"), d.get("login"), d.get("senha"), user_id)
+                                )
+                            else:
+                                conn.execute(
+                                    "DELETE FROM acessos WHERE user_id = ? AND servico = ?",
+                                    (user_id, nome_servico)
+                                )
+                                conn.execute(
+                                    "INSERT INTO acessos (servico, login_acesso, senha_acesso, user_id) VALUES (?, ?, ?, ?)",
+                                    (nome_servico, d.get("login"), d.get("senha"), user_id)
+                                )
+            except Exception as e:
+                print(f"[FIREBASE] Erro ao sincronizar credencial '{servico}': {e}")
+
+        conexao = get_connection()
         cursor = conexao.cursor()
 
         # 1. Buscar na tabela de sistemas pré-definidos
@@ -780,7 +1008,7 @@ def inicializar_onibus_padrao():
         ("SEMILEITO EXECUTIVO", 54),
         ("CONVENCIONAL DD", 68)
     ]
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
     for nome, cap in onibus_padrao:
         cursor.execute(
@@ -798,7 +1026,7 @@ def listar_onibus():
     Returns:
         list[tuple]: Lista de (nome, capacidade).
     """
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
     cursor.execute("SELECT nome, capacidade FROM onibus ORDER BY nome ASC")
     res = cursor.fetchall()
@@ -815,7 +1043,7 @@ def salvar_onibus(nome, capacidade):
         nome: Nome do tipo de ônibus (ex: 'EXECUTIVO').
         capacidade: Capacidade de passageiros.
     """
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
     cursor.execute(
         "INSERT OR REPLACE INTO onibus (nome, capacidade) VALUES (?, ?)",
@@ -831,7 +1059,8 @@ def salvar_onibus(nome, capacidade):
 
 def salvar_historico_relatorio(user_id, nome_automacao, parametros,
                                 arquivo_nome, path_backup,
-                                status="completed", job_id=None):
+                                status="completed", job_id=None,
+                                log_output=""):
     """
     Salva ou atualiza um registro no histórico de relatórios.
     Se job_id já existe, atualiza o registro existente (upsert por job_id).
@@ -844,10 +1073,14 @@ def salvar_historico_relatorio(user_id, nome_automacao, parametros,
         path_backup: Caminho completo do backup salvo.
         status: Estado final ('running', 'completed', 'failed', 'cancelled').
         job_id: Identificador único do job (para atualização posterior).
+        log_output: Texto completo do log de execução (stdout/stderr).
     """
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
     params_str = parametros if isinstance(parametros, str) else json.dumps(parametros)
+
+    # Trunca log_output para evitar estouro no SQLite (limite ~1GB, mas vamos limitar)
+    log_output = (log_output or "")[-500000:]
 
     # Se há job_id, tenta atualizar registro existente primeiro
     if job_id and str(job_id).strip():
@@ -860,9 +1093,11 @@ def salvar_historico_relatorio(user_id, nome_automacao, parametros,
             cursor.execute(
                 '''UPDATE relatorios_history 
                    SET status = ?, arquivo_nome = ?, arquivo_path_backup = ?,
-                       nome_automacao = ?, data_execucao = datetime('now', 'localtime')
+                       nome_automacao = ?, data_execucao = datetime('now', 'localtime'),
+                       log_output = ?
                    WHERE job_id = ?''',
-                (status, arquivo_nome, path_backup, nome_automacao, job_id)
+                (status, arquivo_nome, path_backup, nome_automacao,
+                 log_output, job_id)
             )
             conexao.commit()
             conexao.close()
@@ -873,10 +1108,10 @@ def salvar_historico_relatorio(user_id, nome_automacao, parametros,
     cursor.execute(
         '''INSERT INTO relatorios_history 
            (user_id, nome_automacao, parametros_json, arquivo_nome,
-            arquivo_path_backup, status, job_id, data_execucao)
-           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))''',
+            arquivo_path_backup, status, job_id, log_output, data_execucao)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))''',
         (user_id, nome_automacao, params_str, arquivo_nome,
-         path_backup, status, safe_job_id)
+         path_backup, status, safe_job_id, log_output)
     )
     conexao.commit()
     conexao.close()
@@ -887,7 +1122,7 @@ def salvar_historico_relatorio(user_id, nome_automacao, parametros,
         try:
             username = "sistema"
             if user_id:
-                with sqlite3.connect(DB_PATH) as conn:
+                with get_connection() as conn:
                     res = conn.execute("SELECT usuario FROM usuarios WHERE id = ?", (user_id,)).fetchone()
                     if res: username = res[0]
             
@@ -898,6 +1133,7 @@ def salvar_historico_relatorio(user_id, nome_automacao, parametros,
                 "parametros": params_str,
                 "arquivo": arquivo_nome,
                 "status": status,
+                "log_output": (log_output or "")[:100000],  # Firestore 1MB limit
                 "timestamp": firestore.SERVER_TIMESTAMP
             }, timeout=FIRESTORE_TIMEOUT_SECONDS)
         except Exception as e:
@@ -915,12 +1151,12 @@ def listar_historico_relatorios(limit=None, user_id=None):
     Returns:
         list[dict]: Lista de registros com dados da execução e backup.
     """
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
 
     query = (
         "SELECT id, nome_automacao, data_execucao, parametros_json, "
-        "arquivo_nome, arquivo_path_backup, status "
+        "arquivo_nome, arquivo_path_backup, status, log_output, job_id "
         "FROM relatorios_history"
     )
     params_query = []
@@ -953,9 +1189,37 @@ def listar_historico_relatorios(limit=None, user_id=None):
             "params": params,
             "arquivo_nome": r[4],
             "path_backup": r[5],
-            "status": r[6]
+            "status": r[6],
+            "log_output": r[7] if len(r) > 7 else "",
+            "job_id": r[8] if len(r) > 8 else None
         })
     return resultado
+
+
+def obter_log_por_job_id(job_id):
+    """
+    Retorna o log_output de um job específico pelo job_id.
+    
+    Args:
+        job_id: Identificador único do job.
+    
+    Returns:
+        str: Conteúdo do log ou string vazia se não encontrado.
+    """
+    if not job_id:
+        return ""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT log_output FROM relatorios_history WHERE job_id = ?",
+                (str(job_id),)
+            )
+            row = cursor.fetchone()
+            return row[0] if row and row[0] else ""
+    except Exception as e:
+        print(f"[DB_ERROR] Erro ao buscar log por job_id: {e}")
+        return ""
 
 
 def excluir_historico_antigo(dias=30):
@@ -971,7 +1235,7 @@ def excluir_historico_antigo(dias=30):
     Returns:
         list[str]: Caminhos dos arquivos de backup que devem ser deletados.
     """
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
 
     # Buscar arquivos que serão deletados fisicamente
@@ -993,6 +1257,44 @@ def excluir_historico_antigo(dias=30):
     return arquivos_para_remover
 
 
+def atualizar_log_historico(job_id, log_output):
+    """
+    Atualiza apenas o campo log_output de um registro existente pelo job_id.
+    Útil para salvar o log completo após a criação inicial do registro.
+
+    Args:
+        job_id: Identificador único do job.
+        log_output: Texto completo do log de execução.
+    """
+    if not job_id or not str(job_id).strip():
+        return
+
+    log_output = (log_output or "")[-500000:]
+    
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE relatorios_history SET log_output = ? WHERE job_id = ?",
+                (log_output, str(job_id))
+            )
+        print(f"[DB_DEBUG] Log atualizado para job_id={job_id} ({len(log_output)} chars)")
+    except Exception as e:
+        print(f"[DB_ERROR] Erro ao atualizar log: {e}")
+
+    # --- Sincronização Nuvem (Firebase) ---
+    db = get_firestore()
+    if db:
+        try:
+            doc_ref = db.collection("history").document(str(job_id))
+            doc_ref.update({
+                "log_output": log_output[:100000],
+                "updated_at": firestore.SERVER_TIMESTAMP
+            }, timeout=FIRESTORE_TIMEOUT_SECONDS)
+        except Exception:
+            # Pode não existir ainda no Firestore, ignorar
+            pass
+
+
 def excluir_historico_id(record_id):
     """
     Remove um registro específico do histórico pelo ID.
@@ -1003,7 +1305,7 @@ def excluir_historico_id(record_id):
     Returns:
         bool: Sempre True (operação concluída).
     """
-    conexao = sqlite3.connect(DB_PATH)
+    conexao = get_connection()
     cursor = conexao.cursor()
     cursor.execute("DELETE FROM relatorios_history WHERE id = ?", (record_id,))
     conexao.commit()

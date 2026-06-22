@@ -8,7 +8,8 @@ import { useState, useEffect } from 'react';
 import {
   Search, FileSpreadsheet, Activity, AlertCircle, Loader2,
   RotateCcw, Download, Settings, Play, Layers, ChevronRight, FolderOpen,
-  Trash2, ArrowLeft, AlertTriangle, Filter, X, ChevronDown, ChevronUp
+  Trash2, ArrowLeft, AlertTriangle, Filter, X, ChevronDown, ChevronUp,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -32,6 +33,9 @@ const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView, highlig
   const [search, setSearch] = useState('');
   const [deleteItem, setDeleteItem] = useState<any | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [logViewItem, setLogViewItem] = useState<any | null>(null);
+  const [logContent, setLogContent] = useState<string>('');
+  const [logLoading, setLogLoading] = useState(false);
   
   // Estados dos Filtros
   const [isFilterVisible, setIsFilterVisible] = useState(false);
@@ -136,6 +140,25 @@ const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView, highlig
       console.error("Erro ao excluir:", e);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  /** Busca o log de uma automação pelo jobId. */
+  const handleViewLog = async (item: any) => {
+    if (!item.job_id) return;
+
+    setLogViewItem(item);
+    setLogContent('');
+    setLogLoading(true);
+
+    try {
+      const resp = await fetch(`/api/logs/${item.job_id}`);
+      const json = await resp.json();
+      setLogContent(json?.log || '(Log vazio)');
+    } catch (e) {
+      setLogContent('(Erro ao carregar log)');
+    } finally {
+      setLogLoading(false);
     }
   };
 
@@ -377,6 +400,15 @@ const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView, highlig
                             >
                               <Settings size={18} />
                             </button>
+                            {item.status !== 'running' && item.job_id && (
+                              <button 
+                                onClick={() => handleViewLog(item)}
+                                className="p-2.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all hover:shadow-sm"
+                                title="Visualizar Log"
+                              >
+                                <FileText size={18} />
+                              </button>
+                            )}
                             <button 
                               onClick={() => setDeleteItem(item)}
                               className="p-2.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all duration-300"
@@ -394,6 +426,35 @@ const HistoryView = ({ onReRun, onStartAutomation, currentUser, setView, highlig
           )}
         </div>
       </Card>
+
+      {/* Modal de Visualização de Log */}
+      <Modal
+        isOpen={!!logViewItem}
+        onClose={() => setLogViewItem(null)}
+        title={`Log: ${logViewItem?.nome_automacao || ''}`}
+        className="!max-w-6xl"
+        overlayClassName="md:pl-64"
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" className="rounded-xl" onClick={() => setLogViewItem(null)}>
+              Fechar
+            </Button>
+          </div>
+        }
+      >
+        <div className="bg-slate-950 rounded-2xl p-5 max-h-[65vh] overflow-auto custom-scrollbar">
+          {logLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 size={24} className="animate-spin text-blue-400" />
+              <span className="ml-3 text-sm text-slate-400 font-bold">Carregando log...</span>
+            </div>
+          ) : (
+            <pre className="text-xs leading-6 text-emerald-300 font-mono whitespace-pre-wrap break-all">
+              {logContent || '(Nenhum log disponível)'}
+            </pre>
+          )}
+        </div>
+      </Modal>
 
       {/* Modal de Confirmação de Exclusão */}
       <Modal

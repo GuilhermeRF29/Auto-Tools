@@ -3,12 +3,12 @@ import { runPythonCmd } from '../utils/pythonProxy.js';
 
 const router = Router();
 
-// VAULT: Listar credenciais
+// VAULT: Listar credenciais via Python para sincronizar Firebase -> SQLite e descriptografar com Fernet/DPAPI.
 router.get('/:user_id', async (req, res) => {
     const { user_id } = req.params;
-    const pyCmd = `import sys, json; from core.banco import listar_credenciais; print(json.dumps(listar_credenciais(int(sys.argv[1]))))`;
     try {
-        const result = await runPythonCmd(pyCmd, [user_id]);
+        const pyCmd = `import sys, json; from core.banco import listar_credenciais; print(json.dumps(listar_credenciais(int(sys.argv[1])), ensure_ascii=False))`;
+        const result = await runPythonCmd(pyCmd, [String(user_id)]);
         res.json(result);
     } catch (e) {
         console.error(`[VAULT_ERROR] Falha ao buscar credenciais: `, e.message);

@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('autoToolsRuntime', {
   // Novas funções para diálogos modernos
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
   openExcelFiles: () => ipcRenderer.invoke('dialog:openExcelFiles'),
+  saveFileAs: (sourcePath, defaultFileName) => ipcRenderer.invoke('dialog:saveFileAs', sourcePath, defaultFileName),
   // Sessão persistente em memória no Electron
   auth: {
     setUser: (user) => ipcRenderer.send('auth:set-user', user),

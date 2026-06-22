@@ -15,6 +15,8 @@ import {
     fs, path, XLSX,
     stripAccents, createCacheAccessors
 } from './dashboardUtils.js';
+import { runPythonCmd } from '../../utils/pythonProxy.js';
+import { BACKUP_DIR, getRootDir } from '../../config.js';
 
 // ============================================================
 // CONSTANTES
@@ -25,6 +27,7 @@ const CHANNEL_SHARE_FALLBACK_BASE_DIR = 'Z:\\Forecast\\Forecast2';
 const CHANNEL_SHARE_FILE_REGEX = /\.(xlsx|xls|xlsm)$/i;
 const CHANNEL_SHARE_HINT_REGEX = /(performance\s*de\s*canais|comparativo|yoy)/i;
 const CHANNEL_SHARE_CACHE_TTL_MS = 5 * 60 * 1000;
+const CHANNEL_SHARE_PRESENTATION_TEMPLATE = path.join(getRootDir(), 'automacoes', 'assets', 'Template_Participacao_Canais.pptx');
 
 const CHANNEL_SHARE_MONTH_LABELS = { 1: 'Janeiro', 2: 'Fevereiro', 3: 'Marco', 4: 'Abril', 5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto', 9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro' };
 const CHANNEL_SHARE_MONTH_SHORT = { 1: 'JAN', 2: 'FEV', 3: 'MAR', 4: 'ABR', 5: 'MAI', 6: 'JUN', 7: 'JUL', 8: 'AGO', 9: 'SET', 10: 'OUT', 11: 'NOV', 12: 'DEZ' };
@@ -36,6 +39,22 @@ const CHANNEL_SHARE_MONTH_TOKENS = [
     { month: 9, tokens: ['SETEMBRO', 'SET'] }, { month: 10, tokens: ['OUTUBRO', 'OUT'] },
     { month: 11, tokens: ['NOVEMBRO', 'NOV'] }, { month: 12, tokens: ['DEZEMBRO', 'DEZ'] }
 ];
+const findChannelShareMonths = (value = '') => {
+    const normalized = stripAccents(String(value || '')).toUpperCase();
+    const matches = [];
+
+    for (const entry of CHANNEL_SHARE_MONTH_TOKENS) {
+        const tokenRegex = new RegExp(`(?:^|[^A-Z0-9])(${entry.tokens.join('|')})(?=$|[^A-Z0-9])`, 'ig');
+        let match;
+        while ((match = tokenRegex.exec(normalized)) !== null) {
+            matches.push({ month: entry.month, index: match.index });
+        }
+    }
+
+    matches.sort((a, b) => a.index - b.index);
+    return matches.filter((item, index) => index === 0 || item.month !== matches[index - 1].month);
+};
+
 const CHANNEL_SHARE_CELL_REF_REGEX = /^\$?([A-Z]{1,3})\$?(\d{1,7})$/i;
 const CHANNEL_SHARE_CELL_REF_GLOBAL_REGEX = /\$?([A-Z]{1,3})\$?(\d{1,7})/gi;
 
@@ -84,38 +103,44 @@ const inferChannelShareMonthFromSheet = (sheetName) => {
     const original = String(sheetName || '').trim();
     if (!original) return null;
     const normalized = stripAccents(original).toUpperCase();
-    
+
     let year = 0;
     const yearMatch = normalized.match(/(?:20)?(\d{2})X(?:20)?(\d{2})/);
     if (yearMatch) {
         year = Number(yearMatch[2]) + 2000;
     } else {
         const yearMatch2 = normalized.match(/(20\d{2})/);
-        if (yearMatch2) {
-            year = Number(yearMatch2[1]);
-        }
+        if (yearMatch2) year = Number(yearMatch2[1]);
     }
 
-    for (const entry of CHANNEL_SHARE_MONTH_TOKENS) {
-        const tokenRegex = new RegExp(`(?:^|[^A-Z0-9])(${entry.tokens.join('|')})(?:$|[^A-Z0-9])`, 'i');
-        if (tokenRegex.test(normalized)) {
-            const mLabel = CHANNEL_SHARE_MONTH_LABELS[entry.month] || original;
-            const mShort = CHANNEL_SHARE_MONTH_SHORT[entry.month] || '';
-            return { 
-                month: entry.month, 
-                year: year,
-                monthLabel: year ? `${mLabel}/${year}` : mLabel, 
-                monthShort: year ? `${mShort}/${String(year).slice(-2)}` : mShort, 
-                sheetName: original 
-            };
-        }
-    }
-    return null;
+    const months = findChannelShareMonths(normalized);
+    if (!months.length) return null;
+
+    const month = months[0].month;
+    const endMonth = months[months.length - 1].month;
+    const startLabel = CHANNEL_SHARE_MONTH_LABELS[month] || original;
+    const endLabel = CHANNEL_SHARE_MONTH_LABELS[endMonth] || startLabel;
+    const startShort = CHANNEL_SHARE_MONTH_SHORT[month] || '';
+    const endShort = CHANNEL_SHARE_MONTH_SHORT[endMonth] || startShort;
+    const periodLabel = month === endMonth ? startLabel : `${startLabel} a ${endLabel}`;
+    const periodShort = month === endMonth ? startShort : `${startShort} ${endShort}`;
+
+    return {
+        month,
+        endMonth,
+        year,
+        monthLabel: year ? `${periodLabel}/${year}` : periodLabel,
+        monthShort: year ? `${periodShort}/${String(year).slice(-2)}` : periodShort,
+        sheetName: original,
+    };
 };
-
 const buildChannelShareMonthSheets = (sheetNames = []) => {
     const mapped = sheetNames.map((s) => inferChannelShareMonthFromSheet(s)).filter(Boolean)
-        .sort((a, b) => (b.year - a.year) || (b.month - a.month) || a.sheetName.localeCompare(b.sheetName));
+        .sort((a, b) => (b.year - a.year)
+        || (b.endMonth - a.endMonth)
+        || ((b.endMonth - b.month) - (a.endMonth - a.month))
+        || (b.month - a.month)
+        || a.sheetName.localeCompare(b.sheetName));
     const unique = new Map();
     for (const item of mapped) { if (!unique.has(item.sheetName)) unique.set(item.sheetName, item); }
     return Array.from(unique.values());
@@ -138,17 +163,71 @@ const inferChannelShareMonthLabel = (fileName) => {
 };
 
 /** Formata o valor de uma célula para exibição */
+const isChannelShareDateFormat = (formatCode = '') =>
+    /(^|[^a-z])(d|dd|m|mm|mmm|mmmm|yy|yyyy)([^a-z]|$)/i.test(String(formatCode || ''));
+
+const getChannelShareDisplayFractionDigits = (value = '') => {
+    const text = String(value ?? '')
+        .replace(/R\$/gi, '')
+        .replace(/%/g, '')
+        .replace(/[()]/g, '')
+        .replace(/[+\-\u2212]/g, '')
+        .replace(/\s+/g, '')
+        .trim();
+
+    const comma = text.lastIndexOf(',');
+    const dot = text.lastIndexOf('.');
+    const sep = comma >= 0 && dot >= 0 ? (comma > dot ? ',' : '.') : (comma >= 0 ? ',' : (dot >= 0 ? '.' : ''));
+    if (!sep) return 0;
+
+    const after = text.slice(text.lastIndexOf(sep) + 1).replace(/\D/g, '');
+    const before = text.slice(0, text.lastIndexOf(sep)).replace(/\D/g, '');
+    const hasMultipleSameSeparators = (text.match(new RegExp(`\\${sep}`, 'g')) || []).length > 1;
+
+    if (!after) return 0;
+    if (after.length === 3 && before.length <= 3 && !String(value).includes('%') && !hasMultipleSameSeparators) {
+        return 0;
+    }
+    return Math.min(after.length, 6);
+};
+
+const normalizeChannelShareFormattedText = (value = '') => {
+    const text = String(value ?? '').trim();
+    if (!text || !/[0-9]/.test(text)) return text;
+    const numericCandidate = text
+        .replace(/R\$/gi, '')
+        .replace(/[+\-\u2212()%.,\s]/g, '')
+        .trim();
+    if (/[A-Za-z\u00C0-\u017F]/.test(numericCandidate)) return text;
+    const isAccountingNegative = /^\(.*\)$/.test(text);
+    if (!/[.,%]/.test(text) && !isAccountingNegative) return text;
+
+    const parsed = parseChannelShareDisplayNumber(text);
+    if (!Number.isFinite(parsed)) return text;
+
+    const isPercent = text.includes('%');
+    const digits = getChannelShareDisplayFractionDigits(text);
+    const valueToFormat = isPercent ? parsed * 100 : parsed;
+    return `${new Intl.NumberFormat('pt-BR', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+    }).format(valueToFormat)}${isPercent ? '%' : ''}`;
+};
+
 const formatChannelShareCellValue = (cell) => {
     if (!cell) return '';
+    const raw = cell.v;
     const formatted = cell.w !== null && cell.w !== undefined ? String(cell.w).trim() : '';
-    if (formatted) return formatted;
+    if (typeof raw === 'number' && Number.isFinite(raw) && !isChannelShareDateFormat(cell.z)) {
+        return formatChannelShareComputedNumber(raw, cell.z, formatted);
+    }
+    if (formatted) return normalizeChannelShareFormattedText(formatted);
     // XLSX with sheetStubs marks formula/blank-only cells with type "z".
     // Treat them as empty here and let formula backfill handle computed values.
     if (cell.t === 'z') return '';
-    const raw = cell.v;
     if (raw === null || raw === undefined) return '';
     if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw.toLocaleDateString('pt-BR');
-    return String(raw);
+    return normalizeChannelShareFormattedText(String(raw));
 };
 
 const channelShareColumnLettersToNumber = (letters) => {
@@ -190,9 +269,21 @@ const parseChannelShareDisplayNumber = (value) => {
     const hasComma = normalized.includes(',');
     const hasDot = normalized.includes('.');
     if (hasComma && hasDot) {
-        normalized = normalized.replace(/\./g, '').replace(/,/g, '.');
+        const lastComma = normalized.lastIndexOf(',');
+        const lastDot = normalized.lastIndexOf('.');
+        const decimalSeparator = lastComma > lastDot ? ',' : '.';
+        const groupSeparator = decimalSeparator === ',' ? '.' : ',';
+        normalized = normalized
+            .replace(new RegExp(`\\${groupSeparator}`, 'g'), '')
+            .replace(decimalSeparator, '.');
     } else if (hasComma) {
         normalized = normalized.replace(/,/g, '.');
+    } else if (hasDot) {
+        const parts = normalized.split('.');
+        const looksLikeGroupedInteger = parts.length > 1
+            && parts.slice(1).every((part) => /^\d{3}$/.test(part))
+            && /^\d{1,3}$/.test(parts[0]);
+        if (looksLikeGroupedInteger) normalized = parts.join('');
     }
 
     normalized = normalized.replace(/[^0-9+\-.]/g, '');
@@ -214,7 +305,11 @@ const getChannelShareCellNumericValue = (cell) => {
 
     if (typeof cell.rawValue === 'number' && Number.isFinite(cell.rawValue)) {
         // Fórmula sem valor cacheado vem como stub "z" com v=0.
-        if (!(cell.rawType === 'z' && hasFormula && !display)) return cell.rawValue;
+        if (cell.rawType === 'z' && hasFormula) {
+            const parsedDisplay = parseChannelShareDisplayNumber(display);
+            return Number.isFinite(parsedDisplay) ? parsedDisplay : null;
+        }
+        return cell.rawValue;
     }
 
     return parseChannelShareDisplayNumber(display);
@@ -224,24 +319,45 @@ const getChannelShareFormatFractionDigits = (formatCode, fallback = 2) => {
     const firstSection = String(formatCode || '').split(';')[0] || '';
     if (!firstSection.trim()) return fallback;
     if (!/[0#]/.test(firstSection)) return fallback;
-    if (!firstSection.includes('.')) return 0;
-    const decimalPart = firstSection.split('.')[1] || '';
+    const dot = firstSection.lastIndexOf('.');
+    const comma = firstSection.lastIndexOf(',');
+    const decimalSeparator = dot >= 0 && comma >= 0 ? (dot > comma ? '.' : ',') : (dot >= 0 ? '.' : (comma >= 0 ? ',' : ''));
+    if (!decimalSeparator) return 0;
+    const decimalPart = firstSection.slice(firstSection.lastIndexOf(decimalSeparator) + 1);
+    if (!/[0#]/.test(decimalPart)) return 0;
+    if (/^#+0$/.test(decimalPart) && decimalPart.length === 3) return 0;
     const digits = (decimalPart.match(/[0#]/g) || []).length;
     return Number.isInteger(digits) ? digits : fallback;
 };
 
-const formatChannelShareComputedNumber = (numericValue, formatCode = '') => {
+const formatChannelShareComputedNumber = (numericValue, formatCode = '', displayFallback = '') => {
     const safeValue = Number.isFinite(numericValue)
         ? (Math.abs(numericValue) < 1e-12 ? 0 : numericValue)
         : 0;
     const isPercent = String(formatCode || '').includes('%');
-    const fractionDigits = getChannelShareFormatFractionDigits(formatCode, 2);
+    const displayDigits = getChannelShareDisplayFractionDigits(displayFallback);
+    const fractionDigits = displayFallback && displayDigits > 0
+        ? displayDigits
+        : getChannelShareFormatFractionDigits(formatCode, 2);
     const valueToFormat = isPercent ? (safeValue * 100) : safeValue;
 
     return `${new Intl.NumberFormat('pt-BR', {
         minimumFractionDigits: fractionDigits,
         maximumFractionDigits: fractionDigits,
     }).format(valueToFormat)}${isPercent ? '%' : ''}`;
+};
+
+const shouldFormatChannelShareAsInteger = (formatCode = '') => {
+    const code = String(formatCode || '');
+    if (!code.trim() || code.includes('%')) return false;
+    const firstSection = code.split(';')[0] || '';
+    if (!/[0#]/.test(firstSection)) return false;
+    const dot = firstSection.lastIndexOf('.');
+    const comma = firstSection.lastIndexOf(',');
+    const decimalSeparator = dot >= 0 && comma >= 0 ? (dot > comma ? '.' : ',') : (dot >= 0 ? '.' : (comma >= 0 ? ',' : ''));
+    if (!decimalSeparator) return true;
+    const after = firstSection.slice(firstSection.lastIndexOf(decimalSeparator) + 1);
+    return !/[0#]/.test(after);
 };
 
 const splitChannelShareFormulaArgs = (argsText = '') => {
@@ -302,7 +418,24 @@ const evaluateChannelShareFormula = (formula, resolveCellRef) => {
     if (expression.startsWith('=')) expression = expression.slice(1);
     expression = expression.replace(/\$/g, '').toUpperCase();
 
-    const sumRegex = /SUM\s*\(([^()]*)\)/i;
+    const ifErrorRegex = /(?:IFERROR|SEERRO)\s*\(([^,;()]+)[,;]([^()]*)\)/i;
+    let ifErrorGuard = 0;
+    while (ifErrorRegex.test(expression) && ifErrorGuard < 100) {
+        expression = expression.replace(ifErrorRegex, (_full, successExpr) => `(${successExpr})`);
+        ifErrorGuard += 1;
+    }
+
+    let hasMissingReference = false;
+    const resolveNumber = (ref) => {
+        const value = resolveCellRef(ref);
+        if (!Number.isFinite(value)) {
+            hasMissingReference = true;
+            return 0;
+        }
+        return value;
+    };
+
+    const sumRegex = /(?:SUM|SOMA)\s*\(([^()]*)\)/i;
     let guard = 0;
     while (sumRegex.test(expression) && guard < 100) {
         expression = expression.replace(sumRegex, (_full, argsText) => {
@@ -315,15 +448,13 @@ const evaluateChannelShareFormula = (formula, resolveCellRef) => {
 
                 if (arg.includes(':')) {
                     for (const ref of expandChannelShareFormulaRange(arg)) {
-                        const value = resolveCellRef(ref);
-                        total += Number.isFinite(value) ? value : 0;
+                        total += resolveNumber(ref);
                     }
                     continue;
                 }
 
                 if (CHANNEL_SHARE_CELL_REF_REGEX.test(arg)) {
-                    const value = resolveCellRef(arg);
-                    total += Number.isFinite(value) ? value : 0;
+                    total += resolveNumber(arg);
                     continue;
                 }
 
@@ -338,10 +469,10 @@ const evaluateChannelShareFormula = (formula, resolveCellRef) => {
 
     expression = expression.replace(CHANNEL_SHARE_CELL_REF_GLOBAL_REGEX, (_full, letters, rowText) => {
         const ref = `${String(letters || '').toUpperCase()}${String(rowText || '').trim()}`;
-        const resolved = resolveCellRef(ref);
-        return String(Number.isFinite(resolved) ? resolved : 0);
+        return String(resolveNumber(ref));
     });
 
+    if (hasMissingReference) return null;
     expression = expression.replace(/,/g, '.');
     if (!/^[0-9+\-*/().\s]+$/.test(expression)) return null;
 
@@ -393,7 +524,52 @@ const extractChannelShareTable = (sheet, rangeAddress) => {
     return { range: rangeAddress, rowCount: decoded.e.r - decoded.s.r + 1, colCount: decoded.e.c - decoded.s.c + 1, nonEmptyCount, rows };
 };
 
-const applyChannelShareFormulaBackfill = (table) => {
+const buildChannelShareCellSnapshot = (ref, cell) => {
+    const value = formatChannelShareCellValue(cell);
+    return {
+        value,
+        isNegative: isChannelShareNegativeValue(cell, value),
+        rawType: cell?.t || null,
+        rawValue: cell?.v,
+        formula: typeof cell?.f === 'string' ? String(cell.f).trim() : '',
+        numberFormat: typeof cell?.z === 'string' ? String(cell.z) : '',
+        ref,
+    };
+};
+
+const isChannelShareHeaderYear = (value) => {
+    const text = String(value || '').trim();
+    if (!/^[\d.,]+$/.test(text)) return false;
+    const n = parseChannelShareDisplayNumber(text);
+    return Number.isInteger(Math.round(n || 0)) && Math.round(n) >= 1900 && Math.round(n) <= 2100;
+};
+
+const normalizeChannelShareHeaderText = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (isChannelShareHeaderYear(text)) return String(Math.round(parseChannelShareDisplayNumber(text)));
+    return text;
+};
+
+const isChannelShareTitleRow = (row) => {
+    const label = stripAccents(String(row?.cells?.[0]?.value || '')).trim().toUpperCase();
+    return label === 'CANAL' || label === 'CANAIS';
+};
+
+const isChannelShareCurrencyColumn = (type, colIdx) => {
+    if (type === 'financeiro') return [1, 2, 3, 8, 9].includes(colIdx);
+    if (type === 'ticketMedio') return [1, 2, 5].includes(colIdx);
+    return false;
+};
+
+const formatChannelShareCurrency = (value) => new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+}).format(value);
+
+const applyChannelShareFormulaBackfill = (table, sheet = null) => {
     if (!table || !Array.isArray(table.rows)) return table;
 
     const cellsByRef = new Map();
@@ -408,10 +584,14 @@ const applyChannelShareFormulaBackfill = (table) => {
 
     const resolveCellRef = (ref, stack = new Set()) => {
         const key = String(ref || '').trim().toUpperCase();
-        if (!key) return 0;
+        if (!key) return null;
 
-        const target = cellsByRef.get(key);
-        if (!target) return 0;
+        let target = cellsByRef.get(key);
+        if (!target && sheet?.[key]) {
+            target = buildChannelShareCellSnapshot(key, sheet[key]);
+            cellsByRef.set(key, target);
+        }
+        if (!target) return null;
 
         const hasFormula = typeof target.formula === 'string' && target.formula.trim() !== '';
         const display = String(target.value || '').trim();
@@ -425,13 +605,7 @@ const applyChannelShareFormulaBackfill = (table) => {
         }
 
         const cachedNumeric = getChannelShareCellNumericValue(target);
-        if (display && Number.isFinite(cachedNumeric)) {
-            target.__computedNumeric = cachedNumeric;
-            target.isNegative = cachedNumeric < 0;
-            return cachedNumeric;
-        }
-
-        if (stack.has(key)) return 0;
+        if (stack.has(key)) return null;
 
         stack.add(key);
         const evaluated = evaluateChannelShareFormula(target.formula, (innerRef) => resolveCellRef(innerRef, stack));
@@ -439,11 +613,14 @@ const applyChannelShareFormulaBackfill = (table) => {
 
         const safe = Number.isFinite(evaluated)
             ? evaluated
-            : (Number.isFinite(cachedNumeric) ? cachedNumeric : 0);
+            : (Number.isFinite(cachedNumeric) ? cachedNumeric : null);
 
+        if (!Number.isFinite(safe)) return null;
         target.__computedNumeric = safe;
         target.isNegative = safe < 0;
-        if (!display) target.value = formatChannelShareComputedNumber(safe, target.numberFormat);
+        if (!display || (Number.isFinite(evaluated) && (!Number.isFinite(cachedNumeric) || Math.abs(evaluated - cachedNumeric) > 1e-9))) {
+            target.value = formatChannelShareComputedNumber(safe, target.numberFormat);
+        }
         return safe;
     };
 
@@ -531,6 +708,8 @@ const applyMissingChannelShareFormulas = (table, type) => {
         return Number.isFinite(parsed) ? parsed : 0;
     };
 
+    const hasNum = (cells, colIndex) => Number.isFinite(getChannelShareCellNumericValue(cells?.[colIndex]));
+
     const fmtPct = (val) => {
         if (!Number.isFinite(val)) return '0,00%';
         return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val * 100) + '%';
@@ -578,6 +757,7 @@ const applyMissingChannelShareFormulas = (table, type) => {
             if (!label || label === 'CANAIS') continue;
 
             const c = getNum(row.cells, 1); const d = getNum(row.cells, 2); const e = getNum(row.cells, 3);
+            if (!hasNum(row.cells, 1) && !hasNum(row.cells, 2) && !hasNum(row.cells, 3)) continue;
 
             // Cálculos diretos para evitar re-parse de strings e erros de escala no p.p
             const pct26vsOrc = d ? (e / d) - 1 : 0;
@@ -621,6 +801,7 @@ const applyMissingChannelShareFormulas = (table, type) => {
             if (!label || label === 'CANAIS' || label === 'OFFLINE' || label === 'ONLINE') continue;
 
             const c = getNum(row.cells, 1); const d = getNum(row.cells, 2);
+            if (!hasNum(row.cells, 1) && !hasNum(row.cells, 2)) continue;
             setVal(row.cells, 3, c ? (d / c) - 1 : 0, true); // E (3)
             setVal(row.cells, 5, d - c, false);              // G (5)
         }
@@ -632,6 +813,90 @@ const applyMissingChannelShareFormulas = (table, type) => {
 // ============================================================
 // CONSTRUÇÃO DO PAYLOAD
 // ============================================================
+
+const normalizeChannelShareTableDisplay = (table, type) => {
+    if (!table || !Array.isArray(table.rows)) return table;
+    table.nonEmptyCount = 0;
+
+    for (const [rowIdx, row] of table.rows.entries()) {
+        if (!row || !Array.isArray(row.cells)) continue;
+        const isTitleRow = isChannelShareTitleRow(row);
+
+        row.cells.forEach((cell, colIdx) => {
+            if (!cell) return;
+            const current = String(cell.value || '').trim();
+
+            if (isTitleRow) {
+                cell.value = normalizeChannelShareHeaderText(current);
+                cell.isNegative = false;
+            } else if (rowIdx > 0 && type === 'passageiros' && colIdx > 0 && current && !current.includes('%')) {
+                const parsed = getChannelShareCellNumericValue(cell);
+                if (Number.isFinite(parsed)) {
+                    cell.value = new Intl.NumberFormat('pt-BR', {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 0,
+                    }).format(parsed);
+                    cell.isNegative = parsed < 0;
+                }
+            } else if (current) {
+                const parsed = parseChannelShareDisplayNumber(current);
+                if (Number.isFinite(parsed)) {
+                    cell.isNegative = parsed < 0;
+                    if (rowIdx > 0 && isChannelShareCurrencyColumn(type, colIdx) && !current.includes('%')) {
+                        cell.value = formatChannelShareCurrency(parsed);
+                        if (Math.abs(parsed) < 1e-12) cell.isNegative = false;
+                        if (String(cell.value || '').trim()) table.nonEmptyCount += 1;
+                        return;
+                    }
+                    const isAccounting = /^\(.*\)$/.test(current);
+                    const isIntegerNumber = !current.includes('%') && shouldFormatChannelShareAsInteger(cell.numberFormat);
+                    if (isAccounting || isIntegerNumber) {
+                        const digits = isIntegerNumber ? 0 : getChannelShareDisplayFractionDigits(current);
+                        cell.value = `${new Intl.NumberFormat('pt-BR', {
+                            minimumFractionDigits: digits,
+                            maximumFractionDigits: digits,
+                        }).format(parsed)}${current.includes('%') ? '%' : ''}`;
+                    }
+                }
+            }
+
+            if (String(cell.value || '').trim()) table.nonEmptyCount += 1;
+        });
+    }
+
+    return table;
+};
+
+const getChannelShareReportMonth = (monthLabel = '') => {
+    const raw = String(monthLabel || '').trim();
+    const now = new Date();
+    const months = findChannelShareMonths(raw);
+    const month = months[0]?.month || now.getMonth() + 1;
+    const endMonth = months[months.length - 1]?.month || month;
+    let year = now.getFullYear();
+
+    const yearMatch = raw.match(/\b(20\d{2})\b/);
+    if (yearMatch) year = Number(yearMatch[1]);
+
+    const startName = CHANNEL_SHARE_MONTH_LABELS[month] || CHANNEL_SHARE_MONTH_LABELS[now.getMonth() + 1];
+    const endName = CHANNEL_SHARE_MONTH_LABELS[endMonth] || startName;
+
+    return {
+        month,
+        endMonth,
+        year,
+        monthName: month === endMonth ? startName : `${startName} a ${endName}`,
+    };
+};
+const buildChannelSharePresentationFileName = (monthLabel = '') => {
+    const reportMonth = getChannelShareReportMonth(monthLabel);
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = String(now.getFullYear());
+    const baseName = `Participação de canais ${reportMonth.monthName} ${reportMonth.year} (${day}.${month}.${year}).pptx`;
+    return baseName.replace(/[<>:"/\\|?*]/g, ' ').replace(/\s+/g, ' ').trim();
+};
 
 const buildChannelShareDashboardPayload = ({ effectivePath, preferredPath, selectedFileName, selectedSheetName, selectedFilePath }) => {
     const files = collectChannelShareFiles(effectivePath);
@@ -676,13 +941,13 @@ const buildChannelShareDashboardPayload = ({ effectivePath, preferredPath, selec
     let passageiros = extractChannelShareTable(activeSheet, passageirosRange);
     let ticketMedio = extractChannelShareTable(activeSheet, ticketMedioRange);
 
-    financeiro = applyChannelShareFormulaBackfill(financeiro);
-    passageiros = applyChannelShareFormulaBackfill(passageiros);
-    ticketMedio = applyChannelShareFormulaBackfill(ticketMedio);
+    financeiro = applyChannelShareFormulaBackfill(financeiro, activeSheet);
+    passageiros = applyChannelShareFormulaBackfill(passageiros, activeSheet);
+    ticketMedio = applyChannelShareFormulaBackfill(ticketMedio, activeSheet);
     
-    financeiro = applyMissingChannelShareFormulas(financeiro, 'financeiro');
-    passageiros = applyMissingChannelShareFormulas(passageiros, 'passageiros');
-    ticketMedio = applyMissingChannelShareFormulas(ticketMedio, 'ticketMedio');
+    financeiro = normalizeChannelShareTableDisplay(applyMissingChannelShareFormulas(financeiro, 'financeiro'), 'financeiro');
+    passageiros = normalizeChannelShareTableDisplay(applyMissingChannelShareFormulas(passageiros, 'passageiros'), 'passageiros');
+    ticketMedio = normalizeChannelShareTableDisplay(applyMissingChannelShareFormulas(ticketMedio, 'ticketMedio'), 'ticketMedio');
 
     const updateInfo = extractChannelShareUpdateInfo(activeSheet);
 
@@ -706,6 +971,13 @@ const buildChannelShareDashboardPayload = ({ effectivePath, preferredPath, selec
 // ============================================================
 
 const router = Router();
+
+const writeChannelShareDataUrl = (dataUrl, filePath) => {
+    const raw = String(dataUrl || '');
+    const match = raw.match(/^data:image\/png;base64,(.+)$/);
+    if (!match) throw new Error('Imagem invalida para gerar apresentacao.');
+    fs.writeFileSync(filePath, Buffer.from(match[1], 'base64'));
+};
 
 router.get('/channel-share-dashboard', async (req, res) => {
     try {
@@ -732,5 +1004,55 @@ router.get('/channel-share-dashboard', async (req, res) => {
     }
 });
 
+router.post('/channel-share-dashboard/presentation', async (req, res) => {
+    const tempDir = path.join(BACKUP_DIR, `channel_share_ppt_${Date.now()}`);
+
+    try {
+        const { images = {}, updateInfo = '', monthLabel = '', monthShort = '' } = req.body || {};
+        if (!fs.existsSync(CHANNEL_SHARE_PRESENTATION_TEMPLATE)) {
+            return res.status(500).json({ error: 'Template de Participacao de Canais nao encontrado.' });
+        }
+
+        fs.mkdirSync(tempDir, { recursive: true });
+        const imagePaths = {
+            receita: path.join(tempDir, 'receita.png'),
+            pax: path.join(tempDir, 'pax.png'),
+            tm: path.join(tempDir, 'tm.png'),
+        };
+
+        writeChannelShareDataUrl(images.receita, imagePaths.receita);
+        writeChannelShareDataUrl(images.pax, imagePaths.pax);
+        writeChannelShareDataUrl(images.tm, imagePaths.tm);
+
+        const outputFileName = buildChannelSharePresentationFileName(monthLabel || monthShort);
+        const outputPath = path.join(BACKUP_DIR, outputFileName);
+
+        const params = {
+            template_path: CHANNEL_SHARE_PRESENTATION_TEMPLATE,
+            output_path: outputPath,
+            images: imagePaths,
+            update_info: updateInfo,
+            month_label: monthLabel || monthShort,
+        };
+        const encoded = Buffer.from(JSON.stringify(params)).toString('base64');
+        const pyCmd = `import sys, runpy; sys.argv=['participacao_canais_ppt.py', sys.argv[1]]; runpy.run_path(r'${path.join(getRootDir(), 'automacoes', 'participacao_canais_ppt.py')}', run_name='__main__')`;
+        const result = await runPythonCmd(pyCmd, [encoded]);
+
+        return res.json({
+            success: true,
+            result,
+            path: outputPath,
+            fileName: path.basename(outputPath),
+        });
+    } catch (error) {
+        console.error('[CHANNEL_SHARE_PRESENTATION_ERROR]', error);
+        return res.status(500).json({ error: 'Erro ao gerar apresentacao Share de Canais.', details: String(error?.message || error) });
+    } finally {
+        try {
+            if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch {}
+    }
+});
+
 export default router;
-export { DEFAULT_CHANNEL_SHARE_BASE_DIR };
+export { DEFAULT_CHANNEL_SHARE_BASE_DIR, inferChannelShareMonthFromSheet, buildChannelShareMonthSheets };

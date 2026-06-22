@@ -3,11 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import got from 'got';
 import { getRootDir } from '../config.js';
-import { exec, spawn } from 'child_process';
+import { spawn } from 'child_process';
+import crypto from 'crypto';
 
 const router = express.Router();
 const GITHUB_REPO = 'GuilhermeRF29/Auto-Tools';
-const BRANCH = 'main'; 
+const BRANCH = 'nova_interface'; 
 const VERSION_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/${BRANCH}/version.json`;
 const ZIP_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/${BRANCH}.zip`;
 
@@ -61,8 +62,23 @@ router.post('/update/apply', async (req, res) => {
   const tempExtract = path.join(process.env.TEMP, 'autotools_extracted');
 
   try {
+    console.log(`[UPDATE] Verificando manifesto de versão para hash...`);
+    const versionResponse = await got(VERSION_URL).json().catch(() => ({}));
+    const expectedHash = versionResponse.sha256;
+
     console.log(`[UPDATE] Baixando atualização de ${ZIP_URL}...`);
     const response = await got(ZIP_URL, { responseType: 'buffer' });
+    
+    if (expectedHash) {
+        const actualHash = crypto.createHash('sha256').update(response.body).digest('hex');
+        if (actualHash !== expectedHash) {
+            throw new Error(`Falha de Segurança: O arquivo baixado não confere com o Hash oficial. Esperado: ${expectedHash}`);
+        }
+        console.log('[UPDATE] Assinatura SHA-256 validada com sucesso!');
+    } else {
+        console.warn('[UPDATE] Aviso: version.json não forneceu um hash SHA256 para validação (ignorando).');
+    }
+
     fs.writeFileSync(tempZip, response.body);
 
     console.log('[UPDATE] Extraindo arquivos...');
@@ -96,10 +112,13 @@ $config = Get-Content -Raw -Path (Join-Path $rootDir "update_config.json") -Enco
 $exePath = $config.exePath
 $tempExtract = $config.tempExtract
 
-Write-Host "Encerrando Auto Tools..."
-Stop-Process -Name "Auto Tools" -Force -ErrorAction SilentlyContinue
-Stop-Process -Name "electron" -Force -ErrorAction SilentlyContinue
-Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
+Write-Host "Encerrando processo do Auto Tools (PIDs exatos)..."
+$pids = "${process.pid},${process.ppid}" -split ","
+foreach ($p in $pids) {
+    if ($p -match "^\\d+$") {
+        Stop-Process -Id $p -Force -ErrorAction SilentlyContinue
+    }
+}
 Start-Sleep -Seconds 1
 
 $extractedFolder = Get-ChildItem -Path $tempExtract | Select-Object -First 1
@@ -128,9 +147,16 @@ Stop-Transcript
     res.json({ success: true, message: 'Arquivos preparados. Reiniciando agora...' });
 
     console.log('[UPDATE] Disparando script de aplicação final...');
-    exec('start "" /B powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File apply_update.ps1', { 
-      cwd: rootDir 
-  });
+    spawn('powershell.exe', [
+      '-WindowStyle', 'Hidden',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', updaterScriptPath
+    ], {
+      cwd: rootDir,
+      shell: false,
+      windowsHide: true,
+      detached: true,
+    }).unref();
 
   } catch (error) {
     console.error('[UPDATE] Erro no preparo da atualização:', error);

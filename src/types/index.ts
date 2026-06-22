@@ -65,4 +65,5 @@ export const PREDEFINED_SITES = [
   { name: 'EBUS', host: 'connext.controlesoftware.com.br', url: 'http://10.61.65.84/auth/login' },
   { name: 'ADM de Vendas', host: 'adm.autobots.com.br', url: 'http://ttadm01.jcatlm.com.br:8080/ventaboletosadm/index.zul;jsessionid=xFIW8nh_t8n9-74topChhriraeW-2Y5y-MKUCIG3.gcp-pd-ttadm-01' },
   { name: 'Busca Dados BI', host: 'app.powerinsight.com.br', url: 'https://app.powerinsight.com.br' },
+  { name: 'Power BI WoW', host: 'app.powerbi.com', url: 'https://app.powerbi.com' },
 ];

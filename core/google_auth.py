@@ -60,7 +60,17 @@ def obter_servico_gmail():
     TOKEN_PATH, CREDS_PATH, CREDS_CANDIDATOS = _resolver_caminhos_auth()
 
     creds = None
-    if TOKEN_PATH.exists():
+    token_json_str = os.getenv("GMAIL_TOKEN_JSON", "").strip()
+    if token_json_str:
+        try:
+            import json
+            info = json.loads(token_json_str)
+            creds = Credentials.from_authorized_user_info(info, SCOPES)
+        except Exception as e:
+            print(f"[AVISO] GMAIL_TOKEN_JSON inválido: {e}")
+            creds = None
+
+    if not creds and TOKEN_PATH.exists():
         try:
             creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
         except Exception as e:
@@ -76,14 +86,22 @@ def obter_servico_gmail():
                 creds = None
 
         if not creds or not creds.valid:
-            if not CREDS_PATH or not CREDS_PATH.exists():
-                tentativas = " | ".join(str(p) for p in CREDS_CANDIDATOS)
-                raise FileNotFoundError(
-                    "Arquivo credentials.json não encontrado. Caminhos testados: "
-                    f"{tentativas}"
-                )
-
-            flow = InstalledAppFlow.from_client_secrets_file(str(CREDS_PATH), SCOPES)
+            flow = None
+            creds_json_str = os.getenv("CORE_CREDENTIALS_JSON", "").strip()
+            
+            if creds_json_str:
+                import json
+                client_config = json.loads(creds_json_str)
+                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+            else:
+                if not CREDS_PATH or not CREDS_PATH.exists():
+                    tentativas = " | ".join(str(p) for p in CREDS_CANDIDATOS)
+                    raise FileNotFoundError(
+                        "Arquivo credentials.json não encontrado. Caminhos testados: "
+                        f"{tentativas}"
+                    )
+                flow = InstalledAppFlow.from_client_secrets_file(str(CREDS_PATH), SCOPES)
+                
             try:
                 creds = flow.run_local_server(
                     port=0,

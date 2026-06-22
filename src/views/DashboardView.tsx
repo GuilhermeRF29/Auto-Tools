@@ -15,7 +15,9 @@ import type { View } from '../types';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import { getWindowsHelloHint, isWindowsHelloAvailable } from '../utils/windowsHello';
-import { useUI } from '../context/UIContext';
+import { useNavigation } from '../context/NavigationContext';
+import { useUpdate } from '../context/UpdateContext';
+import { useRelatoriosHistory } from '../hooks/useRelatoriosHistory';
 
 const HOME_QUICK_CARDS: Array<{
   view: View;
@@ -70,37 +72,18 @@ const DashboardView = ({ setView, onReRun, onStartAutomation, currentUser, tasks
   serverInfo?: { version?: string; dbStatus?: string; dbMessage?: string } | null,
 }) => {
   const [tab, setTab] = useState<'files' | 'history'>('files');
-  const [data, setData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const cardsScrollRef = useRef<HTMLDivElement>(null);
   const [canScrollCardsLeft, setCanScrollCardsLeft] = useState(false);
   const [canScrollCardsRight, setCanScrollCardsRight] = useState(false);
 
-  const { updateStatus, applyUpdate } = useUI();
+  const { updateStatus, applyUpdate } = useUpdate();
+  const { setHistoryItems } = useNavigation();
 
-  /** Busca o histórico do banco de dados (sem limite = últimos ~20 registros). */
-  const fetchHistory = async () => {
-    if (!currentUser?.id) return;
-    setLoading(true);
-    try {
-      const resp = await fetch(`/api/relatorios-history?user_id=${currentUser.id}`);
-      const json = await resp.json();
-      if (Array.isArray(json)) {
-        setData(json);
-      } else {
-        console.warn("Resposta do histórico não é uma lista:", json);
-        setData([]);
-      }
-    } catch (e) {
-      console.error("Erro ao buscar histórico:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data, loading } = useRelatoriosHistory(true, currentUser?.id);
 
   useEffect(() => {
-    fetchHistory();
-  }, [tasksCount]); // Recarrega sempre que o número de tarefas mudas (início/fim)
+    if (data.length > 0) setHistoryItems(data);
+  }, [data, setHistoryItems]);
 
   useEffect(() => {
     const viewport = cardsScrollRef.current;

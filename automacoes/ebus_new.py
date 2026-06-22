@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import os
 # Feedback imediato para o dashboard!
 print("PROGRESS:{\"p\": 1, \"m\": \"Carregando módulos eBus...\"}", flush=True)
@@ -1075,6 +1075,7 @@ def executar_ebus(
     arquivo_entrada=None,
     base_automacao=None,
     saida="padrao",
+    headless=True,
 ):
     def checar_parada():
         if hook_cancelamento and hook_cancelamento():
@@ -1175,7 +1176,8 @@ def executar_ebus(
 
             opcoes = Options()
             opcoes.add_argument("--window-size=1920,1080")
-            # opcoes.add_argument("--headless")
+            if headless:
+                opcoes.add_argument("--headless=new")
 
             driver_path = get_driver_path()
             if driver_path and "chrome" in Path(driver_path).name.lower():
@@ -1482,7 +1484,8 @@ if __name__ == '__main__':
             pasta_destino=params.get('pasta_saida'),
             arquivo_entrada=params.get('pasta_personalizada'),
             base_automacao=params.get('base'),
-            saida=params.get('saida', 'padrao')
+            saida=params.get('saida', 'padrao'),
+            headless=params.get('headless', True),
         )
         print(json.dumps(resultado))
     except Exception as e:

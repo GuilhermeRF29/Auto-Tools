@@ -18,6 +18,9 @@ from core.google_auth import obter_servico_gmail
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Side
 
+DEFAULT_SR_BASE_DIR = Path(r"\\172.16.98.12\Relatórios Power BI\Dash RIO")
+DEFAULT_SR_BASE_FILE = DEFAULT_SR_BASE_DIR / "Base RIO x SAO.xlsx"
+
 
 def normalizar_data_br(data_valor):
     """Normaliza datas para dd/mm/YYYY aceitando ISO e variações comuns."""
@@ -646,9 +649,9 @@ def executar_sr(
                 elif base_raw_lower in {"padrao", "sem_base", "none", "null"}:
                     base_raw = ""
 
-            # Modo padrão/sem base no frontend: usa Base RIO x SAO.xlsx da pasta Downloads.
+            # Modo padrão/sem base no frontend: usa Base RIO x SAO.xlsx no compartilhamento oficial.
             if not base_raw:
-                return pasta_downloads / "Base RIO x SAO.xlsx"
+                return DEFAULT_SR_BASE_FILE
 
             caminho_base = Path(base_raw)
             if caminho_base.suffix.lower() in {".xlsx", ".xls", ".xlsm"}:
@@ -818,7 +821,11 @@ def executar_sr(
 
             arquivos_locais = localizar_arquivos_locais_tratamento()
             if len(arquivos_locais) == 0:
-                raise ValueError("Nenhum arquivo local foi encontrado para tratamento SR. Verifique os nomes BASE RIO e Share - Mercado RIO na pasta Downloads.")
+                raise ValueError(
+                    "Nenhum arquivo local foi encontrado para tratamento SR. "
+                    "Verifique os nomes BASE RIO e Share - Mercado RIO no compartilhamento "
+                    r"\\172.16.98.12\Relatórios Power BI\Dash RIO, na pasta de saída ou em Downloads."
+                )
 
             print(f"[INFO] Termos encontrados para tratamento SR (modo local): {list(arquivos_locais.keys())}")
 

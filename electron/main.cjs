@@ -1,20 +1,24 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, utilityProcess } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { processSecrets } = require('./secureStorage.cjs');
 
 const SERVER_PORT = Number(process.env.AUTOTOOLS_SERVER_PORT || 3001);
 const DEV_RENDERER_URL = process.env.AUTOTOOLS_RENDERER_URL || 'http://localhost:3000';
 
 let backendProcess = null;
 let mainWindow = null;
+let isShuttingDown = false;
 
 const isDev = !app.isPackaged;
 
 const getServerEntry = () => {
   const appPath = app.getAppPath();
-  const unpackedPath = appPath.replace('app.asar', 'app.asar.unpacked');
+  const unpackedPath = appPath.includes('app.asar')
+    ? appPath.replace('app.asar', 'app.asar.unpacked')
+    : appPath;
   const serverPath = path.join(unpackedPath, 'server.js');
   return fs.existsSync(serverPath) ? serverPath : path.join(appPath, 'server.js');
 };
@@ -50,26 +54,10 @@ const waitForBackendReady = async (timeoutMs = 60000) => {
 };
 
 const bootstrapDataDir = (dataDir) => {
-  const seedFiles = ['.env', 'token.json', 'firebase-credentials.json'];
-  const appPath = app.getAppPath();
-  const unpackedPath = appPath.replace('app.asar', 'app.asar.unpacked');
-
-  seedFiles.forEach((file) => {
-    // Tenta pegar da raiz ou da pasta unpacked
-    const src = fs.existsSync(path.join(unpackedPath, file))
-      ? path.join(unpackedPath, file)
-      : path.join(appPath, file);
-    const dest = path.join(dataDir, file);
-
-    if (fs.existsSync(src) && !fs.existsSync(dest)) {
-      try {
-        fs.copyFileSync(src, dest);
-        console.log(`[ELECTRON] Seeded ${file} to ${dataDir}`);
-      } catch (err) {
-        console.error(`[ELECTRON] Failed to seed ${file}: ${err.message}`);
-      }
-    }
-  });
+  // Apenas cria a pasta de runtime. O processSecrets cuida do backup e do secure storage.
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
 };
 
 const startBackend = () => {
@@ -88,9 +76,13 @@ const startBackend = () => {
 
   const getPythonExecutable = () => {
     if (isDev) {
-      const portablePath = path.resolve(app.getAppPath(), 'python-runtime', 'python.exe');
+      const appPath = app.getAppPath();
+      const unpackedPath = appPath.includes('app.asar')
+        ? appPath.replace('app.asar', 'app.asar.unpacked')
+        : appPath;
+      const portablePath = path.resolve(unpackedPath, 'python-runtime', 'python.exe');
       if (fs.existsSync(portablePath)) return portablePath;
-      return path.resolve(app.getAppPath(), 'venv', 'Scripts', 'python.exe');
+      return path.resolve(appPath, 'venv', 'Scripts', 'python.exe');
     } else {
       // Em produção (resourcesPath)
       const portablePath = path.join(process.resourcesPath, 'python-runtime', 'python.exe');
@@ -101,31 +93,33 @@ const startBackend = () => {
 
   const venvPath = getPythonExecutable();
 
+  const unpackedAppPath = app.getAppPath().includes('app.asar')
+    ? app.getAppPath().replace('app.asar', 'app.asar.unpacked')
+    : app.getAppPath();
+
   const env = {
     PATH: process.env.PATH,
     SystemRoot: process.env.SystemRoot,
     ComSpec: process.env.ComSpec,
     WINDIR: process.env.WINDIR,
     ...process.env,
-    ELECTRON_RUN_AS_NODE: '1',
     NODE_ENV: isDev ? 'development' : 'production',
     AUTOTOOLS_SERVER_PORT: String(SERVER_PORT),
     AUTOTOOLS_SERVE_FRONTEND: '1',
-    AUTOTOOLS_APP_ROOT: app.getAppPath(),
+    AUTOTOOLS_APP_ROOT: unpackedAppPath,
     AUTOTOOLS_DATA_DIR: dataDir,
     AUTOTOOLS_PYTHON_PATH: venvPath,
-    GMAIL_TOKEN_PATH: path.join(dataDir, 'token.json'),
+    // Em vez dos arquivos em disco, passamos o conteúdo carregado da memória
+    ...processSecrets(),
     PYTHONIOENCODING: 'utf-8',
     PYTHONUTF8: '1',
   };
 
-  // Usamos o executável do Electron para rodar o script do backend.
-  // IMPORTANTE: serverEntry deve estar fora do ASAR (usando asarUnpack no package.json).
-  backendProcess = spawn(process.execPath, [serverEntry], {
-    cwd: path.dirname(serverEntry),
+  // Usamos utilityProcess.fork para rodar o script com suporte total a ASAR
+  backendProcess = utilityProcess.fork(serverEntry, [], {
+    cwd: dataDir,
     env,
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: 'pipe',
   });
 
   backendProcess.stdout.pipe(logStream);
@@ -142,28 +136,37 @@ const startBackend = () => {
   backendProcess.on('exit', (code, signal) => {
     console.log(`[BACKEND] Processo finalizado (code=${code}, signal=${signal || 'none'})`);
     backendProcess = null;
-  });
-};
-
-const stopBackend = () => {
-  if (!backendProcess || backendProcess.killed) return;
-  try {
-    if (process.platform === 'win32') {
-      const pid = backendProcess.pid;
-      console.log(`[ELECTRON] Finalizando árvore de processos do backend (PID ${pid})...`);
-      // Usamos taskkill /F /T para garantir que o processo e seus filhos (como o Python) morram
-      spawn('taskkill', ['/F', '/T', '/PID', pid.toString()], {
-        shell: false,
-        windowsHide: true
-      });
-    } else {
-      backendProcess.kill('SIGTERM');
+    
+    if (!isShuttingDown) {
+      console.log(`[ELECTRON] Backend crash detectado. Reiniciando em 2 segundos...`);
       setTimeout(() => {
-        if (backendProcess && !backendProcess.killed) {
-          backendProcess.kill('SIGKILL');
+        if (!isShuttingDown) {
+          console.log(`[ELECTRON] Reiniciando backend automaticamente...`);
+          startBackend();
         }
       }, 2000);
     }
+  });
+};
+
+const { execSync } = require('child_process');
+
+const stopBackend = () => {
+  isShuttingDown = true;
+  if (!backendProcess) return;
+  try {
+    const pid = backendProcess.pid;
+    console.log(`[ELECTRON] Finalizando processo do backend (PID ${pid})...`);
+    if (pid && process.platform === 'win32') {
+      try {
+        execSync(`taskkill /T /F /PID ${pid}`, { timeout: 5000, windowsHide: true });
+      } catch {
+        backendProcess.kill();
+      }
+    } else {
+      backendProcess.kill();
+    }
+    backendProcess = null;
   } catch (err) {
     console.error(`[ELECTRON] Erro ao parar backend: ${err.message}`);
   }
@@ -199,6 +202,30 @@ ipcMain.handle('dialog:openExcelFiles', async () => {
 });
 
 // Gerenciamento de sessão em memória
+ipcMain.handle('dialog:saveFileAs', async (_event, sourcePath, defaultFileName = '') => {
+  if (!mainWindow) return '';
+
+  const resolvedSource = path.resolve(String(sourcePath || ''));
+  if (!fs.existsSync(resolvedSource) || path.extname(resolvedSource).toLowerCase() !== '.pptx') {
+    throw new Error('Arquivo PPTX gerado nao foi encontrado para salvar.');
+  }
+
+  const safeDefaultName = path.basename(String(defaultFileName || path.basename(resolvedSource)))
+    .replace(/[<>:"/\\|?*]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || 'Participação de canais.pptx';
+
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: safeDefaultName,
+    filters: [{ name: 'PowerPoint', extensions: ['pptx'] }],
+  });
+
+  if (canceled || !filePath) return '';
+
+  fs.copyFileSync(resolvedSource, filePath);
+  return filePath;
+});
+
 ipcMain.on('auth:set-user', (e, user) => {
   currentUser = user;
 });

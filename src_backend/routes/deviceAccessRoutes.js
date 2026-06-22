@@ -246,12 +246,17 @@ const requireDesktopOperator = (req, res, next) => {
 };
 
 router.get('/device-access/public-state', (req, res) => {
+    const ip = getClientIp(req);
+    if (!isLoopbackIp(ip)) {
+        return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
     const store = readStore();
     const config = normalizeConfig(store.config);
     return res.json({
         success: true,
-        config,
-        networkHints: listNetworkHints(Number(process.env.AUTOTOOLS_SERVER_PORT || 3001)),
+        appName: 'Auto Tools',
+        version: process.env.npm_package_version || '1.0.0',
+        status: config.remoteAccessEnabled ? 'remote-enabled' : 'local-only',
     });
 });
 

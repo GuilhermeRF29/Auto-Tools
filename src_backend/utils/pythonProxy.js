@@ -14,7 +14,7 @@
  * SEGURANÇA: rawCommand vem do código-fonte (não de input do usuário).
  * Argumentos são passados via sys.argv (não interpolados no código).
  */
-import { spawn, exec } from 'child_process';
+import { spawn } from 'child_process';
 import readline from 'readline';
 import { platform } from 'os';
 import { getRootDir, PYTHON_PATH } from '../config.js';
@@ -163,19 +163,28 @@ export async function* runPythonCmdStream(rawCommand, args = []) {
  * @returns ChildProcess instance (unpromisified) so we can attach events (for automations).
  */
 export const spawnPythonScript = (scriptPath, args = []) => {
-  // Para scripts, injetamos o caminho via variável de ambiente ou via wrapper -c se necessário.
-  // Como scripts .py geralmente são chamados via spawn direto, garantimos que o CWD está correto
-  // e o PYTHONPATH está setado nas opções (embora o Python portátil possa ignorar PYTHONPATH).
-  // Se o PYTHONPATH falhar, os scripts precisarão fazer o sys.path.append manualmente ou
-  // usaremos um wrapper aqui. Para agora, confiamos no CWD e no PYTHONPATH configurado.
-  return spawn(getPythonCmd(), [scriptPath, ...args], getSpawnOptions());
+  // O uso da flag '-u' (unbuffered) é CRÍTICO. 
+  // Sem isso, o Python cria um buffer do stdout quando roda como child process
+  // e o frontend fica travado sem receber logs em tempo real.
+  return spawn(getPythonCmd(), ["-u", scriptPath, ...args], getSpawnOptions());
 };
 
-export const execCmd = (cmd) => {
+export const execCmd = (cmd, args = []) => {
   return new Promise((resolve, reject) => {
-    exec(cmd, { cwd: getRootDir() }, (error, stdout, stderr) => {
-      if (error) return reject(error);
+    const child = spawn(cmd, args, {
+      cwd: getRootDir(),
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`Exit code ${code}: ${stderr}`));
       resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
     });
+    child.on('error', reject);
   });
 };

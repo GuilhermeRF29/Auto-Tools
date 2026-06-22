@@ -14,10 +14,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { pickDirectory } from '../utils/nativeDialogs';
 import {
   Play, CheckCircle, FileSpreadsheet, Loader2,
-  ChevronRight, Clock, X, PlayCircle, Bus,
+  ChevronDown, ChevronRight, Clock, X, PlayCircle, Bus,
   Navigation, Download, LayoutDashboard, Search
 } from 'lucide-react';
 import { useDialog } from '../context/DialogContext';
+import { cn } from '../utils/cn';
 import type { RunningTask, SuccessAnimationStyle, AnimationIntensity } from '../types';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -25,6 +26,101 @@ import Modal from '../components/Modal';
 import PulseHighlight from '../components/PulseHighlight';
 import CustomDropdown from '../components/CustomDropdown';
 import CustomDatePicker from '../components/CustomDatePicker';
+
+function getWeekNumber(date: Date): number {
+  const startOfYear = new Date(date.getFullYear(), 0, 1);
+  const diff = date.getTime() - startOfYear.getTime();
+  const oneWeek = 604800000;
+  return Math.ceil((diff + (startOfYear.getDay() || 7) * 86400000) / oneWeek);
+}
+
+const MultiSelect = ({
+  label,
+  options,
+  selected,
+  onToggle,
+  onSelectAll,
+  onClear,
+}: {
+  label: string;
+  options: Array<{ label: string; value: string }>;
+  selected: Set<string>;
+  onToggle: (value: string) => void;
+  onSelectAll: () => void;
+  onClear: () => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  return (
+    <div className="space-y-1.5" ref={ref}>
+      <label className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</label>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          className={cn(
+            'w-full rounded-2xl border-2 border-slate-100 bg-slate-50 px-3 py-3 text-left text-sm font-bold text-slate-700 shadow-sm transition-all',
+            open ? 'border-blue-600 ring-4 ring-blue-500/10' : 'hover:border-slate-300',
+          )}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="truncate">{selected.size}/{options.length} selecionados</span>
+            <ChevronDown size={16} className={cn('text-slate-400 transition-transform', open && 'rotate-180 text-blue-600')} />
+          </div>
+        </button>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            className="absolute z-[700] mt-2 w-full rounded-2xl border-2 border-slate-100 bg-white p-2 shadow-2xl"
+          >
+            <div className="mb-2 flex items-center justify-between px-2">
+              <button type="button" onClick={onSelectAll} className="text-[10px] font-black uppercase tracking-wider text-blue-600 hover:text-blue-800">
+                Marcar todos
+              </button>
+              <button type="button" onClick={onClear} className="text-[10px] font-black uppercase tracking-wider text-slate-500 hover:text-slate-700">
+                Limpar
+              </button>
+            </div>
+            <div className="max-h-[240px] overflow-y-auto custom-scrollbar">
+              {options.map((option) => {
+                const isActive = selected.has(option.value);
+                return (
+                  <button
+                    type="button"
+                    key={option.value}
+                    onClick={() => onToggle(option.value)}
+                    className={cn(
+                      'flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-bold transition-colors',
+                      isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50',
+                    )}
+                  >
+                    <span className={cn('inline-flex h-4 w-4 items-center justify-center rounded border text-[10px]', isActive ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300')}>
+                      {isActive ? 'x' : ''}
+                    </span>
+                    <span className="truncate">{option.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 interface ReportsViewProps {
   highlightId?: string | null;
@@ -142,10 +238,16 @@ const ReportsView = ({
   const [dataFinal, setDataFinal] = useState<Date | null>(null);
   const [dataInicialBase, setDataInicialBase] = useState<Date | null>(null);
   const [dataFinalBase, setDataFinalBase] = useState<Date | null>(null);
-  const [defaultDates, setDefaultDates] = useState<{ ini: Date, fim: Date } | null>(null);
+  const [defaultDates, setDefaultDates] = useState<{ ini: Date, fim: Date, baseIni?: Date, baseFim?: Date } | null>(null);
   const isADMSelected = selectedReport === 'Relatório de Demandas';
   const isSRSelected = selectedReport === 'Relatório BASE RIO X SP';
   const isBuscaDadosSelected = selectedReport === 'Relatório Performance de Canais';
+  const isWoWSelected = selectedReport === 'Apresentação WoW';
+  const [shareCanais, setShareCanais] = useState(false);
+  const [selectedWeeksSet, setSelectedWeeksSet] = useState<Set<string>>(new Set());
+  const [showBrowser, setShowBrowser] = useState(false);
+  const [buscaDadosModoExtracao, setBuscaDadosModoExtracao] = useState<'mensal' | 'consolidado'>('mensal');
+  const [numWorkers, setNumWorkers] = useState(2);
   const isBuscaDadosCustomMode = isBuscaDadosSelected && configPeriodo === 'custom';
   const isSRTreatmentWithoutDownload = isSRSelected
     && configPeriodo === 'custom'
@@ -153,6 +255,7 @@ const ReportsView = ({
   const showSREmailDateRange = isSRSelected && !isSRTreatmentWithoutDownload;
   const showActionPicker = configPeriodo === 'custom' && !isBuscaDadosSelected;
   const showAdvancedPaths = isBuscaDadosCustomMode || (configPeriodo === 'custom' && configAcao !== 'completo');
+  const isWoWCustomMode = isWoWSelected && configPeriodo === 'custom';
 
   /** Lista de relatórios disponíveis com metadados. */
   const reports = [
@@ -160,6 +263,7 @@ const ReportsView = ({
     { id: 'ebus_new', name: 'Relatório Revenue', desc: 'Processamento de dados do eBus e receitas.', time: '~8 min', icon: <Bus size={18} /> },
     { id: 'sr_new', name: 'Relatório BASE RIO X SP', desc: 'Base consolidada das operações e ocupações.', time: '~12 min', icon: <Navigation size={18} /> },
     { id: 'busca_dados', name: 'Relatório Performance de Canais', desc: 'Extração no BI com atualização comparativa mês a mês.', time: '~20 min', icon: <LayoutDashboard size={18} /> },
+    { id: 'new_wow', name: 'Apresentação WoW', desc: 'Geração de prints e montagem de slides WoW.', time: '~5 min', icon: <LayoutDashboard size={18} /> },
   ];
 
   /**
@@ -178,23 +282,43 @@ const ReportsView = ({
     const ultimoDiaFechado = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1);
     let ini = hoje;
     let fim = hoje;
+    let baseIni = ini;
+    let baseFim = fim;
 
     if (name === 'Relatório de Demandas') {
       ini = new Date(hoje.getFullYear(), 0, 1);
       fim = new Date(hoje.getFullYear(), 11, 31);
+      baseIni = ini;
+      baseFim = fim;
     } else if (name === 'Relatório Revenue') {
       ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
       fim = new Date(hoje.getFullYear(), hoje.getMonth() + 5, 0);
+      baseIni = ini;
+      baseFim = fim;
+    } else if (name === 'Relatório BASE RIO X SP') {
+      baseIni = ultimoDiaFechado;
+      baseFim = ultimoDiaFechado;
     } else if (name === 'Relatório Performance de Canais') {
       ini = new Date(ultimoDiaFechado.getFullYear(), ultimoDiaFechado.getMonth(), 1);
       fim = ultimoDiaFechado;
+      baseIni = ini;
+      baseFim = fim;
+    } else if (name === 'Apresentação WoW') {
+      setShareCanais(false);
+      setShowBrowser(false);
+      const semanaAtual = getWeekNumber(hoje);
+      const todasSemanas = Array.from({ length: semanaAtual + 5 }, (_, i) => String(i + 1));
+      const defaultWeeks = new Set(
+        Array.from({ length: 4 }, (_, i) => String(semanaAtual - 4 + i))
+      );
+      setSelectedWeeksSet(defaultWeeks);
     }
 
-    setDefaultDates({ ini, fim });
+    setDefaultDates({ ini, fim, baseIni, baseFim });
     setDataInicial(ini);
     setDataFinal(fim);
-    setDataInicialBase(ini);
-    setDataFinalBase(fim);
+    setDataInicialBase(baseIni);
+    setDataFinalBase(baseFim);
 
     // Reset de estados de configuração
     setConfigPeriodo('padrao');
@@ -203,6 +327,8 @@ const ReportsView = ({
     setConfigSaida('padrao');
     setFolderPath('');
     setOutFolderPath('');
+    setShowBrowser(false);
+    setBuscaDadosModoExtracao('mensal');
   };
 
   const toPayloadDate = (value: Date | null) => {
@@ -256,6 +382,28 @@ const ReportsView = ({
       return;
     }
 
+    if (isBuscaDadosSelected && buscaDadosModoExtracao === 'consolidado') {
+      if (!dataInicial || !dataFinal) {
+        await showAlert({
+          title: 'Período Não Informado',
+          message: 'Informe as datas inicial e final do período consolidado.',
+          tone: 'warning',
+        });
+        return;
+      }
+
+      const ultimoDiaMesFinal = new Date(dataFinal.getFullYear(), dataFinal.getMonth() + 1, 0).getDate();
+      const periodoCompleto = dataInicial.getDate() === 1 && dataFinal.getDate() === ultimoDiaMesFinal;
+      if (dataInicial.getFullYear() !== dataFinal.getFullYear() || !periodoCompleto) {
+        await showAlert({
+          title: 'Período Consolidado Inválido',
+          message: 'Use meses completos dentro do mesmo ano, começando no dia 01 e terminando no último dia do mês final.',
+          tone: 'warning',
+        });
+        return;
+      }
+    }
+
     setIsExecuting(true);
 
     const dataBaseIni = dataInicialBase || dataInicial;
@@ -270,11 +418,19 @@ const ReportsView = ({
       pasta_personalizada: effectiveBasePath,
       pasta_saida: effectiveOutFolderPath,
       periodo: configPeriodo,
+      modo_extracao: isBuscaDadosSelected ? buscaDadosModoExtracao : null,
       data_ini: isSRTreatmentWithoutDownload ? null : toPayloadDate(dataInicial),
       data_fim: isSRTreatmentWithoutDownload ? null : toPayloadDate(dataFinal),
       data_ini_base: isSRSelected ? toPayloadDate(dataBaseIni) : null,
       data_fim_base: isSRSelected ? toPayloadDate(dataBaseFim) : null,
-      servico_credencial: isBuscaDadosSelected ? 'Busca Dados BI' : null,
+      servico_credencial: isBuscaDadosSelected ? 'Busca Dados BI' : (isWoWSelected ? 'Power BI WoW' : null),
+      share_canais: isWoWSelected ? shareCanais : null,
+      semanas_wow: isWoWSelected ? Array.from(selectedWeeksSet) : null,
+      headless: !showBrowser,
+      num_workers: isWoWSelected ? numWorkers : null,
+      pasta_imagens: isWoWSelected && configAcao === 'apenas_apresentacao'
+        ? (folderPath.trim() || null)
+        : null,
     };
 
     const jobId = await onStartAutomation(payload);
@@ -357,6 +513,9 @@ const ReportsView = ({
         if (typeof params.pasta_personalizada === 'string') setFolderPath(params.pasta_personalizada);
         if (typeof params.pasta_saida === 'string') setOutFolderPath(params.pasta_saida);
         if (params.data_ini || params.data_fim) setConfigPeriodo('custom');
+        if (params.modo_extracao === 'consolidado' || params.modo_extracao === 'mensal') {
+          setBuscaDadosModoExtracao(params.modo_extracao);
+        }
       }
 
       rrUsed();
@@ -663,8 +822,8 @@ const ReportsView = ({
                       if (p.id === 'padrao' && defaultDates) {
                         setDataInicial(defaultDates.ini);
                         setDataFinal(defaultDates.fim);
-                        setDataInicialBase(defaultDates.ini);
-                        setDataFinalBase(defaultDates.fim);
+                        setDataInicialBase(defaultDates.baseIni || defaultDates.ini);
+                        setDataFinalBase(defaultDates.baseFim || defaultDates.fim);
                       } else {
                         setDataInicial(null);
                         setDataFinal(null);
@@ -681,7 +840,62 @@ const ReportsView = ({
             </div>
 
             {/* Seletores de data */}
-            {isSRSelected ? (
+            {isWoWSelected ? (
+              <div className="space-y-4 animate-in fade-in duration-300">
+                {(() => {
+                  const hoje = new Date();
+                  const semanaAtual = getWeekNumber(hoje);
+                  const todasSemanas = Array.from({ length: semanaAtual + 5 }, (_, i) => String(i + 1));
+                  const weekOptions = todasSemanas.map(w => ({ label: `Semana ${w}`, value: w }));
+                  return configPeriodo === 'padrao' ? (
+                    <div className="space-y-2">
+                      <label className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Semanas do Ano (PowerBI)</label>
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs font-medium text-blue-700">
+                        Últimas 4 semanas selecionadas automaticamente ({Array.from(selectedWeeksSet).join(', ')}).
+                      </div>
+                    </div>
+                  ) : (
+                    <MultiSelect
+                      label="Semanas do Ano (PowerBI)"
+                      options={weekOptions}
+                      selected={selectedWeeksSet}
+                      onToggle={(w) => {
+                        setSelectedWeeksSet(prev => {
+                          const next = new Set(prev);
+                          if (next.has(w)) next.delete(w);
+                          else next.add(w);
+                          return next;
+                        });
+                      }}
+                      onSelectAll={() => setSelectedWeeksSet(new Set(todasSemanas))}
+                      onClear={() => setSelectedWeeksSet(new Set())}
+                    />
+                  );
+                })()}
+                {configAcao !== 'apenas_renovar' && (
+                  <div className="flex items-center gap-3 px-1">
+                    <input type="checkbox" id="shareCanais" checked={shareCanais} onChange={e => setShareCanais(e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer" />
+                    <label htmlFor="shareCanais" className="text-xs font-bold text-slate-700 cursor-pointer">Incluir Share de Canais?</label>
+                  </div>
+                )}
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Workers simultâneos</label>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => setNumWorkers(Math.max(1, numWorkers - 1))}
+                      className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-sm font-bold flex items-center justify-center transition-colors">−</button>
+                    <span className="w-8 text-center text-sm font-bold text-slate-700">{numWorkers}</span>
+                    <button type="button" onClick={() => setNumWorkers(Math.min(10, numWorkers + 1))}
+                      className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-sm font-bold flex items-center justify-center transition-colors">+</button>
+                  </div>
+                </div>
+                {configPeriodo === 'custom' && (
+                  <div className="flex items-center gap-3 px-1">
+                    <input type="checkbox" id="showBrowser" checked={showBrowser} onChange={e => setShowBrowser(e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer" />
+                    <label htmlFor="showBrowser" className="text-xs font-bold text-slate-700 cursor-pointer">Exibir janela do navegador</label>
+                  </div>
+                )}
+              </div>
+            ) : isSRSelected ? (
               <div className="space-y-4 animate-in fade-in duration-300">
                 {showSREmailDateRange ? (
                   <div className="space-y-1.5">
@@ -706,15 +920,47 @@ const ReportsView = ({
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 animate-in fade-in duration-300">
-                <CustomDatePicker label="Data Inicial" value={dataInicial} onChange={setDataInicial} disabled={configPeriodo === 'padrao'} />
-                <CustomDatePicker label="Data Final" value={dataFinal} onChange={setDataFinal} align="right" disabled={configPeriodo === 'padrao'} />
+              <div className="space-y-4 animate-in fade-in duration-300">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <CustomDatePicker label="Data Inicial" value={dataInicial} onChange={setDataInicial} disabled={configPeriodo === 'padrao'} />
+                  <CustomDatePicker label="Data Final" value={dataFinal} onChange={setDataFinal} align="right" disabled={configPeriodo === 'padrao'} />
+                </div>
+                <div className="flex items-center gap-3 px-1">
+                  <input type="checkbox" id="showBrowser" checked={showBrowser} onChange={e => setShowBrowser(e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer" />
+                  <label htmlFor="showBrowser" className="text-xs font-bold text-slate-700 cursor-pointer">Exibir janela do navegador</label>
+                </div>
               </div>
             )}
 
             {isBuscaDadosSelected && (
-              <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3">
-                <p className="text-xs font-bold text-blue-700">O período selecionado será dividido automaticamente por mês para extração no BI.</p>
+              <div className="space-y-2">
+                <label className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Forma de Extração</label>
+                <div className="flex items-center gap-1 rounded-2xl border-2 border-slate-100 bg-slate-50 p-1">
+                  {[
+                    { id: 'mensal' as const, label: 'Mês a mês' },
+                    { id: 'consolidado' as const, label: 'Todos de uma vez' },
+                  ].map(option => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setBuscaDadosModoExtracao(option.id)}
+                      className={`flex-1 rounded-xl py-2.5 text-center text-xs font-bold transition-all ${
+                        buscaDadosModoExtracao === option.id
+                          ? 'bg-white text-blue-600 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3">
+                  <p className="text-xs font-bold text-blue-700">
+                    {buscaDadosModoExtracao === 'consolidado'
+                      ? 'Seleciona todos os meses e dias em uma única extração. Use meses completos dentro do mesmo ano.'
+                      : 'O período será dividido automaticamente e processado mês a mês.'}
+                  </p>
+                </div>
               </div>
             )}
 
@@ -739,6 +985,12 @@ const ReportsView = ({
                           { value: 'tratamento', label: 'Apenas tratamento' },
                           { value: 'tratamento_envio', label: 'Tratamento + envio' },
                           { value: 'arquivo_envio', label: 'Só envio' },
+                        ]
+                      : isWoWSelected ? [
+                          { value: 'completo', label: 'Processo completo' },
+                          { value: 'download_imagens', label: 'Apenas baixar imagens' },
+                          { value: 'apenas_apresentacao', label: 'Apenas criar apresentação' },
+                          { value: 'apenas_renovar', label: 'Apenas renovar login' }
                         ]
                       : [
                           { value: 'completo', label: 'Processo completo' },
@@ -768,7 +1020,87 @@ const ReportsView = ({
               )}
 
               {/* Base e Saída (apenas para custom e não completo) */}
-              {showAdvancedPaths && (
+              {isWoWCustomMode ? (
+                <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                  {configAcao === 'apenas_apresentacao' && (
+                    <div className="space-y-3">
+                      <label className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Local das imagens</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={folderPath}
+                          onChange={(e) => setFolderPath(e.target.value)}
+                          placeholder="C:\\Caminho\\Para\\Imagens..."
+                          className="flex-1 min-w-0 bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const path = await pickDirectory();
+                              if (path) setFolderPath(path);
+                            } catch (e) {
+                              await showAlert({
+                                title: 'Falha ao Abrir Explorador',
+                                message: 'Servidor py local não rodando. Cole o caminho na caixa de texto.',
+                                tone: 'warning',
+                              });
+                            }
+                          }}
+                          className="p-3.5 flex-shrink-0 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-600 hover:text-white transition-colors"
+                          title="Selecionar Pasta"
+                        >
+                          <Search size={20} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {configAcao !== 'apenas_renovar' && (
+                    <div className={`space-y-3 ${configAcao === 'apenas_apresentacao' ? 'pt-3 border-t border-slate-100' : ''}`}>
+                      <CustomDropdown
+                        label="Local de Saída"
+                        value={configSaida}
+                        onChange={setConfigSaida}
+                        icon={Download}
+                        options={[
+                          { value: 'padrao', label: 'Pasta padrão' },
+                          { value: 'personalizada', label: 'Escolher pasta de saída...' },
+                        ]}
+                      />
+                      {configSaida === 'personalizada' && (
+                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                          <input
+                            type="text"
+                            value={outFolderPath}
+                            onChange={(e) => setOutFolderPath(e.target.value)}
+                            placeholder="C:\\Caminho\\Para\\Saida..."
+                            className="flex-1 min-w-0 bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const path = await pickDirectory();
+                                if (path) setOutFolderPath(path);
+                              } catch (e) {
+                                 await showAlert({
+                                   title: 'Falha ao Abrir Explorador',
+                                   message: 'Servidor py local não rodando. Cole o caminho na caixa de texto.',
+                                   tone: 'warning',
+                                 });
+                              }
+                            }}
+                            className="p-3.5 flex-shrink-0 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-600 hover:text-white transition-colors"
+                            title="Selecionar Pasta"
+                          >
+                            <Search size={20} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : showAdvancedPaths && (
                 <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
                   {(isBuscaDadosSelected || configAcao !== 'download') && (
                     <div className="space-y-3">

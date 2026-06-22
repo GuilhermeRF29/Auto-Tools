@@ -3,7 +3,8 @@ import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import {
   Home, FileText, Lock, Search, User,
   CheckCircle, Loader2, Calculator, LogOut,
-  X, Settings, Menu, BarChart3, Wrench, BookOpen
+  X, Settings, Menu, BarChart3, Wrench, BookOpen,
+  Download, Activity, RefreshCw
 } from 'lucide-react';
 
 import logoApp from '../assets/logo_app.png';
@@ -11,9 +12,12 @@ import { cn } from '../utils/cn';
 import type { View } from '../types';
 
 import { useAuth } from '../context/AuthContext';
-import { useUI } from '../context/UIContext';
+import { useNavigation } from '../context/NavigationContext';
+import { useUIPreferences } from '../context/UIPreferencesContext';
+import { useUpdate } from '../context/UpdateContext';
 import { useTasks } from '../context/TaskContext';
 import WindowControls from '../components/WindowControls';
+import versionData from '../../version.json';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -36,11 +40,15 @@ export default function MainLayout({ children }: MainLayoutProps) {
     isSidebarOpen, setIsSidebarOpen,
     isSearchOpen, setIsSearchOpen,
     isProfileOpen, setIsProfileOpen,
-    animationsEnabled,
-    updateStatus
-  } = useUI();
+  } = useNavigation();
+  const { animationsEnabled } = useUIPreferences();
+  const { updateStatus, applyUpdate } = useUpdate();
 
   const [isMaximized, setIsMaximized] = useState(false);
+  const [isTasksOpen, setIsTasksOpen] = useState(false);
+  const [isUpdateOpen, setIsUpdateOpen] = useState(false);
+  const [showUpdateToast, setShowUpdateToast] = useState(false);
+
   const runtime = (window as any).autoToolsRuntime;
   const isElectron = runtime?.isElectron;
   const hasFrame = runtime?.hasFrame;
@@ -54,16 +62,45 @@ export default function MainLayout({ children }: MainLayoutProps) {
   }, [isElectron, runtime]);
 
   const profileRef = useRef<HTMLDivElement>(null);
+  const tasksRef = useRef<HTMLDivElement>(null);
+  const updateRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
         setIsProfileOpen(false);
       }
+      if (tasksRef.current && !tasksRef.current.contains(event.target as Node)) {
+        setIsTasksOpen(false);
+      }
+      if (updateRef.current && !updateRef.current.contains(event.target as Node)) {
+        setIsUpdateOpen(false);
+      }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [setIsProfileOpen]);
+
+  useEffect(() => {
+    if (updateStatus.hasUpdate && currentView !== 'dashboard') {
+      setShowUpdateToast(true);
+      const timer = setTimeout(() => setShowUpdateToast(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [updateStatus.hasUpdate, currentView]);
+
+  const adjustPopoverPosition = (node: HTMLDivElement | null) => {
+    if (node) {
+      requestAnimationFrame(() => {
+        node.style.transform = 'none';
+        const rect = node.getBoundingClientRect();
+        const overflowRight = rect.right - (window.innerWidth - 24); // margem de segurança de 24px
+        if (overflowRight > 0) {
+          node.style.transform = `translateX(-${overflowRight}px)`;
+        }
+      });
+    }
+  };
 
   return (
     <MotionConfig reducedMotion={animationsEnabled ? 'never' : 'always'}>
@@ -202,7 +239,173 @@ export default function MainLayout({ children }: MainLayoutProps) {
               </div>
 
               {/* Controles da Direita */}
-              <div className="flex items-center gap-2 sm:gap-4">
+              <div className="flex items-center gap-2 sm:gap-4 relative">
+                
+                {/* Ícone de Tarefas (Aparece se houver tarefas rodando/concluídas na sessão) */}
+                {runningTasks.length > 0 && (
+                  <div className="relative no-drag" ref={tasksRef}>
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => { setIsTasksOpen(!isTasksOpen); setIsUpdateOpen(false); }}
+                      className={cn(
+                        "w-9 h-9 sm:w-10 sm:h-10 rounded-2xl flex items-center justify-center transition-all border relative",
+                        isTasksOpen ? "bg-slate-800 text-white border-slate-700 shadow-sm" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300"
+                      )}
+                    >
+                      {runningTasks.some(t => t.status === 'running') ? (
+                        <>
+                          <Activity size={18} className="sm:size-[20px]" />
+                          <span className="absolute top-2 right-2 w-2 h-2 bg-blue-500 rounded-full animate-ping" />
+                          <span className="absolute top-2 right-2 w-2 h-2 bg-blue-600 rounded-full" />
+                        </>
+                      ) : (
+                        <CheckCircle size={18} className="sm:size-[20px] text-green-600" />
+                      )}
+                    </motion.button>
+
+                    <AnimatePresence>
+                      {isTasksOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10, x: '-33%', scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, x: '-33%', scale: 1 }}
+                          exit={{ opacity: 0, y: 10, x: '-33%', scale: 0.95 }}
+                          transition={{ type: "spring", duration: 0.3, bounce: 0.3 }}
+                          style={{ transformOrigin: 'top center' }}
+                          className="absolute left-1/2 top-full mt-3 z-[100]"
+                        >
+                          <div 
+                            ref={adjustPopoverPosition}
+                            className="w-80 bg-white/95 backdrop-blur-xl rounded-[2rem] shadow-2xl border border-slate-200 overflow-hidden max-h-[400px] flex flex-col"
+                          >
+                          <div className="px-5 py-3.5 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between">
+                            <span className="text-sm font-black text-slate-800 uppercase tracking-tight">Atividades</span>
+                            <button
+                              onClick={() => { setCurrentView('reports'); setIsTasksOpen(false); }}
+                              className="text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-blue-800 transition-colors px-2 py-1 rounded-lg hover:bg-blue-50"
+                            >
+                              Ver tudo
+                            </button>
+                          </div>
+                          <div className="p-3 space-y-2 overflow-y-auto custom-scrollbar flex-1">
+                            {runningTasks.map(task => (
+                              <div key={task.id} className={cn(
+                                "rounded-3xl p-4 border relative overflow-hidden transition-all",
+                                task.status === 'completed' ? 'border-green-100 bg-green-50/50' : 
+                                task.status === 'failed' || task.status === 'cancelled' ? 'border-red-100 bg-red-50/50' : 
+                                'border-blue-100 bg-blue-50/30'
+                              )}>
+                                <div
+                                  className={cn("absolute top-0 left-0 bottom-0 z-0 transition-all duration-700 ease-out opacity-15",
+                                    task.status === 'completed' ? 'bg-green-500' : 
+                                    task.status === 'failed' || task.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-500'
+                                  )}
+                                  style={{ width: `${task.progress}%` }}
+                                />
+                                <div className="relative z-10 flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                                    <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 text-white transition-colors",
+                                      task.status === 'completed' ? 'bg-green-500' : 
+                                      task.status === 'failed' || task.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-600'
+                                    )}>
+                                      {task.status === 'completed' ? <CheckCircle size={14} /> :
+                                        task.status === 'failed' || task.status === 'cancelled' ? <X size={14} /> :
+                                        <Loader2 size={14} className="animate-spin" />}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-[11.5px] font-bold text-slate-700 truncate leading-tight">{task.name}</p>
+                                      <p className="text-[10px] font-bold text-slate-400 truncate mt-0.5">
+                                        {task.message || `${Math.round(task.progress)}%`}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  {task.status === 'running' && (
+                                    <button
+                                      onClick={() => cancelAutomation(task.id)}
+                                      className="p-1 text-slate-300 hover:text-red-500 transition-colors flex-shrink-0"
+                                      title="Cancelar"
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+
+                {/* Ícone de Updates (Aparece se houver atualização disponivel) */}
+                {updateStatus.hasUpdate && (
+                  <div className="relative no-drag" ref={updateRef}>
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => { setIsUpdateOpen(!isUpdateOpen); setIsTasksOpen(false); }}
+                      className={cn(
+                        "w-9 h-9 sm:w-10 sm:h-10 rounded-2xl flex flex-col items-center justify-center transition-all border relative gap-[1px]",
+                        isUpdateOpen ? "bg-emerald-600 text-white border-emerald-500 shadow-sm" : "bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100"
+                      )}
+                    >
+                      <Download size={16} className="sm:size-[18px]" />
+                      <div className={cn("w-3 h-0.5 rounded-full", isUpdateOpen ? "bg-white" : "bg-emerald-600")} />
+                    </motion.button>
+
+                    <AnimatePresence>
+                      {showUpdateToast && !isUpdateOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -10, scale: 0.9 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -10, scale: 0.9 }}
+                          className="absolute left-1/2 -translate-x-1/2 top-full mt-2 whitespace-nowrap bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg shadow-lg z-[100]"
+                        >
+                          Nova atualização
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <AnimatePresence>
+                      {isUpdateOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10, x: '-33%', scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, x: '-33%', scale: 1 }}
+                          exit={{ opacity: 0, y: 10, x: '-33%', scale: 0.95 }}
+                          transition={{ type: "spring", duration: 0.3, bounce: 0.3 }}
+                          style={{ transformOrigin: 'top center' }}
+                          className="absolute left-1/2 top-full mt-3 z-[100]"
+                        >
+                          <div 
+                            ref={adjustPopoverPosition}
+                            className="w-72 bg-white/95 backdrop-blur-xl rounded-[2rem] shadow-2xl border border-slate-200 overflow-hidden"
+                          >
+                          <div className="p-5 flex items-start gap-4">
+                            <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                              <RefreshCw className="text-emerald-600" size={20} />
+                            </div>
+                            <div className="flex-1">
+                              <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight mb-1">Atualização</h4>
+                              <p className="text-[11px] text-slate-500 leading-normal mb-3">
+                                Versão <span className="font-bold text-slate-800">{updateStatus.remoteVersion}</span> disponível.
+                              </p>
+                              <button 
+                                onClick={applyUpdate}
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
+                              >
+                                <Download size={12} /> Reiniciar e Atualizar
+                              </button>
+                            </div>
+                          </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+
                 {/* Menu de perfil */}
                 <div className="flex items-center gap-2 sm:gap-4 relative no-drag" ref={profileRef}>
                 <div className="text-right hidden xs:block cursor-pointer" onClick={() => setIsProfileOpen(!isProfileOpen)}>
@@ -225,12 +428,17 @@ export default function MainLayout({ children }: MainLayoutProps) {
                 <AnimatePresence>
                   {isProfileOpen && (
                     <motion.div
-                      initial={{ opacity: 0, y: 10, scale: 0.95, transformOrigin: 'top right' }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      initial={{ opacity: 0, y: 10, x: '-33%', scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, x: '-33%', scale: 1 }}
+                      exit={{ opacity: 0, y: 10, x: '-33%', scale: 0.95 }}
                       transition={{ type: "spring", duration: 0.3, bounce: 0.3 }}
-                      className="absolute right-0 top-full mt-3 w-64 bg-white/95 backdrop-blur-xl rounded-[2rem] shadow-2xl border border-slate-100 overflow-hidden z-[100]"
+                      style={{ transformOrigin: 'top center' }}
+                      className="absolute left-1/2 top-full mt-3 z-[100]"
                     >
+                      <div 
+                        ref={adjustPopoverPosition}
+                        className="w-64 bg-white/95 backdrop-blur-xl rounded-[2rem] shadow-2xl border border-slate-100 overflow-hidden"
+                      >
                       <div className="p-6 bg-slate-50/50 border-b border-slate-50 flex items-center gap-4">
                         <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-lg shadow-blue-200">
                           <User size={24} />
@@ -285,8 +493,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
 
                       <div className="p-3 bg-slate-50/50 text-center">
                         <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">
-                          AutoTools v{updateStatus.currentVersion || '1.8.6'}
+                          AutoTools v{updateStatus.currentVersion || versionData.version}
                         </p>
+                      </div>
                       </div>
                     </motion.div>
                   )}
@@ -296,79 +505,11 @@ export default function MainLayout({ children }: MainLayoutProps) {
             </div>
           </header>
 
-            {/* Widget flutuante global de progresso (visível em qualquer view exceto reports) */}
-            {runningTasks.length > 0 && currentView !== 'reports' && (
-              <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 fade-in duration-500">
-                <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200 p-4 w-80 max-h-[320px] overflow-y-auto custom-scrollbar">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="relative">
-                        <Loader2 size={16} className="text-blue-600 animate-spin" />
-                      </div>
-                      <span className="text-xs font-black text-slate-600 uppercase tracking-widest">
-                        {runningTasks.filter(t => t.status === 'running').length} em execução
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setCurrentView('reports')}
-                      className="text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-blue-800 transition-colors px-2 py-1 rounded-lg hover:bg-blue-50"
-                    >
-                      Ver tudo
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {runningTasks.map(task => (
-                      <div key={task.id} className={`rounded-xl p-3 border relative overflow-hidden transition-all
-                        ${task.status === 'completed' ? 'border-green-100 bg-green-50/50' : 
-                          task.status === 'failed' || task.status === 'cancelled' ? 'border-red-100 bg-red-50/50' : 
-                          'border-blue-100 bg-blue-50/30'}`}
-                      >
-                        <div
-                          className={`absolute top-0 left-0 bottom-0 z-0 transition-all duration-700 ease-out opacity-15
-                            ${task.status === 'completed' ? 'bg-green-500' : 
-                              task.status === 'failed' || task.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-500'}`}
-                          style={{ width: `${task.progress}%` }}
-                        />
-                        <div className="relative z-10 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0 flex-1">
-                            <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 text-white transition-colors
-                              ${task.status === 'completed' ? 'bg-green-500' : 
-                                task.status === 'failed' || task.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-600'}`}
-                            >
-                              {task.status === 'completed' ? <CheckCircle size={12} /> :
-                                task.status === 'failed' || task.status === 'cancelled' ? <X size={12} /> :
-                                <Loader2 size={12} className="animate-spin" />}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-[11px] font-bold text-slate-700 truncate">{task.name}</p>
-                              <p className="text-[10px] font-bold text-slate-400 truncate">
-                                {task.message || `${Math.round(task.progress)}%`}
-                              </p>
-                            </div>
-                          </div>
-                          {task.status === 'running' && (
-                            <button
-                              onClick={() => cancelAutomation(task.id)}
-                              className="p-1 text-slate-300 hover:text-red-500 transition-colors flex-shrink-0"
-                              title="Cancelar"
-                            >
-                              <X size={14} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Área de conteúdo passível com animação */}
             <main className="flex-1 overflow-y-auto p-4 sm:p-8 custom-scrollbar relative z-0">
               <div className="max-w-6xl mx-auto">
-                <AnimatePresence mode="wait">
-                  {children}
-                </AnimatePresence>
+                {children}
               </div>
             </main>
           </div>

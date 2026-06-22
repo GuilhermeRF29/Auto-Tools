@@ -4,7 +4,9 @@ import { motion, AnimatePresence } from 'motion/react';
 // Contexts
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { TaskProvider, useTasks } from './context/TaskContext';
-import { UIProvider, useUI } from './context/UIContext';
+import { NavigationProvider, useNavigation } from './context/NavigationContext';
+import { UIPreferencesProvider, useUIPreferences } from './context/UIPreferencesContext';
+import { UpdateProvider, useUpdate } from './context/UpdateContext';
 import { DialogProvider, useDialog } from './context/DialogContext';
 
 // Layout & Components
@@ -53,13 +55,15 @@ function AppContent() {
     isSearchOpen, setIsSearchOpen,
     handleDeepSelect, historyItems,
     reRunData, setReRunData, highlightId,
+    handleReRunFromDashboard
+  } = useNavigation();
+  const { 
     animationsEnabled, successAnimationStyle,
     successAnimationDurationSec, successAnimationIntensity,
     setAnimationsEnabled, setSuccessAnimationStyle,
     setSuccessAnimationDurationSec, setSuccessAnimationIntensity,
-    windowsHelloEnabled, setWindowsHelloEnabled,
-    handleReRunFromDashboard
-  } = useUI();
+    windowsHelloEnabled, setWindowsHelloEnabled 
+  } = useUIPreferences();
   const { runningTasks, startAutomation, cancelAutomation } = useTasks();
   const [windowsHelloBusy, setWindowsHelloBusy] = useState(false);
 
@@ -276,24 +280,37 @@ function AppContent() {
         const data = await response.json();
         if (disposed) return;
 
-        setServerStatus(data?.status === 'ok' ? 'online' : 'offline');
-        setServerInfo(data);
+        const newStatus = data?.status === 'ok' ? 'online' : 'offline';
+        setServerStatus(prev => prev === newStatus ? prev : newStatus);
+        setServerInfo(prev => {
+          if (prev && 
+              prev.status === data.status && 
+              prev.version === data.version && 
+              prev.dbStatus === data.dbStatus && 
+              prev.dbMessage === data.dbMessage) {
+            return prev;
+          }
+          return data;
+        });
       } catch {
         if (disposed) return;
-        setServerStatus('offline');
-        setServerInfo((prev) => ({
-          version: prev?.version || 'AutoTools API',
-          status: 'offline',
-          dbStatus: 'offline',
-          dbMessage: 'Sem comunicação com o backend no momento.',
-        }));
+        setServerStatus(prev => prev === 'offline' ? prev : 'offline');
+        setServerInfo((prev) => {
+          if (prev && prev.status === 'offline' && prev.dbStatus === 'offline') return prev;
+          return {
+            version: prev?.version || 'AutoTools API',
+            status: 'offline',
+            dbStatus: 'offline',
+            dbMessage: 'Sem comunicação com o backend no momento.',
+          };
+        });
       } finally {
         window.clearTimeout(timeoutId);
       }
     };
 
     checkServerStatus();
-    const intervalId = window.setInterval(checkServerStatus, 10000);
+    const intervalId = window.setInterval(checkServerStatus, 60000);
 
     return () => {
       disposed = true;
@@ -411,9 +428,13 @@ export default function App() {
     <DialogProvider>
       <AuthProvider>
         <TaskProvider>
-          <UIProvider>
-            <AppContent />
-          </UIProvider>
+          <NavigationProvider>
+            <UIPreferencesProvider>
+              <UpdateProvider>
+                <AppContent />
+              </UpdateProvider>
+            </UIPreferencesProvider>
+          </NavigationProvider>
         </TaskProvider>
       </AuthProvider>
     </DialogProvider>

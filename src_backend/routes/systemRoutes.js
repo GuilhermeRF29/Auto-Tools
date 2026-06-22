@@ -7,6 +7,7 @@
 import { Router } from 'express';
 import { runPythonCmd, execCmd, spawnPythonScript } from '../utils/pythonProxy.js';
 import { getRootDir, BACKUP_DIR } from '../config.js';
+import { isPathSafe } from '../utils/pathValidator.js';
 import path from 'path';
 import fs from 'fs';
 import { getLocalIp } from '../utils/networkUtils.js';
@@ -14,17 +15,6 @@ import { getTunnelUrl } from './tunnelRoutes.js';
 import QRCode from 'qrcode';
 
 const router = Router();
-
-/**
- * Valida se um caminho está dentro de um diretório permitido.
- * Previne path traversal (ex: ../../etc/passwd).
- */
-const isPathSafe = (filePath, allowedDir) => {
-    if (!filePath || !allowedDir) return false;
-    const resolvedFile = path.resolve(filePath);
-    const resolvedDir = path.resolve(allowedDir);
-    return resolvedFile.startsWith(resolvedDir + path.sep) || resolvedFile === resolvedDir;
-};
 
 const runExtensionConverter = (payloadBase64) => {
     return new Promise((resolve, reject) => {
@@ -64,11 +54,10 @@ const runExtensionConverter = (payloadBase64) => {
 
 // EXPLORER: Abrir explorador de pastas do Windows nativo
 router.get('/abrir-explorador-pastas', async (req, res) => {
-    // PowerShell snippet para abrir seletor de pasta nativo
-    const psCommand = `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; if($f.ShowDialog() -eq 'OK'){ Write-Host $f.SelectedPath }"`;
+    const psScript = `Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; if($f.ShowDialog() -eq 'OK'){ Write-Host $f.SelectedPath }`;
     
     try {
-        const { stdout } = await execCmd(psCommand);
+        const { stdout } = await execCmd('powershell.exe', ['-NoProfile', '-Command', psScript]);
         return res.json({ caminho: stdout.trim() || '' });
     } catch (e) {
         console.error(`[EXPLORER_ERROR]`, e);
@@ -78,11 +67,10 @@ router.get('/abrir-explorador-pastas', async (req, res) => {
 
 // EXPLORER: Abrir seletor nativo de arquivos Excel
 router.get('/abrir-explorador-arquivos-excel', async (req, res) => {
-    // PowerShell snippet para abrir seletor de arquivos Excel
-    const psCommand = `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Filter = 'Arquivos Excel (*.xlsx;*.xls;*.xlsm)|*.xlsx;*.xls;*.xlsm'; $f.Multiselect = $true; if($f.ShowDialog() -eq 'OK'){ Write-Host ($f.FileNames -join '|') }"`;
+    const psScript = `Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Filter = 'Arquivos Excel (*.xlsx;*.xls;*.xlsm)|*.xlsx;*.xls;*.xlsm'; $f.Multiselect = $true; if($f.ShowDialog() -eq 'OK'){ Write-Host ($f.FileNames -join '|') }`;
 
     try {
-        const { stdout } = await execCmd(psCommand);
+        const { stdout } = await execCmd('powershell.exe', ['-NoProfile', '-Command', psScript]);
         const paths = stdout.trim() ? stdout.trim().split('|').map(p => p.trim()) : [];
         return res.json({ caminhos: paths });
     } catch (e) {
@@ -174,9 +162,9 @@ router.get('/revelar-arquivo', async (req, res) => {
     if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Arquivo não encontrado.' });
     }
-    const cmd = `explorer /select,"${path.normalize(filePath)}"`;
+    const normalizedPath = path.normalize(filePath);
     try {
-        await execCmd(cmd);
+        await execCmd('explorer', ['/select,', normalizedPath]);
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: 'Erro ao abrir explorer' });

@@ -1,11 +1,13 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, CheckCircle2, Download, RefreshCw, XCircle } from 'lucide-react';
-import { useUI } from '../context/UIContext';
+import { useUpdate } from '../context/UpdateContext';
+import { useNavigation } from '../context/NavigationContext';
 import Button from './Button';
 
 export default function UpdateOverlay() {
-  const { updateStatus, applyUpdate, currentView } = useUI();
+  const { updateStatus, applyUpdate } = useUpdate();
+  const { currentView } = useNavigation();
 
   if (!updateStatus.isUpdating && !updateStatus.hasUpdate) return null;
 
@@ -80,35 +82,6 @@ export default function UpdateOverlay() {
         </motion.div>
       )}
 
-      {/* Notificação flutuante se houver atualização mas não estiver bloqueando */}
-      {!isBlocking && updateStatus.hasUpdate && !hideFloating && (
-        <motion.div
-          initial={{ y: 100, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: 100, opacity: 0 }}
-          className="fixed bottom-8 right-8 z-[500] max-w-sm"
-        >
-          <div className="bg-white rounded-3xl shadow-2xl border border-blue-100 p-6 flex items-start gap-4">
-            <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center flex-shrink-0">
-              <RefreshCw className="text-blue-600" size={24} />
-            </div>
-            <div className="flex-1">
-              <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight mb-1">Atualização Disponível</h4>
-              <p className="text-[11px] text-slate-500 leading-normal mb-4">
-                Uma nova versão (<span className="font-bold text-slate-800">{updateStatus.remoteVersion}</span>) está pronta no GitHub.
-              </p>
-              <div className="flex items-center gap-2">
-                <Button 
-                  onClick={applyUpdate}
-                  className="py-2 px-4 text-[10px] font-black uppercase tracking-widest rounded-xl shadow-lg shadow-blue-500/20"
-                >
-                  <Download size={12} className="mr-2" /> Reiniciar e Atualizar
-                </Button>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      )}
     </AnimatePresence>
   );
 }

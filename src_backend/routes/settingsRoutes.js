@@ -21,41 +21,9 @@ const router = Router();
 router.get('/settings/:userId', async (req, res) => {
     const { userId } = req.params;
 
-    const pyCmd = `
-import sys, json, sqlite3
-from core.banco import DB_PATH
-
-user_id = int(sys.argv[1])
-conn = sqlite3.connect(DB_PATH)
-cursor = conn.cursor()
-
-# Criar tabela se não existir (migração segura)
-cursor.execute('''CREATE TABLE IF NOT EXISTS configuracoes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    chave TEXT NOT NULL,
-    valor TEXT,
-    UNIQUE(user_id, chave)
-)''')
-conn.commit()
-
-# Buscar todas as configurações do usuário
-cursor.execute("SELECT chave, valor FROM configuracoes WHERE user_id = ?", (user_id,))
-rows = cursor.fetchall()
-conn.close()
-
-result = {}
-for chave, valor in rows:
-    try:
-        result[chave] = json.loads(valor)
-    except (json.JSONDecodeError, TypeError):
-        result[chave] = valor
-
-print(json.dumps(result))
-`;
-
     try {
-        const result = await runPythonCmd(pyCmd, [userId]);
+        const pyCmd = `import sys, json; from core.banco import listar_configuracoes; print(json.dumps(listar_configuracoes(int(sys.argv[1])), ensure_ascii=False))`;
+        const result = await runPythonCmd(pyCmd, [String(userId)]);
         res.json({ success: true, settings: result || {} });
     } catch (e) {
         console.error('[SETTINGS_LOAD_ERROR]', e.message);
@@ -75,38 +43,9 @@ router.post('/settings/:userId', async (req, res) => {
         return res.status(400).json({ error: 'Chave de configuração inválida.' });
     }
 
-    const pyCmd = `
-import sys, json, sqlite3
-from core.banco import DB_PATH
-
-user_id = int(sys.argv[1])
-chave = sys.argv[2]
-valor_json = sys.argv[3]
-
-conn = sqlite3.connect(DB_PATH)
-cursor = conn.cursor()
-
-# Criar tabela se não existir
-cursor.execute('''CREATE TABLE IF NOT EXISTS configuracoes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    chave TEXT NOT NULL,
-    valor TEXT,
-    UNIQUE(user_id, chave)
-)''')
-
-# Upsert: INSERT OR REPLACE
-cursor.execute(
-    "INSERT OR REPLACE INTO configuracoes (user_id, chave, valor) VALUES (?, ?, ?)",
-    (user_id, chave, valor_json)
-)
-conn.commit()
-conn.close()
-print('ok')
-`;
-
     try {
-        await runPythonCmd(pyCmd, [userId, key, JSON.stringify(value)]);
+        const pyCmd = `import sys, json; from core.banco import salvar_configuracao; print(json.dumps(salvar_configuracao(int(sys.argv[1]), sys.argv[2], sys.argv[3])))`;
+        await runPythonCmd(pyCmd, [String(userId), key, JSON.stringify(value)]);
         res.json({ success: true });
     } catch (e) {
         console.error('[SETTINGS_SAVE_ERROR]', e.message);
