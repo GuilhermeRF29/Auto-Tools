@@ -160,16 +160,26 @@ def atualizar_planilha_comparativa(
     ano_referencia=2026,
     mes_data=None,
 ):
-    
+    import tempfile
+
     if not os.path.exists(caminho_extracao) or not os.path.exists(caminho_template):
         raise FileNotFoundError("Arquivos base (Extracao ou Gabarito YoY) nao encontrados.")
         
+    caminho_template_path = Path(caminho_template)
+    
+    # Criar uma cópia local temporária para evitar travamentos ou corrupção no Google Drive
+    temp_dir = Path(tempfile.gettempdir())
+    caminho_local_temp = temp_dir / f"{caminho_template_path.stem}.local.{os.getpid()}.{int(time.time() * 1000)}{caminho_template_path.suffix}"
+    
+    print(f"Copiando template para o disco local: {caminho_local_temp}...")
+    shutil.copy2(caminho_template_path, caminho_local_temp)
+    
     print(f"Lendo extrato da automação: {caminho_extracao}...")
     df = pd.read_excel(caminho_extracao)
     df['Ano'] = df['Ano'].astype(str)
     
-    print(f"Acessando Motor de Gravação Segura do Excel para: {caminho_template}...")
-    wb = openpyxl.load_workbook(caminho_template, data_only=False)
+    print(f"Acessando Motor de Gravação Segura do Excel para: {caminho_local_temp}...")
+    wb = openpyxl.load_workbook(caminho_local_temp, data_only=False)
     
     ano_ref = int(ano_referencia)
     nome_aba_alvo = f"COMAPRATIVO {str(ano_ref - 1)[-2:]}X{str(ano_ref)[-2:]} {mes_sigla.upper()}"
@@ -264,18 +274,15 @@ def atualizar_planilha_comparativa(
                     else:
                         celula.number_format = '#,##0.00;[Red]-#,##0.00'
 
-    print("Campos preenchidos. Salvando e validando o arquivo Excel...")
-    caminho_template_path = Path(caminho_template)
-    caminho_temporario = caminho_template_path.with_name(
-        f".{caminho_template_path.stem}.{os.getpid()}.{int(time.time() * 1000)}.tmp{caminho_template_path.suffix}"
-    )
+    print("Campos preenchidos. Salvando e validando o arquivo Excel local...")
     valor_data_esperado = ws["B2"].value
 
     try:
-        wb.save(caminho_temporario)
+        wb.save(caminho_local_temp)
         wb.close()
 
-        wb_validacao = openpyxl.load_workbook(caminho_temporario, data_only=False, read_only=True)
+        # Validar cópia local
+        wb_validacao = openpyxl.load_workbook(caminho_local_temp, data_only=False, read_only=True)
         try:
             if nome_aba_alvo not in wb_validacao.sheetnames:
                 raise RuntimeError(f"A aba esperada '{nome_aba_alvo}' nao foi gravada no arquivo temporario.")
@@ -287,8 +294,11 @@ def atualizar_planilha_comparativa(
         finally:
             wb_validacao.close()
 
-        os.replace(caminho_temporario, caminho_template_path)
+        # Substituir o arquivo final no Google Drive de forma segura (copia local -> destino)
+        print(f"Cópia local validada com sucesso. Substituindo arquivo de destino: {caminho_template_path}...")
+        shutil.copy2(caminho_local_temp, caminho_template_path)
 
+        # Validar que a cópia no destino funcionou
         wb_final = openpyxl.load_workbook(caminho_template_path, data_only=False, read_only=True)
         try:
             if nome_aba_alvo not in wb_final.sheetnames:
@@ -310,8 +320,8 @@ def atualizar_planilha_comparativa(
         except Exception:
             pass
         try:
-            if caminho_temporario.exists():
-                caminho_temporario.unlink()
+            if caminho_local_temp.exists():
+                caminho_local_temp.unlink()
         except Exception:
             pass
 
