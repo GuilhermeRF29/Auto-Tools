@@ -117,6 +117,12 @@
       "icon": "electron/icon.png",
       "target": [
         {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
           "target": "dir",
           "arch": [
             "x64"
